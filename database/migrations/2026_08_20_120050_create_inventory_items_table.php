@@ -2,13 +2,33 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('inventory_items')) {
+            if (! Schema::hasColumns('inventory_items', [
+                'id',
+                'ulid',
+                'company_id',
+                'unit_id',
+                'ingredient_id',
+                'product_variant_id',
+                'name',
+                'is_active',
+                'created_at',
+                'updated_at',
+            ])) {
+                throw new RuntimeException(
+                    'The existing inventory_items table is incomplete. Inspect it before continuing the migration.',
+                );
+            }
+
+            return;
+        }
+
         Schema::create('inventory_items', function (Blueprint $table) {
             $table->id();
             $table->ulid('ulid')->unique();
@@ -39,18 +59,6 @@ return new class extends Migration
                 ->cascadeOnUpdate()
                 ->restrictOnDelete();
         });
-
-        if (DB::getDriverName() === 'mysql') {
-            DB::statement(<<<'SQL'
-                ALTER TABLE inventory_items
-                ADD CONSTRAINT inventory_items_exactly_one_source_check
-                CHECK (
-                    (ingredient_id IS NOT NULL AND product_variant_id IS NULL)
-                    OR
-                    (ingredient_id IS NULL AND product_variant_id IS NOT NULL)
-                )
-                SQL);
-        }
     }
 
     public function down(): void

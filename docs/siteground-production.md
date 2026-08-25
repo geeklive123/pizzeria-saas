@@ -70,6 +70,50 @@ La ejecución repetida con la misma empresa, correo y contraseña verifica y reu
 
 La migración `2026_08_24_170000_create_pizza_compositions` transforma datos existentes de packaging: crea reglas a partir de ingredientes de caja y elimina esas filas de `recipe_items`. Antes de ejecutarla sobre otra base con datos se requiere backup y ensayo sobre una copia verificando nombres y reglas resultantes.
 
+### Recuperación del fallo parcial de `inventory_items` en MySQL
+
+MySQL confirma el `CREATE TABLE` antes de ejecutar el `ALTER TABLE` que fallaba al agregar el `CHECK`. Por eso puede existir `inventory_items` aunque `2026_08_20_120050_create_inventory_items_table` no figure en la tabla `migrations`. La versión corregida ya no crea ese `CHECK` y reconoce una tabla previa únicamente si contiene todas las columnas esperadas.
+
+Procedimiento para una base nueva afectada:
+
+1. Activar mantenimiento y crear un backup de la base, aunque todavía no contenga datos operativos.
+2. Publicar el código corregido antes de reintentar la migración.
+3. Confirmar que Laravel no registró la migración:
+
+```sql
+SELECT migration, batch
+FROM migrations
+WHERE migration = '2026_08_20_120050_create_inventory_items_table';
+```
+
+El resultado esperado es cero filas. No insertar manualmente un registro en `migrations`.
+
+4. Inspeccionar la tabla parcial:
+
+```sql
+SHOW CREATE TABLE inventory_items;
+SELECT COUNT(*) AS inventory_item_rows FROM inventory_items;
+```
+
+Debe estar vacía y contener `id`, `ulid`, `company_id`, `unit_id`, `ingredient_id`, `product_variant_id`, `name`, `is_active`, timestamps, índices únicos y las foreign keys hacia `companies`, `units`, `ingredients` y `product_variants`. No debe existir `inventory_items_exactly_one_source_check`.
+
+5. Si la estructura está completa, conservar la tabla y ejecutar:
+
+```bash
+php artisan migrate --force
+php artisan migrate:status
+```
+
+La migración validará las columnas, reutilizará la tabla y Laravel continuará con las siguientes migraciones.
+
+6. Solo si `SHOW CREATE TABLE` demuestra que la tabla está incompleta, la migración sigue sin registrarse, el conteo es cero y ninguna tabla posterior la referencia, eliminar exclusivamente esa tabla huérfana y reintentar:
+
+```sql
+DROP TABLE inventory_items;
+```
+
+Luego ejecutar `php artisan migrate --force`. No usar `migrate:fresh`, `migrate:refresh` ni `db:wipe`.
+
 ## Frontend y cachés
 
 `public/build` no se versiona. Los recursos deben compilarse con `npm ci && npm run build` en CI, en una máquina de build o en SiteGround si ofrece una versión compatible de Node.js; luego el artefacto `public/build` debe estar presente en la publicación.

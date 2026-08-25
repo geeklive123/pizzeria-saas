@@ -22,6 +22,7 @@ use Database\Seeders\DatabaseSeeder;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 class InventoryItemTest extends TestCase
@@ -62,16 +63,16 @@ class InventoryItemTest extends TestCase
         [$company, , , , $unit, $variant] = $this->directSaleContext();
         $ingredient = Ingredient::factory()->for($unit)->create();
 
-        $this->expectException(DomainException::class);
-
-        InventoryItem::query()->create([
+        $this->assertDomainException(fn () => InventoryItem::query()->create([
             'company_id' => $company->getKey(),
             'unit_id' => $unit->getKey(),
             'ingredient_id' => $ingredient->getKey(),
             'product_variant_id' => $variant->getKey(),
             'name' => 'Invalid item',
             'is_active' => true,
-        ]);
+        ]));
+
+        $this->assertDatabaseCount('inventory_items', 1);
     }
 
     public function test_inventory_item_cannot_exist_without_a_source(): void
@@ -79,14 +80,34 @@ class InventoryItemTest extends TestCase
         $company = Company::factory()->create();
         $unit = $this->unit($company, 'Unidad', 'u', UnitType::Unit);
 
-        $this->expectException(DomainException::class);
-
-        InventoryItem::query()->create([
+        $this->assertDomainException(fn () => InventoryItem::query()->create([
             'company_id' => $company->getKey(),
             'unit_id' => $unit->getKey(),
             'name' => 'Invalid item',
             'is_active' => true,
-        ]);
+        ]));
+
+        $this->assertDatabaseCount('inventory_items', 0);
+    }
+
+    public function test_inventory_item_migration_can_resume_when_the_complete_table_already_exists(): void
+    {
+        $migration = require database_path('migrations/2026_08_20_120050_create_inventory_items_table.php');
+
+        $migration->up();
+
+        $this->assertTrue(Schema::hasColumns('inventory_items', [
+            'id',
+            'ulid',
+            'company_id',
+            'unit_id',
+            'ingredient_id',
+            'product_variant_id',
+            'name',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]));
     }
 
     public function test_ingredient_inventory_item_must_use_its_base_unit(): void
@@ -302,5 +323,15 @@ class InventoryItemTest extends TestCase
             ->where('branch_id', $branch->getKey())
             ->where('inventory_item_id', $item->getKey())
             ->firstOrFail();
+    }
+
+    private function assertDomainException(callable $callback): void
+    {
+        try {
+            $callback();
+            $this->fail('Expected a domain exception for an invalid inventory item source.');
+        } catch (DomainException) {
+            $this->addToAssertionCount(1);
+        }
     }
 }
