@@ -1,0 +1,315 @@
+<?php
+
+namespace App\Services;
+
+use App\Enums\ModifierOptionType;
+use App\Enums\OrderType;
+use App\Enums\ProductType;
+use App\Enums\RecipeComponentType;
+use App\Models\Company;
+use App\Models\InventoryItem;
+use App\Models\ModifierOption;
+use App\Models\PackagingRule;
+use App\Models\ProductVariant;
+use Brick\Math\BigDecimal;
+use Brick\Math\BigRational;
+use Brick\Math\RoundingMode;
+use DomainException;
+
+class PizzaCompositionService
+{
+    public function __construct(private readonly VariantSizeKeyService $sizeKeys) {}
+
+    /**
+     * Fractions are kept as BigRational values and aggregated before the final
+     * reservation rounding to 3 decimals using HalfUp.
+     *
+     * @param  list<array<string, mixed>>  $sectionData
+     * @param  list<array<string, mixed>>  $modifierData
+     * @return array{unit_price:string, primary_variant:ProductVariant, sections:list<array<string,mixed>>, modifiers:list<array<string,mixed>>, requirements:list<array{inventory_item:InventoryItem,quantity:string}>, snapshot:array<string,mixed>}
+     */
+    public function compose(Company $company, array $sectionData, array $modifierData, OrderType $fulfillment): array
+    {
+        if ($sectionData === [] || count($sectionData) > 4) {
+            throw new DomainException('Una pizza debe tener entre 1 y 4 sabores.');
+        }
+
+        $sections = [];
+        $sectionCount = count($sectionData);
+        $selectedVariantIds = [];
+        foreach (array_values($sectionData) as $index => $data) {
+            $variant = $this->resolveVariant($company, $data);
+            if (isset($selectedVariantIds[$variant->getKey()])) {
+                throw new DomainException('Ese sabor ya está seleccionado. Elige otro sabor o utiliza la opción "1 sabor".');
+            }
+            $selectedVariantIds[$variant->getKey()] = true;
+
+            $numerator = 1;
+            $denominator = $sectionCount;
+            $fraction = BigRational::ofFraction($numerator, $denominator);
+            $sections[] = [
+                'position' => $index + 1,
+                'variant' => $variant,
+                'fraction' => $fraction,
+                'fraction_numerator' => $numerator,
+                'fraction_denominator' => $denominator,
+            ];
+        }
+
+        $sizeKey = $this->sizeKeys->fromVariant($sections[0]['variant']);
+        if (blank($sizeKey) || collect($sections)->contains(
+            fn (array $section): bool => $this->sizeKeys->fromVariant($section['variant']) !== $sizeKey,
+        )) {
+            throw new DomainException('Todos los sabores deben usar variantes del mismo tamaño compatible.');
+        }
+        if ($sectionCount > 1 && ! in_array($sizeKey, ['mediana', 'familiar'], true)) {
+            throw new DomainException('La pizza Personal no permite combinar sabores. Solo Mediana y Familiar admiten de 2 a 4 sabores.');
+        }
+
+        $configuredRecipes = collect($sections)->map(
+            fn (array $section): bool => $section['variant']->recipe?->is_active === true
+                && $section['variant']->recipe->items->isNotEmpty(),
+        );
+        if ($configuredRecipes->contains(true) && $configuredRecipes->contains(false)) {
+            throw new DomainException('No se pueden mezclar sabores con receta configurada y sabores con receta pendiente.');
+        }
+        $recipePending = ! $configuredRecipes->contains(true);
+        if ($recipePending && $modifierData !== []) {
+            throw new DomainException('No se pueden aplicar extras o removidos hasta configurar las cantidades de receta.');
+        }
+        if (! $recipePending) {
+            $this->validateBaseCompatibility($sections);
+        }
+
+        /** @var array<int, BigRational> $recipeTotals */
+        $recipeTotals = [];
+        /** @var array<int, array<int, BigRational>> $recipeBySection */
+        $recipeBySection = [];
+        $inventoryItems = [];
+        $firstRecipe = $sections[0]['variant']->recipe;
+        $hasStructuredBase = $firstRecipe?->items->contains(fn ($item): bool => $item->component_type === RecipeComponentType::Base) ?? false;
+
+        if ($hasStructuredBase) {
+            foreach ($firstRecipe->items->where('component_type', RecipeComponentType::Base) as $recipeItem) {
+                $inventoryItem = $this->inventoryItemForRecipe($recipeItem);
+                $inventoryItems[$inventoryItem->id] = $inventoryItem;
+                $quantity = BigRational::of($recipeItem->quantity);
+                $recipeTotals[$inventoryItem->id] = ($recipeTotals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+                foreach ($sections as $section) {
+                    $recipeBySection[$section['position']][$inventoryItem->id] = ($recipeBySection[$section['position']][$inventoryItem->id] ?? BigRational::zero())
+                        ->plus($quantity->multipliedBy($section['fraction']));
+                }
+            }
+        }
+
+        foreach ($recipePending ? [] : $sections as $section) {
+            $recipeItems = $hasStructuredBase
+                ? $section['variant']->recipe->items->where('component_type', RecipeComponentType::Topping)
+                : $section['variant']->recipe->items;
+
+            foreach ($recipeItems as $recipeItem) {
+                $inventoryItem = $this->inventoryItemForRecipe($recipeItem);
+                $inventoryItems[$inventoryItem->id] = $inventoryItem;
+                $quantity = BigRational::of($recipeItem->quantity)->multipliedBy($section['fraction']);
+                $recipeTotals[$inventoryItem->id] = ($recipeTotals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+                $recipeBySection[$section['position']][$inventoryItem->id] = ($recipeBySection[$section['position']][$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+            }
+        }
+
+        $totals = $recipeTotals;
+        $price = collect($sections)->reduce(function (?BigDecimal $highest, array $section): BigDecimal {
+            $candidate = BigDecimal::of($section['variant']->price);
+
+            return $highest === null || $candidate->isGreaterThan($highest) ? $candidate : $highest;
+        });
+        $modifierSnapshots = [];
+        $removedScopes = [];
+
+        foreach ($modifierData as $data) {
+            $option = $this->resolveOption($company, $data);
+            $sectionPosition = filled($data['section_position'] ?? null) ? (int) $data['section_position'] : null;
+            $targetSection = $sectionPosition === null ? null : collect($sections)->firstWhere('position', $sectionPosition);
+            if ($sectionPosition !== null && ! $targetSection) {
+                throw new DomainException('La sección elegida para el modificador no existe.');
+            }
+            if ($option->modifier->product_id && ! collect($sections)->contains(fn (array $section): bool => (int) $section['variant']->product_id === (int) $option->modifier->product_id)) {
+                throw new DomainException('El modificador no es compatible con los sabores elegidos.');
+            }
+            if ($targetSection && $option->modifier->product_id && (int) $targetSection['variant']->product_id !== (int) $option->modifier->product_id) {
+                throw new DomainException('El modificador no es compatible con la sección elegida.');
+            }
+
+            $scale = $targetSection['fraction'] ?? BigRational::one();
+            $inventoryItem = $option->inventoryItem ?? $option->ingredient?->inventoryItem;
+            if (! $inventoryItem || ! $inventoryItem->is_active) {
+                throw new DomainException("El modificador {$option->name} no tiene un artículo de inventario activo.");
+            }
+            $inventoryItems[$inventoryItem->id] = $inventoryItem;
+
+            if ($option->type === ModifierOptionType::Add) {
+                $quantity = BigRational::of($option->quantity)->multipliedBy($scale);
+                $totals[$inventoryItem->id] = ($totals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+                $price = $price->plus($this->decimal($scale->multipliedBy($option->price_delta), 2));
+            } else {
+                $scopeKey = ($sectionPosition ?? 'all').':'.$inventoryItem->id;
+                if (isset($removedScopes[$scopeKey])) {
+                    throw new DomainException("El ingrediente {$inventoryItem->name} ya fue removido en ese alcance.");
+                }
+                $removedScopes[$scopeKey] = true;
+                $quantity = $sectionPosition === null
+                    ? ($recipeTotals[$inventoryItem->id] ?? BigRational::zero())
+                    : ($recipeBySection[$sectionPosition][$inventoryItem->id] ?? BigRational::zero());
+                if ($quantity->isZero()) {
+                    throw new DomainException("{$inventoryItem->name} no forma parte de la sección elegida.");
+                }
+                $totals[$inventoryItem->id] = ($totals[$inventoryItem->id] ?? BigRational::zero())->minus($quantity);
+                if ($totals[$inventoryItem->id]->isNegative()) {
+                    throw new DomainException('Una remoción no puede producir consumo negativo.');
+                }
+            }
+
+            $modifierSnapshots[] = [
+                'option' => $option,
+                'section_position' => $sectionPosition,
+                'type' => $option->type,
+                'name_snapshot' => $option->name,
+                'price_delta_snapshot' => (string) $this->decimal($scale->multipliedBy($option->price_delta), 2),
+                'inventory_item' => $inventoryItem,
+                'quantity_snapshot' => (string) $this->decimal($quantity, 3),
+                'unit_id' => $inventoryItem->unit_id,
+            ];
+        }
+
+        $packaging = [];
+        foreach (PackagingRule::query()->forCompany($company)->where('size_key', $sizeKey)
+            ->where('fulfillment_type', $fulfillment->value)->with('inventoryItem')->orderBy('inventory_item_id')->get() as $rule) {
+            if (! $rule->inventoryItem->is_active) {
+                throw new DomainException("El empaque {$rule->inventoryItem->name} no está activo.");
+            }
+            $inventoryItems[$rule->inventory_item_id] = $rule->inventoryItem;
+            $quantity = BigRational::of($rule->quantity);
+            $totals[$rule->inventory_item_id] = ($totals[$rule->inventory_item_id] ?? BigRational::zero())->plus($quantity);
+            $packaging[] = ['inventory_item_id' => $rule->inventory_item_id, 'name' => $rule->inventoryItem->name, 'quantity' => (string) $rule->quantity];
+        }
+
+        $requirements = collect($totals)->reject(fn (BigRational $quantity): bool => $quantity->isZero())
+            ->map(fn (BigRational $quantity, int $id): array => [
+                'inventory_item' => $inventoryItems[$id],
+                'quantity' => (string) $this->decimal($quantity, 3),
+            ])->sortBy(fn (array $requirement) => $requirement['inventory_item']->id)->values()->all();
+
+        $sectionSnapshots = array_map(fn (array $section): array => [
+            ...$section,
+            'unit_price_snapshot' => (string) $section['variant']->price,
+            'product_name_snapshot' => $section['variant']->product->name,
+            'variant_name_snapshot' => $section['variant']->name,
+        ], $sections);
+        $primary = collect($sections)->sort(fn (array $a, array $b): int => BigDecimal::of($b['variant']->price)->compareTo($a['variant']->price))->first()['variant'];
+
+        return [
+            'unit_price' => (string) $price->toScale(2, RoundingMode::HalfUp),
+            'primary_variant' => $primary,
+            'sections' => $sectionSnapshots,
+            'modifiers' => $modifierSnapshots,
+            'requirements' => $requirements,
+            'snapshot' => [
+                'version' => 1,
+                'size_key' => $sizeKey,
+                'fulfillment_type' => $fulfillment->value,
+                'pricing_policy' => 'highest_flavor_plus_additions',
+                'rounding' => 'aggregate_rational_then_half_up_3_decimals',
+                'inventory_status' => $recipePending ? 'recipe_pending' : 'configured',
+                'inventory_notice' => $recipePending
+                    ? 'Receta pendiente de cantidades: esta pizza no reserva ni descuenta ingredientes de receta.'
+                    : null,
+                'sections' => array_map(fn (array $section): array => [
+                    'position' => $section['position'],
+                    'fraction' => $section['fraction_numerator'].'/'.$section['fraction_denominator'],
+                    'product' => $section['product_name_snapshot'],
+                    'variant' => $section['variant_name_snapshot'],
+                    'unit_price' => $section['unit_price_snapshot'],
+                ], $sectionSnapshots),
+                'modifiers' => array_map(fn (array $modifier): array => [
+                    'section_position' => $modifier['section_position'],
+                    'type' => $modifier['type']->value,
+                    'name' => $modifier['name_snapshot'],
+                    'price_delta' => $modifier['price_delta_snapshot'],
+                    'quantity' => $modifier['quantity_snapshot'],
+                    'inventory_item' => $modifier['inventory_item']->name,
+                ], $modifierSnapshots),
+                'packaging' => $packaging,
+                'requirements' => array_map(fn (array $requirement): array => [
+                    'inventory_item_id' => $requirement['inventory_item']->id,
+                    'name' => $requirement['inventory_item']->name,
+                    'quantity' => $requirement['quantity'],
+                ], $requirements),
+            ],
+        ];
+    }
+
+    /** @param array<string, mixed> $data */
+    private function resolveVariant(Company $company, array $data): ProductVariant
+    {
+        $candidate = $data['product_variant'] ?? $data['variant'] ?? $data['variant_id'] ?? null;
+        $query = ProductVariant::query()->forCompany($company)->where('is_active', true)
+            ->with(['product', 'recipe.items.ingredient.inventoryItem']);
+        $variant = $candidate instanceof ProductVariant
+            ? $query->find($candidate->id)
+            : (is_numeric($candidate) ? $query->find($candidate) : $query->where('ulid', $candidate)->first());
+
+        if (! $variant || $variant->product->type !== ProductType::Pizza) {
+            throw new DomainException('Cada sabor debe ser una pizza activa.');
+        }
+
+        return $variant;
+    }
+
+    /** @param array<string, mixed> $data */
+    private function resolveOption(Company $company, array $data): ModifierOption
+    {
+        $candidate = $data['option'] ?? $data['modifier_option'] ?? $data['option_id'] ?? null;
+        $query = ModifierOption::query()->forCompany($company)->where('is_active', true)
+            ->with(['modifier', 'inventoryItem', 'ingredient.inventoryItem']);
+        $option = $candidate instanceof ModifierOption
+            ? $query->find($candidate->id)
+            : (is_numeric($candidate) ? $query->find($candidate) : $query->where('ulid', $candidate)->first());
+
+        if (! $option || ! $option->modifier->is_active) {
+            throw new DomainException('El modificador elegido no está disponible.');
+        }
+
+        return $option;
+    }
+
+    /** @param list<array<string,mixed>> $sections */
+    private function validateBaseCompatibility(array $sections): void
+    {
+        $signatures = collect($sections)->map(function (array $section): string {
+            return $section['variant']->recipe->items
+                ->where('component_type', RecipeComponentType::Base)
+                ->sortBy('ingredient_id')
+                ->map(fn ($item): string => $item->ingredient_id.':'.$item->quantity)
+                ->implode('|');
+        });
+
+        if ($signatures->filter()->isNotEmpty() && $signatures->unique()->count() !== 1) {
+            throw new DomainException('Los sabores seleccionados no comparten la misma receta base para ese tamaño.');
+        }
+    }
+
+    private function inventoryItemForRecipe($recipeItem): InventoryItem
+    {
+        $item = $recipeItem->ingredient->inventoryItem;
+        if (! $item || ! $item->is_active) {
+            throw new DomainException("El ingrediente {$recipeItem->ingredient->name} no tiene inventario activo.");
+        }
+
+        return $item;
+    }
+
+    private function decimal(BigRational $value, int $scale): BigDecimal
+    {
+        return $value->getNumerator()->toBigDecimal()
+            ->dividedBy($value->getDenominator(), $scale, RoundingMode::HalfUp);
+    }
+}

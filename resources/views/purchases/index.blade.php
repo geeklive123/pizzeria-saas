@@ -1,0 +1,7 @@
+@extends('layouts.app')
+@section('title', 'Compras')
+@section('heading', 'Compras')
+@section('content')
+<div class="page-heading"><div><h1>Compras</h1><p>Borradores, ingresos confirmados y reversiones.</p></div>@can('create',\App\Models\Purchase::class)<a class="btn-primary" href="{{ route('purchases.create') }}">+ Nueva compra</a>@endcan</div>
+<div class="card"><div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Proveedor</th><th>Documento</th><th>Estado</th><th>Total</th><th>Usuario</th><th></th></tr></thead><tbody>@forelse($purchases as $purchase)<tr><td>{{ \App\Support\UiFormatter::date($purchase->purchased_at) }}</td><td class="font-medium">{{ $purchase->supplier_name ?: 'Sin proveedor' }}</td><td>{{ $purchase->document_number ?: '—' }}</td><td><span class="badge {{ $purchase->status===\App\Enums\PurchaseStatus::Posted ? 'badge-success' : ($purchase->status===\App\Enums\PurchaseStatus::Reversed ? 'badge-danger' : '') }}">{{ \App\Support\UiFormatter::purchaseStatus($purchase->status) }}</span></td><td class="font-semibold">{{ \App\Support\UiFormatter::money($purchase->display_total) }}</td><td>{{ $purchase->createdBy?->name ?: 'Sistema' }}</td><td class="text-right"><a class="link" href="{{ route('purchases.show',$purchase->ulid) }}">Ver detalle</a></td></tr>@empty<tr><td colspan="7"><div class="empty-state">No hay compras registradas.</div></td></tr>@endforelse</tbody></table></div>@if($purchases->hasPages())<div class="border-t p-4">{{ $purchases->links() }}</div>@endif</div>
+@endsection

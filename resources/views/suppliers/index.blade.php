@@ -1,0 +1,7 @@
+@extends('layouts.app')
+@section('title', 'Proveedores')
+@section('heading', 'Proveedores')
+@section('content')
+<div class="page-heading"><div><h1>Proveedores</h1><p>Directorio reutilizable para gastos y futuras integraciones de compras.</p></div><a class="btn-primary" href="{{ route('suppliers.create') }}">Nuevo proveedor</a></div>
+<div class="card"><div class="table-wrap"><table><thead><tr><th>Nombre</th><th>NIT</th><th>Contacto</th><th>Gastos</th><th>Estado</th><th></th></tr></thead><tbody>@forelse($suppliers as $supplier)<tr><td class="font-medium">{{ $supplier->name }}</td><td>{{ $supplier->tax_id ?: '—' }}</td><td>{{ $supplier->phone ?: '—' }}<div class="text-xs text-stone-500">{{ $supplier->email }}</div></td><td>{{ $supplier->expenses_count }}</td><td><span class="badge {{ $supplier->is_active ? 'badge-success' : '' }}">{{ $supplier->is_active ? 'Activo' : 'Inactivo' }}</span></td><td class="flex justify-end gap-2"><a class="btn-secondary" href="{{ route('suppliers.edit',$supplier->ulid) }}">Editar</a><form method="POST" action="{{ route('suppliers.toggle',$supplier->ulid) }}">@csrf<button class="btn-secondary">{{ $supplier->is_active ? 'Desactivar' : 'Activar' }}</button></form></td></tr>@empty<tr><td colspan="6"><div class="empty-state">No hay proveedores.</div></td></tr>@endforelse</tbody></table></div>@if($suppliers->hasPages())<div class="border-t p-4">{{ $suppliers->links() }}</div>@endif</div>
+@endsection
