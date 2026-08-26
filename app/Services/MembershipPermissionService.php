@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\MembershipRole;
 use App\Enums\Permission;
+use App\Enums\PermissionModule;
 use App\Models\Company;
 use App\Models\Membership;
 use App\Models\User;
@@ -53,14 +54,19 @@ class MembershipPermissionService
     public function groupedCatalog(): array
     {
         $groups = [];
-        foreach (Permission::cases() as $permission) {
-            if ($permission === Permission::ManageCash) {
-                continue;
-            }
-            $groups[$permission->module()] ??= ['label' => $permission->module(), 'permissions' => []];
-            $groups[$permission->module()]['permissions'][] = $permission;
+        foreach (PermissionModule::cases() as $module) {
+            $groups[$module->value] = [
+                'key' => $module->value,
+                'label' => $module->label(),
+                'description' => $module->description(),
+                'permissions' => [],
+            ];
         }
 
-        return $groups;
+        foreach (Permission::cases() as $permission) {
+            $groups[$permission->module()->value]['permissions'][] = $permission;
+        }
+
+        return array_values($groups);
     }
 }

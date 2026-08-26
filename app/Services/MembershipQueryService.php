@@ -9,6 +9,6 @@ class MembershipQueryService
 {
     public function forCompany(Company $company): Collection
     {
-        return $company->memberships()->with('user')->orderBy('id')->get();
+        return $company->memberships()->with('user')->withCount('permissionOverrides')->orderBy('id')->get();
     }
 }

@@ -10,6 +10,28 @@ enum MembershipRole: string
     case Waiter = 'waiter';
     case Kitchen = 'kitchen';
 
+    public function label(): string
+    {
+        return match ($this) {
+            self::Owner => 'Propietario',
+            self::Admin => 'Administrador',
+            self::Cashier => 'Cajero',
+            self::Waiter => 'Mesero',
+            self::Kitchen => 'Cocina',
+        };
+    }
+
+    public function description(): string
+    {
+        return match ($this) {
+            self::Owner => 'Acceso completo a la empresa y a su configuración.',
+            self::Admin => 'Puede gestionar la operación, productos, inventario, usuarios y reportes según las reglas actuales.',
+            self::Cashier => 'Puede realizar cobros, trabajar con su turno de caja y consultar los movimientos necesarios para cuadrar su caja.',
+            self::Waiter => 'Puede tomar pedidos, trabajar con mesas, agregar productos y enviar pedidos a cocina.',
+            self::Kitchen => 'Puede consultar las comandas y actualizar el estado de preparación.',
+        };
+    }
+
     /** @return list<Permission> */
     public function permissions(): array
     {

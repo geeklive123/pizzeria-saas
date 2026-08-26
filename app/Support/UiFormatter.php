@@ -164,13 +164,7 @@ class UiFormatter
 
     public static function role(MembershipRole $role): string
     {
-        return match ($role) {
-            MembershipRole::Owner => 'Propietario',
-            MembershipRole::Admin => 'Administrador',
-            MembershipRole::Cashier => 'Cajero',
-            MembershipRole::Waiter => 'Mesero',
-            MembershipRole::Kitchen => 'Cocina',
-        };
+        return $role->label();
     }
 
     public static function productType(ProductType $type): string

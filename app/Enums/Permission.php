@@ -43,21 +43,33 @@ enum Permission: string
     case ViewFinancialReports = 'reports.financial';
     case ExportReports = 'reports.export';
 
-    public function module(): string
+    public function module(): PermissionModule
     {
         return match ($this) {
-            self::ViewCompany, self::ManageCompany, self::ViewBranches, self::ManageBranches => 'Empresa y configuración',
-            self::ViewMemberships, self::ManageMemberships => 'Usuarios',
-            self::ViewCatalog, self::ManageCatalog, self::ViewRecipes, self::ManageRecipes => 'Catálogo y recetas',
-            self::ViewInventory, self::ManageInventory => 'Inventario',
-            self::ViewPurchases, self::ManagePurchases => 'Compras',
-            self::ViewOrders, self::ManageOrders, self::CancelOrders, self::ViewTables, self::ManageTables => 'Venta, pedidos y mesas',
-            self::ViewKitchen, self::ManageKitchen => 'Cocina',
+            self::CreatePayments, self::ReversePayments => PermissionModule::Sales,
+            self::ViewOrders, self::ManageOrders, self::CancelOrders, self::ViewTables, self::ManageTables => PermissionModule::TablesAndOrders,
+            self::ViewKitchen, self::ManageKitchen => PermissionModule::Kitchen,
             self::ViewCash, self::OpenCash, self::CloseCash, self::ManageCash, self::RegisterManualCashMovements,
-            self::AuthorizeCashWithdrawals, self::CreatePayments, self::ReversePayments => 'Caja y pagos',
+            self::AuthorizeCashWithdrawals => PermissionModule::Cash,
+            self::ViewCatalog, self::ManageCatalog, self::ViewRecipes, self::ManageRecipes => PermissionModule::CatalogAndRecipes,
+            self::ViewInventory, self::ManageInventory => PermissionModule::Inventory,
+            self::ViewPurchases, self::ManagePurchases => PermissionModule::Purchases,
             self::ViewExpenses, self::CreateExpenses, self::ReverseExpenses, self::ManageExpenseCategories,
-            self::ViewSuppliers, self::ManageSuppliers => 'Gastos y proveedores',
-            self::ViewReports, self::ViewFinancialReports, self::ExportReports => 'Reportes',
+            self::ViewSuppliers, self::ManageSuppliers => PermissionModule::Expenses,
+            self::ViewReports, self::ViewFinancialReports, self::ExportReports => PermissionModule::Reports,
+            self::ViewMemberships, self::ManageMemberships => PermissionModule::Users,
+            self::ViewCompany, self::ManageCompany, self::ViewBranches, self::ManageBranches => PermissionModule::Company,
+        };
+    }
+
+    public function isReadOnly(): bool
+    {
+        return match ($this) {
+            self::ViewCompany, self::ViewBranches, self::ViewMemberships, self::ViewCatalog,
+            self::ViewRecipes, self::ViewInventory, self::ViewPurchases, self::ViewOrders,
+            self::ViewTables, self::ViewKitchen, self::ViewCash, self::ViewExpenses,
+            self::ViewSuppliers, self::ViewReports, self::ViewFinancialReports => true,
+            default => false,
         };
     }
 
@@ -69,30 +81,30 @@ enum Permission: string
             self::ViewBranches => 'Ver sucursales',
             self::ManageBranches => 'Administrar sucursales',
             self::ViewMemberships => 'Ver usuarios',
-            self::ManageMemberships => 'Administrar usuarios y permisos',
+            self::ManageMemberships => 'Crear y editar usuarios; administrar roles y permisos',
             self::ViewCatalog => 'Ver catálogo',
-            self::ManageCatalog => 'Administrar catálogo',
+            self::ManageCatalog => 'Administrar productos y categorías',
             self::ViewRecipes => 'Ver recetas',
             self::ManageRecipes => 'Administrar recetas',
             self::ViewInventory => 'Ver inventario',
-            self::ManageInventory => 'Administrar inventario',
+            self::ManageInventory => 'Administrar inventario, ajustes y mermas',
             self::ViewPurchases => 'Ver compras',
-            self::ManagePurchases => 'Administrar compras',
+            self::ManagePurchases => 'Crear, publicar y corregir compras',
             self::ViewOrders => 'Ver pedidos',
-            self::ManageOrders => 'Crear y operar pedidos',
+            self::ManageOrders => 'Gestionar pedidos y enviar a cocina',
             self::CancelOrders => 'Cancelar pedidos',
             self::ViewTables => 'Ver mesas',
             self::ManageTables => 'Administrar mesas',
             self::ViewKitchen => 'Ver cocina',
-            self::ManageKitchen => 'Operar cocina',
+            self::ManageKitchen => 'Actualizar preparación y marcar estados',
             self::ViewCash => 'Ver caja y movimientos',
             self::OpenCash => 'Abrir turno',
             self::CloseCash => 'Cerrar turno',
-            self::ManageCash => 'Administrar caja (legado)',
+            self::ManageCash => 'Administrar cajas',
             self::RegisterManualCashMovements => 'Registrar movimientos manuales',
             self::AuthorizeCashWithdrawals => 'Autorizar retiros de propietario',
-            self::CreatePayments => 'Cobrar, pagos parciales/mixtos e imprimir tickets',
-            self::ReversePayments => 'Revertir pagos',
+            self::CreatePayments => 'Registrar cobros',
+            self::ReversePayments => 'Revertir o corregir cobros',
             self::ViewExpenses => 'Ver gastos',
             self::CreateExpenses => 'Registrar gastos',
             self::ReverseExpenses => 'Revertir gastos',

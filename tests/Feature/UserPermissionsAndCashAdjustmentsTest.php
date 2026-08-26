@@ -137,12 +137,17 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
         $this->assertDatabaseCount('cash_movements', 3);
     }
 
-    public function test_permission_ui_distinguishes_role_inheritance_and_user_exceptions_that_protect_urls(): void
+    public function test_permission_ui_uses_restaurant_language_and_user_exceptions_still_protect_urls(): void
     {
         [$company, $branch, $owner, , $cashier, , $membership] = $this->context();
         $this->actingInContext($owner, $company, $branch)->get(route('memberships.edit', $membership->id))
-            ->assertOk()->assertSee('Permisos por módulo')->assertSee('Heredar del rol')
-            ->assertSee('Permitir explícitamente')->assertSee('Denegar explícitamente');
+            ->assertOk()->assertSee('Función en la empresa')->assertSee('Personalizar permisos')
+            ->assertSee('Puede realizar cobros, trabajar con su turno de caja')
+            ->assertSee('Usar perfil en todo el módulo')->assertSee('Permitir todo el módulo')
+            ->assertSee('Bloquear todo el módulo')->assertSee('Perfil')->assertSee('Permitir')->assertSee('Bloquear')
+            ->assertSee('data-advanced-permissions hidden', false)
+            ->assertDontSee('Heredar del rol')->assertDontSee('Heredado: permitido')
+            ->assertDontSee('Permitir explícitamente')->assertDontSee('Denegar explícitamente');
 
         $this->actingInContext($owner, $company, $branch)->put(route('memberships.update', $membership->id), [
             'name' => $cashier->name, 'role' => MembershipRole::Cashier->value, 'is_active' => '1',
