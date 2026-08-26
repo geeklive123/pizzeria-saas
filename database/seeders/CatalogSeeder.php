@@ -2,9 +2,9 @@
 
 namespace Database\Seeders;
 
+use App\Actions\InitializeStandardUnitsAction;
 use App\Actions\UpdateRecipeAction;
 use App\Enums\ProductType;
-use App\Enums\UnitType;
 use App\Models\Category;
 use App\Models\Company;
 use App\Models\Ingredient;
@@ -22,20 +22,15 @@ class CatalogSeeder extends Seeder
         $company = Company::query()->where('name', 'Mi Pizzería')->firstOrFail();
 
         DB::transaction(function () use ($company, $updateRecipe): void {
-            $units = collect([
-                ['name' => 'Gramo', 'symbol' => 'g', 'type' => UnitType::Weight],
-                ['name' => 'Kilogramo', 'symbol' => 'kg', 'type' => UnitType::Weight],
-                ['name' => 'Mililitro', 'symbol' => 'ml', 'type' => UnitType::Volume],
-                ['name' => 'Litro', 'symbol' => 'L', 'type' => UnitType::Volume],
-                ['name' => 'Unidad', 'symbol' => 'u', 'type' => UnitType::Unit],
-            ])->mapWithKeys(function (array $data) use ($company): array {
-                $unit = Unit::query()->updateOrCreate(
-                    ['company_id' => $company->getKey(), 'symbol' => $data['symbol']],
-                    ['name' => $data['name'], 'type' => $data['type'], 'is_active' => true],
-                );
+            $units = collect(InitializeStandardUnitsAction::definitions())
+                ->mapWithKeys(function (array $data) use ($company): array {
+                    $unit = Unit::query()->updateOrCreate(
+                        ['company_id' => $company->getKey(), 'symbol' => $data['symbol']],
+                        ['name' => $data['name'], 'type' => $data['type'], 'is_active' => true],
+                    );
 
-                return [$data['symbol'] => $unit];
-            });
+                    return [$data['symbol'] => $unit];
+                });
 
             $categories = collect(['Pizzas', 'Bebidas', 'Extras', 'Combos'])
                 ->mapWithKeys(function (string $name, int $sortOrder) use ($company): array {

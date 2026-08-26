@@ -2,6 +2,12 @@
 @section('title', $product->exists ? 'Editar producto' : 'Nuevo producto')
 @section('heading', 'Productos')
 @section('content')
+@if($categories->isEmpty())
+    <div class='mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900'>
+        <strong>No hay categorías activas.</strong> Puedes guardar el producto sin categoría.
+        @can('create', \App\Models\Category::class)<a class='ml-2 font-semibold underline' href='{{ route('categories.create') }}'>Crear categoría</a>@else Solicita a un administrador que las configure.@endcan
+    </div>
+@endif
 <div class="page-heading"><div><a class="back-link" href="{{ route('products.index') }}">← Volver a productos</a><h1>{{ $product->exists ? 'Editar producto' : 'Nuevo producto' }}</h1><p>Información comercial y opciones que verá el equipo.</p></div></div>
 <form method="POST" action="{{ $product->exists ? route('products.update', $product->ulid) : route('products.store') }}" class="space-y-6">@csrf @if($product->exists)@method('PUT')@endif
 <section class="card p-5 sm:p-7"><h2 class="card-title">Información general</h2><div class="form-grid mt-5">

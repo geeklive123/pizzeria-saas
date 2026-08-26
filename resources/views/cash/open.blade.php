@@ -14,10 +14,19 @@
     </div>
 
     @if ($registers->isEmpty())
+        @can('create', \App\Models\CashRegister::class)
+            <div class='card mb-4 p-6 text-center'>
+                <h2 class='card-title'>Configura la primera caja de esta sucursal</h2>
+                <p class='card-subtitle mt-2'>Sugeriremos “Caja Principal” y, al guardarla, volverás directamente a abrir el turno.</p>
+                <a class='btn-primary mt-5' href='{{ route('cash-registers.create', ['onboarding' => 1]) }}'>Crear caja</a>
+            </div>
+        @else
         <div class="card p-6">
             <h2 class="card-title">No hay cajas activas</h2>
             <p class="card-subtitle mt-2">Un owner o admin debe configurar una caja activa para esta sucursal antes de abrir un turno.</p>
         </div>
+            <p class='mt-3 text-sm text-amber-900'>No tienes permiso para crear cajas. Solicita a un propietario o administrador que configure una caja activa.</p>
+        @endcan
     @else
         <div class="mb-5 grid gap-3">
             @foreach ($registers as $register)
@@ -75,5 +84,8 @@
             <button class="btn-primary w-full">Confirmar efectivo y abrir turno</button>
         </form>
     @endif
+    @can('create', \App\Models\CashRegister::class)
+        <div class='mt-5 text-center'><a class='back-link' href='{{ route('cash-registers.index') }}'>Administrar cajas de esta sucursal</a></div>
+    @endcan
 </div>
 @endsection

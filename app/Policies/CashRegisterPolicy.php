@@ -25,4 +25,15 @@ class CashRegisterPolicy
     {
         return $user->canForCompany(Permission::OpenCash, $register->company_id);
     }
+
+    public function create(User $user): bool
+    {
+        return $this->context->hasCompany()
+            && $user->canForCompany(Permission::ManageCash, $this->context->company());
+    }
+
+    public function update(User $user, CashRegister $register): bool
+    {
+        return $user->canForCompany(Permission::ManageCash, $register->company_id);
+    }
 }

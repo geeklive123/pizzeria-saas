@@ -4,7 +4,7 @@
 @section('content')
 @if (! $session)
     <div class='mx-auto max-w-4xl'>
-        <div class='page-heading'><div><h1>Caja</h1><p>No tienes un turno abierto a tu nombre en esta sucursal.</p></div></div>
+        <div class='page-heading'><div><h1>Caja</h1><p>No tienes un turno abierto a tu nombre en esta sucursal.</p></div>@can('create', $cashRegisterClass)<a class='btn-secondary' href='{{ route('cash-registers.index') }}'>Administrar cajas</a>@endcan</div>
         <div class='card p-8 text-center'>
             <div class='text-5xl'>Bs</div><h2 class='mt-5 text-2xl font-semibold'>Abre tu turno antes de cobrar</h2>
             <p class='mt-2 text-stone-500'>Cada cobro queda asociado a la caja física, la cajera y su turno.</p>

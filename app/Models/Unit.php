@@ -33,4 +33,9 @@ class Unit extends Model
     {
         return $this->hasMany(InventoryItem::class);
     }
+
+    public function purchaseItems(): HasMany
+    {
+        return $this->hasMany(PurchaseItem::class, 'input_unit_id');
+    }
 }

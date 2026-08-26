@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CashController;
+use App\Http\Controllers\CashRegisterController;
+use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\ContextController;
 use App\Http\Controllers\DashboardController;
@@ -21,6 +23,7 @@ use App\Http\Controllers\RestaurantTableController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SupplierController;
+use App\Http\Controllers\UnitController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => auth()->check() ? redirect()->route('dashboard') : view('auth.login'));
@@ -73,6 +76,8 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/cash/current/movements', [CashController::class, 'movement'])->name('cash.movements.store');
             Route::post('/cash/sessions/{session}/withdrawals', [CashController::class, 'withdrawal'])->name('cash.withdrawals.store');
             Route::post('/cash/current/close', [CashController::class, 'close'])->name('cash.close');
+            Route::resource('cash-registers', CashRegisterController::class)->except(['show', 'destroy']);
+            Route::post('/cash-registers/{cash_register}/toggle', [CashRegisterController::class, 'toggle'])->name('cash-registers.toggle');
 
             Route::get('/expenses', [ExpenseController::class, 'index'])->name('expenses.index');
             Route::get('/expenses/create', [ExpenseController::class, 'create'])->name('expenses.create');
@@ -100,6 +105,11 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/kitchen/items/{item}/ready', [KitchenController::class, 'ready'])->name('kitchen.items.ready');
 
             Route::resource('products', ProductController::class)->except(['show', 'destroy']);
+            Route::resource('categories', CategoryController::class)->except(['show', 'destroy']);
+            Route::post('/categories/{category}/toggle', [CategoryController::class, 'toggle'])->name('categories.toggle');
+            Route::resource('units', UnitController::class)->except(['show', 'destroy']);
+            Route::post('/units/initialize', [UnitController::class, 'initialize'])->name('units.initialize');
+            Route::post('/units/{unit}/toggle', [UnitController::class, 'toggle'])->name('units.toggle');
             Route::resource('ingredients', IngredientController::class)->except(['show', 'destroy']);
             Route::get('/recipes', [RecipeController::class, 'index'])->name('recipes.index');
             Route::get('/recipes/create', [RecipeController::class, 'create'])->name('recipes.create');
