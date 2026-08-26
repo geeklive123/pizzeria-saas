@@ -8,7 +8,14 @@
 <section class="card p-5 sm:p-7"><h2 class="card-title">Sucursal: {{ $branch->name }}</h2><div class="form-grid mt-5"><div><label class="label">Nombre</label><input class="input" name="branch[name]" value="{{ old('branch.name',$branch->name) }}" required></div><div><label class="label">Teléfono</label><input class="input" name="branch[phone]" value="{{ old('branch.phone',$branch->phone) }}"></div><div class="sm:col-span-2"><label class="label">Dirección</label><textarea class="input min-h-24" name="branch[address]">{{ old('branch.address',$branch->address) }}</textarea></div></div></section>
 <section class="card p-5 sm:p-7">
     <h2 class="card-title">Impresoras</h2>
-    <p class="card-subtitle">Configuración por sucursal mediante el nombre exacto registrado en Windows. El puerto USB no se almacena.</p>
+    <p class="card-subtitle">Configuración lógica por sucursal. El nombre físico final se resuelve en el agente Windows y el puerto USB no se almacena.</p>
+    <div class="mt-5 grid gap-3 sm:grid-cols-5">
+        <div class="rounded-xl bg-stone-100 p-4"><p class="text-xs text-stone-500">Agente</p><strong>{{ $printAgentOnline ? 'En línea' : 'Fuera de línea' }}</strong></div>
+        <div class="rounded-xl bg-stone-100 p-4"><p class="text-xs text-stone-500">Último contacto</p><strong class="text-sm">{{ $printAgent?->last_seen_at ? \App\Support\UiFormatter::date($printAgent->last_seen_at, true) : 'Sin contacto' }}</strong></div>
+        <div class="rounded-xl bg-stone-100 p-4"><p class="text-xs text-stone-500">Última impresión</p><strong class="text-sm">{{ $printAgent?->last_printed_at ? \App\Support\UiFormatter::date($printAgent->last_printed_at, true) : 'Sin impresiones' }}</strong></div>
+        <div class="rounded-xl bg-amber-50 p-4 text-amber-900"><p class="text-xs">Pendientes</p><strong>{{ $printStats['pending'] }}</strong></div>
+        <div class="rounded-xl bg-red-50 p-4 text-red-900"><p class="text-xs">Con error</p><strong>{{ $printStats['failed'] }}</strong></div>
+    </div>
     <div class="mt-5 grid gap-5 lg:grid-cols-2">
         @foreach ([['key' => 'kitchen', 'title' => 'Cocina', 'setting' => $kitchenPrinter], ['key' => 'customer_ticket', 'title' => 'Ticket cliente/caja', 'setting' => $ticketPrinter]] as $printer)
             <div class="rounded-2xl border border-stone-200 p-5">

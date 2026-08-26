@@ -3,6 +3,8 @@
 namespace App\Actions;
 
 use App\Enums\Permission;
+use App\Enums\PrintAttemptStatus;
+use App\Enums\PrinterPurpose;
 use App\Models\Order;
 use App\Models\PrintAttempt;
 use App\Models\User;
@@ -21,6 +23,12 @@ class PrintOrderTicketAction
         $order->loadMissing('company');
         $this->access->ensure($user, $order->company, Permission::CreatePayments);
 
-        return $this->printing->ticket($order, $user, $order->printAttempts()->exists());
+        $lastAttempt = $order->printAttempts()->where('purpose', PrinterPurpose::CustomerTicket->value)
+            ->latest('attempted_at')->first();
+        if ($lastAttempt?->status === PrintAttemptStatus::Failed) {
+            return $this->printing->retry($lastAttempt);
+        }
+
+        return $this->printing->ticket($order, $user, $lastAttempt !== null);
     }
 }

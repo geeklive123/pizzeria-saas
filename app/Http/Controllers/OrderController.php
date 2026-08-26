@@ -147,9 +147,9 @@ class OrderController extends Controller
             ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
         $attempt = $action->execute($dispatch, request()->user());
 
-        return $attempt->status === PrintAttemptStatus::Succeeded
-            ? back()->with('success', 'Comanda enviada a impresión.')
-            : back()->with('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
+        return $attempt->status === PrintAttemptStatus::Failed
+            ? back()->with('warning', 'No se pudo poner la comanda en cola. Revisa la configuración e inténtalo nuevamente.')
+            : back()->with('success', 'Comanda pendiente de impresión.');
     }
 
     public function serveItem(string $order, string $item, MarkOrderItemServedAction $action): RedirectResponse

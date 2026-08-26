@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AuthenticatePrintAgent;
 use App\Http\Middleware\ResolveBranchContext;
 use App\Http\Middleware\ResolveCompanyContext;
 use Illuminate\Foundation\Application;
@@ -10,6 +11,7 @@ use Illuminate\Http\Request;
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
+        api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
@@ -17,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'company.context' => ResolveCompanyContext::class,
             'branch.context' => ResolveBranchContext::class,
+            'print.agent' => AuthenticatePrintAgent::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

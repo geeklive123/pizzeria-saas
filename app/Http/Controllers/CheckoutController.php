@@ -39,10 +39,13 @@ class CheckoutController extends Controller
         $idempotencyQr = (string) Str::ulid();
         $hasPrintedTicket = $order->printAttempts
             ->where('purpose', PrinterPurpose::CustomerTicket)
-            ->where('status', PrintAttemptStatus::Succeeded)
+            ->filter(fn ($attempt): bool => $attempt->status->isPrinted())
             ->isNotEmpty();
+        $lastTicketAttempt = $order->printAttempts
+            ->where('purpose', PrinterPurpose::CustomerTicket)
+            ->sortByDesc('attempted_at')->first();
 
-        return view('orders.checkout', compact('order', 'session', 'paid', 'balance', 'formatter', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'hasPrintedTicket'));
+        return view('orders.checkout', compact('order', 'session', 'paid', 'balance', 'formatter', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'hasPrintedTicket', 'lastTicketAttempt'));
     }
 
     public function requestPayment(string $order, MarkOrderReadyForPaymentAction $action): RedirectResponse
@@ -113,9 +116,9 @@ class CheckoutController extends Controller
         Gate::authorize('create', Payment::class);
         $attempt = $action->execute($order, request()->user());
 
-        return $attempt->status === PrintAttemptStatus::Succeeded
-            ? back()->with('success', 'Ticket enviado a impresión.')
-            : back()->with('warning', 'No se pudo imprimir el ticket. Revisa la impresora configurada e inténtalo nuevamente.');
+        return $attempt->status === PrintAttemptStatus::Failed
+            ? back()->with('warning', 'No se pudo poner el ticket en cola. Revisa la configuración e inténtalo nuevamente.')
+            : back()->with('success', 'Ticket pendiente de impresión.');
     }
 
     private function order(string $ulid): Order

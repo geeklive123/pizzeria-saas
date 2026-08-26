@@ -31,6 +31,9 @@
                 <form method="POST" action="{{ route('orders.kitchen.print', [$order->ulid, $lastDispatch->ulid]) }}">
                     @csrf
                     <button class="btn-secondary">{{ $lastPrintAttempt?->status === \App\Enums\PrintAttemptStatus::Failed ? 'Reintentar impresión' : 'Reimprimir última comanda' }}</button>
+                    @if ($lastPrintAttempt)
+                        <span class="ml-2 text-xs text-stone-500">Impresión: {{ $lastPrintAttempt->status->label() }}</span>
+                    @endif
                 </form>
             @endif
             @if ($order->status === \App\Enums\OrderStatus::Open && $canRequestPayment)

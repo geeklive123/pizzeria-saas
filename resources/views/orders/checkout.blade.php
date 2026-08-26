@@ -13,7 +13,10 @@
     @can('create', $paymentClass)
         <form method="POST" action="{{ route('orders.ticket.print', $order->ulid) }}">
             @csrf
-            <button class="btn-secondary">{{ $hasPrintedTicket ? 'Reimprimir ticket' : 'Imprimir ticket' }}</button>
+            <button class="btn-secondary">{{ $lastTicketAttempt?->status === \App\Enums\PrintAttemptStatus::Failed ? 'Reintentar ticket' : ($hasPrintedTicket ? 'Reimprimir ticket' : 'Imprimir ticket') }}</button>
+            @if ($lastTicketAttempt)
+                <span class="ml-2 text-xs text-stone-500">Impresión: {{ $lastTicketAttempt->status->label() }}</span>
+            @endif
         </form>
     @endcan
 </div>

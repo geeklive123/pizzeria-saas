@@ -45,11 +45,13 @@ use App\Policies\ReportPolicy;
 use App\Policies\RestaurantTablePolicy;
 use App\Policies\SupplierPolicy;
 use App\Printing\Contracts\ThermalPrinterTransport;
+use App\Printing\FileThermalPrinterTransport;
 use App\Printing\WindowsRawPrinterTransport;
 use App\Support\BranchContext;
 use App\Support\CompanyContext;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
+use InvalidArgumentException;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -60,7 +62,13 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->app->scoped(CompanyContext::class);
         $this->app->scoped(BranchContext::class);
-        $this->app->bind(ThermalPrinterTransport::class, WindowsRawPrinterTransport::class);
+        $this->app->bind(ThermalPrinterTransport::class, function ($app): ThermalPrinterTransport {
+            return match ((string) config('thermal-printing.agent.transport')) {
+                'file' => $app->make(FileThermalPrinterTransport::class),
+                'windows_raw' => $app->make(WindowsRawPrinterTransport::class),
+                default => throw new InvalidArgumentException('PRINT_AGENT_TRANSPORT debe ser file o windows_raw.'),
+            };
+        });
     }
 
     /**

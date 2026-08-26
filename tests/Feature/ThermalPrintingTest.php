@@ -29,6 +29,7 @@ use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
 use App\Models\OrderItemSection;
 use App\Models\Payment;
+use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
 use App\Models\Product;
 use App\Models\ProductVariant;
@@ -66,9 +67,13 @@ class ThermalPrintingTest extends TestCase
         $first = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner);
         $this->assertNotNull($first->dispatch);
         $this->assertDatabaseCount('kitchen_dispatches', 1);
-        $this->assertCount(1, $this->transport->documents);
+        $this->assertDatabaseCount('print_attempts', 1);
+        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $first->dispatch->id, 'status' => 'pending', 'is_reprint' => false]);
         $firstText = app(KitchenCommandRenderer::class)->render($first->dispatch)->plainText;
         $this->assertStringContainsString('PIZZA MEDIANA', $firstText);
+        $duplicate = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner);
+        $this->assertNull($duplicate->dispatch);
+        $this->assertDatabaseCount('print_attempts', 1);
 
         $secondItem = $this->simpleItem($order, $owner, 'Coca-Cola', '500 ml', '10.00');
         $thirdItem = $this->simpleItem($order, $owner, 'Pizza Familiar', 'Familiar', '87.00');
@@ -76,7 +81,7 @@ class ThermalPrintingTest extends TestCase
         $secondText = app(KitchenCommandRenderer::class)->render($second->dispatch)->plainText;
 
         $this->assertDatabaseCount('kitchen_dispatches', 2);
-        $this->assertCount(2, $this->transport->documents);
+        $this->assertDatabaseCount('print_attempts', 2);
         $this->assertStringContainsString('COCA-COLA 500 ML', $secondText);
         $this->assertStringContainsString('PIZZA FAMILIAR', $secondText);
         $this->assertStringNotContainsString('PIZZA MEDIANA', $secondText);
@@ -93,7 +98,7 @@ class ThermalPrintingTest extends TestCase
         ];
 
         $this->assertSame($before, $after);
-        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $second->dispatch->id, 'is_reprint' => true, 'status' => 'succeeded']);
+        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $second->dispatch->id, 'is_reprint' => true, 'status' => 'pending']);
     }
 
     public function test_kitchen_document_handles_table_takeaway_one_to_four_flavors_notes_modifiers_and_no_prices(): void
@@ -142,34 +147,30 @@ class ThermalPrintingTest extends TestCase
         $this->assertStringContainsString('Cliente: Javier', $takeawayText);
     }
 
-    public function test_printer_failure_keeps_dispatch_and_retry_is_friendly_and_idempotent(): void
+    public function test_offline_agent_keeps_dispatch_pending_and_failed_job_retries_without_new_domain_records(): void
     {
         [$company, $branch, $owner] = $this->context();
         $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
         $order = $this->order($company, $branch, $owner);
         $item = $this->simpleItem($order, $owner, 'Pizza', 'Familiar', '87.00');
-        $this->transport->fail = true;
-
         $this->actingInContext($owner, $company, $branch)
             ->post(route('orders.dispatch', $order->ulid))
-            ->assertRedirect()->assertSessionHas('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
-        $this->actingInContext($owner, $company, $branch)
-            ->get(route('orders.show', $order->ulid))
-            ->assertOk()->assertSee('El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
+            ->assertRedirect()->assertSessionHas('success', 'Tanda #1 enviada.');
 
         $dispatch = KitchenDispatch::query()->sole();
         $this->assertSame(OrderItemStatus::Sent, $item->refresh()->status);
-        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $dispatch->id, 'status' => 'failed']);
+        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $dispatch->id, 'status' => 'pending']);
         $before = [KitchenDispatch::query()->count(), InventoryReservation::query()->count(), InventoryMovement::query()->count()];
+        $dispatch->printAttempts()->sole()->update(['status' => 'failed', 'error_message' => 'Spooler offline', 'available_at' => now()]);
 
-        $this->transport->fail = false;
         $this->actingInContext($owner, $company, $branch)
             ->post(route('orders.kitchen.print', [$order->ulid, $dispatch->ulid]))
-            ->assertRedirect()->assertSessionHas('success', 'Comanda enviada a impresión.');
+            ->assertRedirect()->assertSessionHas('success', 'Comanda pendiente de impresión.');
 
         $this->assertSame($before, [KitchenDispatch::query()->count(), InventoryReservation::query()->count(), InventoryMovement::query()->count()]);
         $this->assertSame(OrderItemStatus::Sent, $item->refresh()->status);
-        $this->assertDatabaseCount('print_attempts', 2);
+        $this->assertDatabaseCount('print_attempts', 1);
+        $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $dispatch->id, 'status' => 'pending', 'error_message' => null]);
     }
 
     public function test_customer_ticket_covers_cash_qr_mixed_partial_change_and_snapshot_totals(): void
@@ -234,7 +235,7 @@ class ThermalPrintingTest extends TestCase
         $this->assertSame($before, [Payment::query()->count(), CashMovement::query()->count(), InventoryMovement::query()->count(), app(OrderPaymentService::class)->balance($order)]);
         $this->assertDatabaseCount('print_attempts', 2);
         $this->assertDatabaseHas('print_attempts', ['order_id' => $order->id, 'is_reprint' => true]);
-        $this->assertSame(2, $this->transport->documents[0]['copies']);
+        $this->assertSame(2, $order->printAttempts()->oldest('attempted_at')->firstOrFail()->copies);
     }
 
     public function test_owner_and_admin_configure_branch_printers_while_waiter_cannot_and_test_uses_selected_printer_and_copies(): void
@@ -258,9 +259,10 @@ class ThermalPrintingTest extends TestCase
         $this->actingInContext($waiter, $company, $branch)->put(route('settings.update'), $payload)->assertForbidden();
         $this->actingInContext($owner, $company, $branch)
             ->post(route('settings.printers.test', PrinterPurpose::Kitchen->value))->assertRedirect()->assertSessionHas('success');
-        $this->assertSame('EPSON Cocina', $this->transport->documents[0]['printer']);
-        $this->assertSame(3, $this->transport->documents[0]['copies']);
-        $this->assertStringContainsString('PRUEBA DE IMPRESIÓN', $this->decode($this->transport->documents[0]['document']));
+        $attempt = PrintAttempt::query()->sole();
+        $this->assertSame('EPSON Cocina', $attempt->windows_printer_name);
+        $this->assertSame(3, $attempt->copies);
+        $this->assertStringContainsString('PRUEBA DE IMPRESIÓN', $this->decode((string) base64_decode($attempt->document_payload, true)));
     }
 
     public function test_waiter_can_reprint_kitchen_but_cannot_print_financial_ticket(): void

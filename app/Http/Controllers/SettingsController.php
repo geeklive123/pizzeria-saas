@@ -8,6 +8,8 @@ use App\Actions\UpdateSettingsAction;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
 use App\Http\Requests\SettingsRequest;
+use App\Models\PrintAgent;
+use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
 use App\Services\PrinterSettingsService;
 use Illuminate\Http\RedirectResponse;
@@ -19,12 +21,24 @@ class SettingsController extends Controller
     public function edit(PrinterSettingsService $printers): View
     {
         Gate::authorize('update', $this->company());
+        $agent = PrintAgent::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('is_active', true)->latest('last_seen_at')->first();
+        $printStats = [
+            'pending' => PrintAttempt::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+                ->whereIn('status', [PrintAttemptStatus::Pending->value, PrintAttemptStatus::Claimed->value])->count(),
+            'failed' => PrintAttempt::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+                ->where('status', PrintAttemptStatus::Failed->value)->count(),
+        ];
+        $agentOnline = $agent?->last_seen_at?->gte(now()->subSeconds(max(5, (int) config('thermal-printing.agent.online_threshold_seconds', 30)))) ?? false;
 
         return view('settings.edit', [
             'company' => $this->company(),
             'branch' => $this->branch(),
             'kitchenPrinter' => $printers->get($this->company(), $this->branch(), PrinterPurpose::Kitchen),
             'ticketPrinter' => $printers->get($this->company(), $this->branch(), PrinterPurpose::CustomerTicket),
+            'printAgent' => $agent,
+            'printAgentOnline' => $agentOnline,
+            'printStats' => $printStats,
         ]);
     }
 
@@ -48,8 +62,8 @@ class SettingsController extends Controller
             ->where('branch_id', $this->branch()->getKey())->where('purpose', $purpose->value)->firstOrFail();
         $attempt = $action->execute($setting, request()->user());
 
-        return $attempt->status === PrintAttemptStatus::Succeeded
-            ? back()->with('success', 'Página de prueba enviada a impresión.')
-            : back()->with('warning', 'No se pudo imprimir la prueba. Revisa la impresora configurada.');
+        return $attempt->status === PrintAttemptStatus::Failed
+            ? back()->with('warning', 'No se pudo poner la prueba en cola. Revisa la impresora configurada.')
+            : back()->with('success', 'Página de prueba pendiente de impresión.');
     }
 }

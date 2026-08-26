@@ -10,10 +10,12 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['company_id', 'branch_id', 'printer_setting_id', 'kitchen_dispatch_id', 'order_id', 'purpose', 'windows_printer_name', 'copies', 'status', 'is_reprint', 'requested_by', 'attempted_at', 'error_message'])]
+#[Fillable(['company_id', 'branch_id', 'printer_setting_id', 'kitchen_dispatch_id', 'order_id', 'purpose', 'windows_printer_name', 'copies', 'status', 'is_reprint', 'requested_by', 'attempted_at', 'error_message', 'idempotency_key', 'document_payload', 'attempts', 'claimed_by_agent_id', 'claimed_at', 'claim_expires_at', 'claim_token_hash', 'available_at', 'printed_at'])]
 class PrintAttempt extends Model
 {
     use BelongsToCompany, HasUlids;
+
+    protected $hidden = ['document_payload', 'claim_token_hash'];
 
     public function uniqueIds(): array
     {
@@ -28,6 +30,11 @@ class PrintAttempt extends Model
             'copies' => 'integer',
             'is_reprint' => 'boolean',
             'attempted_at' => 'immutable_datetime',
+            'attempts' => 'integer',
+            'claimed_at' => 'immutable_datetime',
+            'claim_expires_at' => 'immutable_datetime',
+            'available_at' => 'immutable_datetime',
+            'printed_at' => 'immutable_datetime',
         ];
     }
 
@@ -49,5 +56,10 @@ class PrintAttempt extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    public function claimedByAgent(): BelongsTo
+    {
+        return $this->belongsTo(PrintAgent::class, 'claimed_by_agent_id');
     }
 }

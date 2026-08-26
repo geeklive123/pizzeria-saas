@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\Enums\Permission;
+use App\Enums\PrintAttemptStatus;
 use App\Models\KitchenDispatch;
 use App\Models\PrintAttempt;
 use App\Models\User;
@@ -25,6 +26,11 @@ class PrintKitchenDispatchAction
             throw new DomainException('La comanda no pertenece al pedido activo.');
         }
 
-        return $this->printing->kitchen($dispatch, $user, true);
+        $lastAttempt = $dispatch->printAttempts()->latest('attempted_at')->first();
+        if ($lastAttempt?->status === PrintAttemptStatus::Failed) {
+            return $this->printing->retry($lastAttempt);
+        }
+
+        return $this->printing->kitchen($dispatch, $user, $lastAttempt !== null);
     }
 }
