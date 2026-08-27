@@ -8,9 +8,9 @@ use App\Actions\UpdateSettingsAction;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
 use App\Http\Requests\SettingsRequest;
-use App\Models\PrintAgent;
 use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
+use App\Services\PrintAgentStatusService;
 use App\Services\PrinterSettingsService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -18,18 +18,16 @@ use Illuminate\View\View;
 
 class SettingsController extends Controller
 {
-    public function edit(PrinterSettingsService $printers): View
+    public function edit(PrinterSettingsService $printers, PrintAgentStatusService $agents): View
     {
         Gate::authorize('update', $this->company());
-        $agent = PrintAgent::query()->forCompany($this->company())->forBranch($this->branch())
-            ->where('is_active', true)->latest('last_seen_at')->first();
+        $agent = $agents->current($this->company(), $this->branch());
         $printStats = [
             'pending' => PrintAttempt::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
                 ->whereIn('status', [PrintAttemptStatus::Pending->value, PrintAttemptStatus::Claimed->value])->count(),
             'failed' => PrintAttempt::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
                 ->where('status', PrintAttemptStatus::Failed->value)->count(),
         ];
-        $agentOnline = $agent?->last_seen_at?->gte(now()->subSeconds(max(5, (int) config('thermal-printing.agent.online_threshold_seconds', 30)))) ?? false;
 
         return view('settings.edit', [
             'company' => $this->company(),
@@ -37,7 +35,7 @@ class SettingsController extends Controller
             'kitchenPrinter' => $printers->get($this->company(), $this->branch(), PrinterPurpose::Kitchen),
             'ticketPrinter' => $printers->get($this->company(), $this->branch(), PrinterPurpose::CustomerTicket),
             'printAgent' => $agent,
-            'printAgentOnline' => $agentOnline,
+            'printAgentOnline' => $agents->isOnline($agent),
             'printStats' => $printStats,
         ]);
     }

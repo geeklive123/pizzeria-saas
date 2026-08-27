@@ -65,11 +65,11 @@ class OrderController extends Controller
             'kitchenDispatches' => fn ($query) => $query->with('printAttempts')->latest('sequence_number'),
         ]);
         Gate::authorize('view', $order);
-        ['products' => $products, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
+        ['products' => $products, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
 
         $lastDispatch = $order->kitchenDispatches->first();
 
-        return view('orders.show', compact('order', 'products', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'lastDispatch'));
+        return view('orders.show', compact('order', 'products', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch'));
     }
 
     public function addItem(AddOrderItemRequest $request, string $order, AddOrderItemAction $action, AddConfiguredPizzaAction $configuredPizza): RedirectResponse
@@ -79,7 +79,7 @@ class OrderController extends Controller
         try {
             if ($request->filled('sections')) {
                 $modifiers = collect($request->validated('modifiers', []))->filter(fn (array $modifier): bool => filled($modifier['option'] ?? null))->values()->all();
-                $configuredPizza->execute($order, $request->validated('sections'), $request->validated('quantity'), $request->user(), $request->enum('fulfillment_type', OrderType::class), $modifiers, $request->validated('notes'));
+                $configuredPizza->execute($order, $request->validated('sections'), $request->validated('quantity'), $request->user(), $request->enum('fulfillment_type', OrderType::class), $modifiers, $request->validated('notes'), $request->validated('toppings', []));
             } else {
                 $variant = ProductVariant::query()->forCompany($this->company())->with('product')
                     ->where('ulid', $request->validated('variant'))->firstOrFail();
@@ -91,6 +91,7 @@ class OrderController extends Controller
                         $request->user(),
                         $request->enum('fulfillment_type', OrderType::class),
                         notes: $request->validated('notes'),
+                        toppings: $request->validated('toppings', []),
                     );
                 } else {
                     $action->execute($order, $variant, $request->validated('quantity'), $request->user(), $request->enum('fulfillment_type', OrderType::class), $request->validated('notes'));
@@ -111,7 +112,7 @@ class OrderController extends Controller
         try {
             if ($request->filled('sections')) {
                 $modifiers = collect($request->validated('modifiers', []))->filter(fn (array $modifier): bool => filled($modifier['option'] ?? null))->values()->all();
-                $configuredPizza->execute($item, $request->validated('sections'), $request->validated('quantity'), $request->user(), OrderType::from($request->validated('fulfillment_type')), $modifiers, $request->validated('notes'));
+                $configuredPizza->execute($item, $request->validated('sections'), $request->validated('quantity'), $request->user(), OrderType::from($request->validated('fulfillment_type')), $modifiers, $request->validated('notes'), $request->validated('toppings', []));
             } else {
                 $action->execute($item, $request->validated('quantity'), $request->user(), OrderType::from($request->validated('fulfillment_type')), $request->validated('notes'));
             }

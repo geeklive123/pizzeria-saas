@@ -59,6 +59,19 @@ class SalesUxAndMixedPaymentsTest extends TestCase
         $this->assertInstanceOf(DOMElement::class, $composer);
         $this->assertTrue($composer->hasAttribute('hidden'), 'El constructor debe iniciar cerrado para priorizar el catálogo.');
 
+        $this->assertCount(0, $xpath->query('//*[@data-pizza-composer]//select[@data-pizza-size]'));
+        $sizeState = $xpath->query('//*[@data-pizza-composer]//input[@type="hidden" and @data-pizza-size]')->item(0);
+        $this->assertInstanceOf(DOMElement::class, $sizeState);
+        $this->assertSame('personal', $sizeState->getAttribute('value'));
+        $sizeOptions = $xpath->query('//*[@data-pizza-composer]//input[@type="radio" and @data-pizza-size-option]');
+        $this->assertCount(3, $sizeOptions);
+        foreach (['personal', 'mediana', 'familiar'] as $index => $sizeKey) {
+            $option = $sizeOptions->item($index);
+            $this->assertInstanceOf(DOMElement::class, $option);
+            $this->assertSame($sizeKey, $option->getAttribute('value'));
+            $this->assertSame($index === 0, $option->hasAttribute('checked'));
+        }
+
         $liveSelectors = $xpath->query('//*[@data-pizza-composer]//select[@data-pizza-variant]');
         $this->assertCount(4, $liveSelectors);
         foreach ($liveSelectors as $selector) {
@@ -78,12 +91,17 @@ class SalesUxAndMixedPaymentsTest extends TestCase
             $this->assertCount(17, $options);
             foreach ($options as $option) {
                 $this->assertSame($expectedSize, $option->getAttribute('data-size-key'));
+                $this->assertMatchesRegularExpression('/^\d+\.\d{2}$/', $option->getAttribute('data-price'));
             }
         }
 
         $this->assertCount(51, $xpath->query('//*[@data-open-pizza-composer]'));
         $this->assertGreaterThan(0, $xpath->query('//*[@data-pos-product and @data-product-kind!="pizza"]//form')->length);
         $response->assertSee('data-close-pizza-composer', false)
+            ->assertSee('data-pizza-size-option', false)
+            ->assertSee('Personal')
+            ->assertSee('Mediana')
+            ->assertSee('Familiar')
             ->assertSee('data-pizza-size-key="personal"', false)
             ->assertSee('data-pizza-size-key="mediana"', false)
             ->assertSee('data-pizza-size-key="familiar"', false);

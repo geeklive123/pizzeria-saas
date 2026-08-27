@@ -29,6 +29,7 @@ use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
 use App\Models\OrderItemSection;
 use App\Models\Payment;
+use App\Models\PrintAgent;
 use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
 use App\Models\Product;
@@ -263,6 +264,62 @@ class ThermalPrintingTest extends TestCase
         $this->assertSame('EPSON Cocina', $attempt->windows_printer_name);
         $this->assertSame(3, $attempt->copies);
         $this->assertStringContainsString('PRUEBA DE IMPRESIÓN', $this->decode((string) base64_decode($attempt->document_payload, true)));
+    }
+
+    public function test_operational_roles_see_agent_status_but_cannot_edit_settings(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $payload = $this->settingsPayload($company, $branch, 'EPSON Cocina', 'EPSON Tickets', 1);
+        $agent = PrintAgent::query()->create([
+            'company_id' => $company->id,
+            'branch_id' => $branch->id,
+            'name' => 'Agente sensible',
+            'token_hash' => hash('sha256', 'token-que-no-debe-mostrarse'),
+            'is_active' => true,
+            'last_seen_at' => now(),
+        ]);
+        $users = collect([MembershipRole::Cashier, MembershipRole::Waiter, MembershipRole::Kitchen])
+            ->map(function (MembershipRole $role) use ($company): User {
+                $user = User::factory()->create();
+                Membership::factory()->for($company)->for($user)->create(['role' => $role]);
+
+                return $user;
+            });
+
+        foreach ($users as $user) {
+            $this->actingInContext($user, $company, $branch)->get(route('dashboard'))
+                ->assertOk()
+                ->assertSee('Impresora')
+                ->assertSee('En línea')
+                ->assertDontSee('Agente sensible')
+                ->assertDontSee('token-que-no-debe-mostrarse');
+            $this->actingInContext($user, $company, $branch)->get(route('settings.edit'))->assertForbidden();
+            $this->actingInContext($user, $company, $branch)->put(route('settings.update'), $payload)->assertForbidden();
+        }
+        $this->actingInContext($owner, $company, $branch)->get(route('settings.edit'))
+            ->assertOk()
+            ->assertSee('En línea');
+
+        $agent->update(['last_seen_at' => now()->subMinutes(2)]);
+        $otherCompany = Company::factory()->create();
+        $otherBranch = Branch::factory()->for($otherCompany)->create();
+        PrintAgent::query()->create([
+            'company_id' => $otherCompany->id,
+            'branch_id' => $otherBranch->id,
+            'name' => 'Agente de otra empresa',
+            'token_hash' => hash('sha256', 'token-externo'),
+            'is_active' => true,
+            'last_seen_at' => now(),
+        ]);
+
+        foreach ($users as $user) {
+            $this->actingInContext($user, $company, $branch)->get(route('dashboard'))
+                ->assertOk()
+                ->assertSee('Fuera de línea');
+        }
+        $this->actingInContext($owner, $company, $branch)->get(route('settings.edit'))
+            ->assertOk()
+            ->assertSee('Fuera de línea');
     }
 
     public function test_waiter_can_reprint_kitchen_but_cannot_print_financial_ticket(): void

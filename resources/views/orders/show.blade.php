@@ -89,14 +89,28 @@
                     <form method="POST" action="{{ route('orders.items.store', $order->ulid) }}" class="mt-4 space-y-4" data-pizza-form>
                         @csrf
                         <input type="hidden" name="quantity" value="1">
-                        <div>
-                            <label class="label">Tamaño</label>
-                            <select class="input" data-pizza-size>
+                        <fieldset>
+                            <legend class="label">Tamaño</legend>
+                            <input type="hidden" value="{{ $initialPizzaSizeKey }}" data-pizza-size>
+                            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                                 @foreach ($pizzaVariants as $sizeKey => $variants)
-                                    <option value="{{ $sizeKey }}">{{ $variants->first()->name }}</option>
+                                    <label class="cursor-pointer">
+                                        <input
+                                            class="peer sr-only"
+                                            type="radio"
+                                            name="pizza_size_choice"
+                                            value="{{ $sizeKey }}"
+                                            data-pizza-size-option
+                                            @checked($loop->first)
+                                        >
+                                        <span class="flex min-h-16 flex-col justify-center rounded-xl border border-stone-200 bg-white px-3 py-2 text-left transition hover:border-orange-300 peer-checked:border-orange-500 peer-checked:bg-orange-50 peer-checked:text-orange-900 peer-checked:ring-2 peer-checked:ring-orange-200 peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500">
+                                            <strong class="text-sm">{{ $variants->first()->name }}</strong>
+                                            <span class="text-xs text-stone-500">{{ $variants->count() }} {{ $variants->count() === 1 ? 'sabor' : 'sabores' }}</span>
+                                        </span>
+                                    </label>
                                 @endforeach
-                            </select>
-                        </div>
+                            </div>
+                        </fieldset>
                         @foreach ($pizzaVariants as $sizeKey => $variants)
                             <template data-pizza-options="{{ $sizeKey }}">
                                 <option value="">Selecciona un sabor</option>
@@ -147,9 +161,38 @@
                             </div>
                         @endforeach
                         <p class="hidden rounded-xl bg-red-50 p-3 text-sm text-red-700" data-pizza-error></p>
+
+                        @if ($toppingOptions->isNotEmpty())
+                            <fieldset>
+                                <legend class="label">Toppings / extras</legend>
+                                <p class="mb-2 text-xs text-stone-500">Se aplican una vez a la pizza completa, incluso cuando combinas sabores.</p>
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    @foreach ($toppingOptions as $option)
+                                        <label class="cursor-pointer">
+                                            <input
+                                                class="peer sr-only"
+                                                type="checkbox"
+                                                name="toppings[]"
+                                                value="{{ $option->ulid }}"
+                                                data-pizza-topping
+                                                data-price-default="{{ $option->price_delta }}"
+                                                data-size-prices='@json($option->sizeRules->whereNotNull('price_delta')->mapWithKeys(fn ($rule) => [$rule->size_key => $rule->price_delta]))'
+                                            >
+                                            <span class="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white px-3 py-2 transition hover:border-orange-300 peer-checked:border-orange-500 peer-checked:bg-orange-50 peer-checked:text-orange-900 peer-checked:ring-2 peer-checked:ring-orange-200 peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500">
+                                                <strong class="text-sm">+ {{ $option->name }}</strong>
+                                                <small class="font-semibold text-orange-700" data-topping-price-label></small>
+                                            </span>
+                                        </label>
+                                    @endforeach
+                                </div>
+                            </fieldset>
+                        @endif
+
                         <div class="rounded-xl bg-orange-50 p-3 text-sm text-orange-900">
-                            <p class="font-medium" data-pizza-price>Precio estimado: —</p>
-                            <p class="mt-1 text-xs">Se usa el sabor de mayor precio. Los extras se suman y el servidor valida el total final.</p>
+                            <div class="flex justify-between"><span>Precio pizza</span><strong data-pizza-base-price>—</strong></div>
+                            <div class="mt-1 flex justify-between"><span>Extras</span><strong data-pizza-extras-price>Bs 0,00</strong></div>
+                            <div class="mt-2 flex justify-between border-t border-orange-200 pt-2 text-base"><span>TOTAL</span><strong data-pizza-price>—</strong></div>
+                            <p class="mt-2 text-xs">Estimación inmediata. El servidor recalcula y valida el precio final.</p>
                         </div>
 
                         @if ($modifierOptions->isNotEmpty())
@@ -316,6 +359,21 @@
                                             </select>
                                         </div>
                                     @endforeach
+                                    @if ($toppingOptions->isNotEmpty())
+                                        <fieldset class="col-span-3">
+                                            <legend class="label">Toppings / extras</legend>
+                                            <div class="grid gap-2 sm:grid-cols-2">
+                                                @foreach ($toppingOptions as $option)
+                                                    @php($selectedTopping = $item->modifiers->firstWhere('modifier_option_id', $option->id))
+                                                    @php($itemSizeRule = $option->sizeRules->firstWhere('size_key', $item->configuration_snapshot['size_key'] ?? null))
+                                                    <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-stone-200 p-2 text-xs">
+                                                        <input type="checkbox" name="toppings[]" value="{{ $option->ulid }}" @checked($selectedTopping)>
+                                                        <span>+ {{ $option->name }} · {{ \App\Support\UiFormatter::money($itemSizeRule?->price_delta ?? $option->price_delta) }}</span>
+                                                    </label>
+                                                @endforeach
+                                            </div>
+                                        </fieldset>
+                                    @endif
                                 @endif
                                 <button class="btn-secondary px-4 text-lg" type="button" data-quantity-step="-1">−</button>
                                 <input class="input text-center" name="quantity" value="{{ \App\Support\UiFormatter::inputQuantity($item->quantity) }}" inputmode="decimal" aria-label="Cantidad" data-quantity-input>

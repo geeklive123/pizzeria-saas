@@ -23,6 +23,7 @@ use App\Http\Controllers\RestaurantTableController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SupplierController;
+use App\Http\Controllers\ToppingController;
 use App\Http\Controllers\UnitController;
 use Illuminate\Support\Facades\Route;
 
@@ -105,6 +106,8 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/kitchen/items/{item}/ready', [KitchenController::class, 'ready'])->name('kitchen.items.ready');
 
             Route::resource('products', ProductController::class)->except(['show', 'destroy']);
+            Route::resource('toppings', ToppingController::class)->except(['show', 'destroy']);
+            Route::post('/toppings/{topping}/toggle', [ToppingController::class, 'toggle'])->name('toppings.toggle');
             Route::resource('categories', CategoryController::class)->except(['show', 'destroy']);
             Route::post('/categories/{category}/toggle', [CategoryController::class, 'toggle'])->name('categories.toggle');
             Route::resource('units', UnitController::class)->except(['show', 'destroy']);

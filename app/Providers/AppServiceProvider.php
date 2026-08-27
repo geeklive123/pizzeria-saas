@@ -16,6 +16,7 @@ use App\Models\InventoryMovement;
 use App\Models\InventoryStock;
 use App\Models\KitchenDispatch;
 use App\Models\Membership;
+use App\Models\ModifierOption;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Product;
@@ -47,10 +48,13 @@ use App\Policies\SupplierPolicy;
 use App\Printing\Contracts\ThermalPrinterTransport;
 use App\Printing\FileThermalPrinterTransport;
 use App\Printing\WindowsRawPrinterTransport;
+use App\Services\PrintAgentStatusService;
 use App\Support\BranchContext;
 use App\Support\CompanyContext;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\View\View as ViewContract;
 use InvalidArgumentException;
 
 class AppServiceProvider extends ServiceProvider
@@ -84,6 +88,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Product::class, CatalogPolicy::class);
         Gate::policy(ProductVariant::class, CatalogPolicy::class);
         Gate::policy(Ingredient::class, CatalogPolicy::class);
+        Gate::policy(ModifierOption::class, CatalogPolicy::class);
         Gate::policy(Recipe::class, RecipePolicy::class);
         Gate::policy(RecipeItem::class, RecipePolicy::class);
         Gate::policy(InventoryStock::class, InventoryPolicy::class);
@@ -104,5 +109,18 @@ class AppServiceProvider extends ServiceProvider
         Gate::define('reports.view', [ReportPolicy::class, 'view']);
         Gate::define('reports.financial', [ReportPolicy::class, 'financial']);
         Gate::define('reports.export', [ReportPolicy::class, 'export']);
+
+        View::composer('layouts.app', function (ViewContract $view): void {
+            $company = request()->attributes->get('company');
+            $branch = request()->attributes->get('branch');
+            $online = false;
+
+            if ($company instanceof Company && $branch instanceof Branch) {
+                $agents = app(PrintAgentStatusService::class);
+                $online = $agents->isOnline($agents->current($company, $branch));
+            }
+
+            $view->with('globalPrintAgentOnline', $online);
+        });
     }
 }

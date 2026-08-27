@@ -74,7 +74,14 @@
             @endcan
             <div class="my-4 border-t border-white/10"></div>
         </nav>
-        <div class="border-t border-white/10 p-4 text-xs text-stone-400">Operación local · Caja habilitada</div>
+        <div class="space-y-2 border-t border-white/10 p-4 text-xs text-stone-400">
+            <div class="flex items-center gap-2" data-print-agent-status>
+                <span class="size-2 rounded-full {{ $globalPrintAgentOnline ? 'bg-emerald-400' : 'bg-red-400' }}" aria-hidden="true"></span>
+                <span>Impresora</span>
+                <strong class="font-medium {{ $globalPrintAgentOnline ? 'text-emerald-300' : 'text-red-300' }}">{{ $globalPrintAgentOnline ? 'En línea' : 'Fuera de línea' }}</strong>
+            </div>
+            <p>Operación local · Caja habilitada</p>
+        </div>
     </aside>
 
     <div class="min-w-0 flex-1">

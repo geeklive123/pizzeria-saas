@@ -29,7 +29,7 @@ class AddConfiguredPizzaAction
     ) {}
 
     /** @param list<array<string,mixed>> $sections @param list<array<string,mixed>> $modifiers */
-    public function execute(Order $order, array $sections, int|string $quantity, User $user, ?OrderType $fulfillment = null, array $modifiers = [], ?string $notes = null): OrderItem
+    public function execute(Order $order, array $sections, int|string $quantity, User $user, ?OrderType $fulfillment = null, array $modifiers = [], ?string $notes = null, array $toppings = []): OrderItem
     {
         $this->access->ensure($user, $order->company, Permission::ManageOrders);
         $quantity = BigDecimal::of($quantity)->toScale(3, RoundingMode::HalfUp);
@@ -37,14 +37,14 @@ class AddConfiguredPizzaAction
             throw new DomainException('La cantidad debe ser mayor que cero.');
         }
 
-        return DB::transaction(function () use ($order, $sections, $quantity, $user, $fulfillment, $modifiers, $notes): OrderItem {
+        return DB::transaction(function () use ($order, $sections, $quantity, $user, $fulfillment, $modifiers, $notes, $toppings): OrderItem {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
             if ($order->status !== OrderStatus::Open) {
                 throw new DomainException('Solo una cuenta abierta puede recibir productos.');
             }
 
             $fulfillment ??= $order->type;
-            $result = $this->composition->compose($order->company, $sections, $modifiers, $fulfillment);
+            $result = $this->composition->compose($order->company, $sections, $modifiers, $fulfillment, $toppings);
             $lineTotal = BigDecimal::of($result['unit_price'])->multipliedBy($quantity)->toScale(2, RoundingMode::HalfUp);
             $item = OrderItem::query()->create([
                 'company_id' => $order->company_id,
@@ -88,7 +88,7 @@ class AddConfiguredPizzaAction
                     'type' => $modifier['type'],
                     'name_snapshot' => $modifier['name_snapshot'],
                     'price_delta_snapshot' => $modifier['price_delta_snapshot'],
-                    'inventory_item_id' => $modifier['inventory_item']->id,
+                    'inventory_item_id' => $modifier['inventory_item']?->id,
                     'quantity_snapshot' => $modifier['quantity_snapshot'],
                     'unit_id' => $modifier['unit_id'],
                 ]);

@@ -29,7 +29,7 @@ class UpdateConfiguredPizzaAction
     ) {}
 
     /** @param list<array<string,mixed>> $sections @param list<array<string,mixed>> $modifiers */
-    public function execute(OrderItem $item, array $sections, int|string $quantity, User $user, OrderType $fulfillment, array $modifiers = [], ?string $notes = null): OrderItem
+    public function execute(OrderItem $item, array $sections, int|string $quantity, User $user, OrderType $fulfillment, array $modifiers = [], ?string $notes = null, array $toppings = []): OrderItem
     {
         $this->access->ensure($user, $item->company, Permission::ManageOrders);
         $quantity = BigDecimal::of($quantity)->toScale(3, RoundingMode::HalfUp);
@@ -37,13 +37,13 @@ class UpdateConfiguredPizzaAction
             throw new DomainException('La cantidad debe ser mayor que cero.');
         }
 
-        return DB::transaction(function () use ($item, $sections, $quantity, $fulfillment, $modifiers, $notes): OrderItem {
+        return DB::transaction(function () use ($item, $sections, $quantity, $fulfillment, $modifiers, $notes, $toppings): OrderItem {
             $item = OrderItem::query()->with(['company', 'order', 'sections', 'modifiers'])->lockForUpdate()->findOrFail($item->id);
             if ($item->status !== OrderItemStatus::Draft || $item->order->status !== OrderStatus::Open) {
                 throw new DomainException('Una línea enviada no se edita; debe cancelarse y agregarse nuevamente.');
             }
 
-            $result = $this->composition->compose($item->company, $sections, $modifiers, $fulfillment);
+            $result = $this->composition->compose($item->company, $sections, $modifiers, $fulfillment, $toppings);
             $this->release->execute($item, $item->quantity);
             $item->modifiers()->delete();
             $item->sections()->delete();
@@ -73,7 +73,7 @@ class UpdateConfiguredPizzaAction
                     'order_item_section_id' => $modifier['section_position'] ? $sectionModels[$modifier['section_position']]->id : null,
                     'modifier_option_id' => $modifier['option']->id, 'type' => $modifier['type'],
                     'name_snapshot' => $modifier['name_snapshot'], 'price_delta_snapshot' => $modifier['price_delta_snapshot'],
-                    'inventory_item_id' => $modifier['inventory_item']->id, 'quantity_snapshot' => $modifier['quantity_snapshot'],
+                    'inventory_item_id' => $modifier['inventory_item']?->id, 'quantity_snapshot' => $modifier['quantity_snapshot'],
                     'unit_id' => $modifier['unit_id'],
                 ]);
             }

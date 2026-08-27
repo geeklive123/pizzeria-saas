@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\ModifierOptionType;
 use App\Enums\OrderType;
+use App\Enums\ProductModifierPurpose;
 use App\Enums\ProductType;
 use App\Enums\RecipeComponentType;
 use App\Models\Company;
@@ -26,9 +27,10 @@ class PizzaCompositionService
      *
      * @param  list<array<string, mixed>>  $sectionData
      * @param  list<array<string, mixed>>  $modifierData
+     * @param  list<mixed>  $toppingData
      * @return array{unit_price:string, primary_variant:ProductVariant, sections:list<array<string,mixed>>, modifiers:list<array<string,mixed>>, requirements:list<array{inventory_item:InventoryItem,quantity:string}>, snapshot:array<string,mixed>}
      */
-    public function compose(Company $company, array $sectionData, array $modifierData, OrderType $fulfillment): array
+    public function compose(Company $company, array $sectionData, array $modifierData, OrderType $fulfillment, array $toppingData = []): array
     {
         if ($sectionData === [] || count($sectionData) > 4) {
             throw new DomainException('Una pizza debe tener entre 1 y 4 sabores.');
@@ -170,6 +172,7 @@ class PizzaCompositionService
 
             $modifierSnapshots[] = [
                 'option' => $option,
+                'purpose' => ProductModifierPurpose::OrderModifier,
                 'section_position' => $sectionPosition,
                 'type' => $option->type,
                 'name_snapshot' => $option->name,
@@ -177,6 +180,53 @@ class PizzaCompositionService
                 'inventory_item' => $inventoryItem,
                 'quantity_snapshot' => (string) $this->decimal($quantity, 3),
                 'unit_id' => $inventoryItem->unit_id,
+                'size_key_snapshot' => null,
+                'price_source' => 'general',
+            ];
+        }
+
+        $selectedToppings = [];
+        foreach ($toppingData as $data) {
+            $option = $this->resolveTopping($company, $data);
+            if (isset($selectedToppings[$option->getKey()])) {
+                throw new DomainException('El topping '.$option->name.' está seleccionado más de una vez.');
+            }
+            $selectedToppings[$option->getKey()] = true;
+
+            $sizeRule = $option->sizeRules->firstWhere('size_key', $sizeKey);
+            $usesSizePrice = $sizeRule?->price_delta !== null;
+            $appliedPrice = BigDecimal::of($usesSizePrice ? $sizeRule->price_delta : ($option->price_delta ?? '0'));
+            $price = $price->plus($appliedPrice);
+
+            $inventoryItem = $option->inventoryItem;
+            $quantity = null;
+            if ($inventoryItem) {
+                if (! $inventoryItem->is_active) {
+                    throw new DomainException('El topping '.$option->name.' no tiene un artículo de inventario activo.');
+                }
+
+                $configuredQuantity = $sizeRule?->quantity ?? $option->quantity;
+                if ($configuredQuantity === null) {
+                    throw new DomainException('El topping '.$option->name.' no tiene una cantidad configurada para este tamaño.');
+                }
+
+                $quantity = BigRational::of($configuredQuantity);
+                $inventoryItems[$inventoryItem->id] = $inventoryItem;
+                $totals[$inventoryItem->id] = ($totals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+            }
+
+            $modifierSnapshots[] = [
+                'option' => $option,
+                'purpose' => ProductModifierPurpose::ToppingCatalog,
+                'section_position' => null,
+                'type' => ModifierOptionType::Add,
+                'name_snapshot' => $option->name,
+                'price_delta_snapshot' => (string) $appliedPrice->toScale(2, RoundingMode::HalfUp),
+                'inventory_item' => $inventoryItem,
+                'quantity_snapshot' => $quantity ? (string) $this->decimal($quantity, 3) : null,
+                'unit_id' => $inventoryItem?->unit_id,
+                'size_key_snapshot' => $sizeKey,
+                'price_source' => $usesSizePrice ? 'size_rule' : 'general',
             ];
         }
 
@@ -230,12 +280,16 @@ class PizzaCompositionService
                     'unit_price' => $section['unit_price_snapshot'],
                 ], $sectionSnapshots),
                 'modifiers' => array_map(fn (array $modifier): array => [
+                    'purpose' => $modifier['purpose']->value,
                     'section_position' => $modifier['section_position'],
                     'type' => $modifier['type']->value,
                     'name' => $modifier['name_snapshot'],
                     'price_delta' => $modifier['price_delta_snapshot'],
                     'quantity' => $modifier['quantity_snapshot'],
-                    'inventory_item' => $modifier['inventory_item']->name,
+                    'inventory_item_id' => $modifier['inventory_item']?->id,
+                    'inventory_item' => $modifier['inventory_item']?->name,
+                    'size_key' => $modifier['size_key_snapshot'],
+                    'price_source' => $modifier['price_source'],
                 ], $modifierSnapshots),
                 'packaging' => $packaging,
                 'requirements' => array_map(fn (array $requirement): array => [
@@ -269,6 +323,7 @@ class PizzaCompositionService
     {
         $candidate = $data['option'] ?? $data['modifier_option'] ?? $data['option_id'] ?? null;
         $query = ModifierOption::query()->forCompany($company)->where('is_active', true)
+            ->whereHas('modifier', fn ($query) => $query->where('purpose', ProductModifierPurpose::OrderModifier))
             ->with(['modifier', 'inventoryItem', 'ingredient.inventoryItem']);
         $option = $candidate instanceof ModifierOption
             ? $query->find($candidate->id)
@@ -276,6 +331,27 @@ class PizzaCompositionService
 
         if (! $option || ! $option->modifier->is_active) {
             throw new DomainException('El modificador elegido no está disponible.');
+        }
+
+        return $option;
+    }
+
+    private function resolveTopping(Company $company, mixed $data): ModifierOption
+    {
+        $candidate = is_array($data)
+            ? ($data['option'] ?? $data['topping'] ?? $data['topping_id'] ?? null)
+            : $data;
+        $query = ModifierOption::query()->forCompany($company)->where('is_active', true)
+            ->where('type', ModifierOptionType::Add)
+            ->whereHas('modifier', fn ($query) => $query->where('is_active', true)
+                ->where('purpose', ProductModifierPurpose::ToppingCatalog))
+            ->with(['modifier', 'inventoryItem', 'sizeRules']);
+        $option = $candidate instanceof ModifierOption
+            ? $query->find($candidate->id)
+            : (is_numeric($candidate) ? $query->find($candidate) : $query->where('ulid', $candidate)->first());
+
+        if (! $option) {
+            throw new DomainException('El topping elegido no está disponible.');
         }
 
         return $option;

@@ -90,6 +90,9 @@ class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
         $javascript = file_get_contents(resource_path('js/app.js'));
         $this->assertStringContainsString('resetCombination();', $javascript);
         $this->assertStringContainsString("['mediana', 'familiar'].includes(size.value)", $javascript);
+        $this->assertStringContainsString('[data-pizza-size-option]', $javascript);
+        $this->assertStringContainsString('changePizzaSize(option.value)', $javascript);
+        $this->assertStringContainsString('priceInCents', $javascript);
 
         $pizza = ProductVariant::query()->forCompany($company)->where('size_key', 'personal')->where('is_active', true)
             ->whereHas('product', fn ($query) => $query->where('type', 'pizza'))->firstOrFail();

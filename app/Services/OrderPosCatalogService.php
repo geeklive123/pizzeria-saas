@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\ProductModifierPurpose;
 use App\Enums\ProductType;
 use App\Models\Branch;
 use App\Models\Company;
@@ -35,9 +36,14 @@ class OrderPosCatalogService
             fn ($variants, string $sizeKey) => $variants->mapWithKeys(fn ($variant) => [$variant->id => $sizeKey]),
         );
         $modifierOptions = ModifierOption::query()->forCompany($company)->where('is_active', true)
-            ->whereHas('modifier', fn ($query) => $query->where('is_active', true))
+            ->whereHas('modifier', fn ($query) => $query->where('is_active', true)
+                ->where('purpose', ProductModifierPurpose::OrderModifier))
             ->with('modifier')->orderBy('sort_order')->get();
+        $toppingOptions = ModifierOption::query()->forCompany($company)->where('is_active', true)
+            ->whereHas('modifier', fn ($query) => $query->where('is_active', true)
+                ->where('purpose', ProductModifierPurpose::ToppingCatalog))
+            ->with(['modifier', 'sizeRules'])->orderBy('sort_order')->orderBy('name')->get();
 
-        return compact('products', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions');
+        return compact('products', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions');
     }
 }

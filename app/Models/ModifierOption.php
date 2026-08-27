@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\ModifierOptionType;
+use App\Enums\ProductModifierPurpose;
 use App\Models\Concerns\BelongsToCompany;
 use Brick\Math\BigDecimal;
 use DomainException;
@@ -10,8 +11,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['company_id', 'product_modifier_id', 'name', 'type', 'price_delta', 'inventory_item_id', 'ingredient_id', 'quantity', 'unit_id', 'is_active', 'sort_order'])]
+#[Fillable(['company_id', 'product_modifier_id', 'name', 'description', 'type', 'price_delta', 'inventory_item_id', 'ingredient_id', 'quantity', 'unit_id', 'is_active', 'sort_order'])]
 class ModifierOption extends Model
 {
     use BelongsToCompany, HasUlids;
@@ -23,7 +25,15 @@ class ModifierOption extends Model
                 throw new DomainException('El ajuste de precio no puede ser negativo.');
             }
 
-            if ($option->type === ModifierOptionType::Add && (! $option->inventory_item_id || ! $option->quantity || ! $option->unit_id)) {
+            $modifier = ProductModifier::query()->whereKey($option->product_modifier_id)
+                ->where('company_id', $option->company_id)->first();
+            if (! $modifier) {
+                throw new DomainException('La opción y el modificador deben pertenecer a la misma empresa.');
+            }
+
+            $isToppingCatalog = $modifier->purpose === ProductModifierPurpose::ToppingCatalog;
+            if ($option->type === ModifierOptionType::Add && ! $isToppingCatalog
+                && (! $option->inventory_item_id || ! $option->quantity || ! $option->unit_id)) {
                 throw new DomainException('Un extra debe definir artículo, cantidad y unidad de inventario.');
             }
 
@@ -31,9 +41,13 @@ class ModifierOption extends Model
                 throw new DomainException('Una remoción debe identificar el ingrediente que descuenta.');
             }
 
-            if (! ProductModifier::query()->whereKey($option->product_modifier_id)
-                ->where('company_id', $option->company_id)->exists()) {
-                throw new DomainException('La opción y el modificador deben pertenecer a la misma empresa.');
+            if ($isToppingCatalog && ! $option->inventory_item_id
+                && ($option->ingredient_id || $option->quantity || $option->unit_id)) {
+                throw new DomainException('Un topping sin inventario no puede definir ingrediente, unidad ni cantidad.');
+            }
+
+            if ($isToppingCatalog && $option->inventory_item_id && ! $option->unit_id) {
+                throw new DomainException('Un topping inventariable debe usar la unidad de su artículo de inventario.');
             }
 
             $inventoryItem = $option->inventory_item_id
@@ -85,5 +99,10 @@ class ModifierOption extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(Unit::class);
+    }
+
+    public function sizeRules(): HasMany
+    {
+        return $this->hasMany(ModifierOptionSizeRule::class)->orderBy('size_key');
     }
 }

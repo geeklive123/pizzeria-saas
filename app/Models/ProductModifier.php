@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ProductModifierPurpose;
 use App\Models\Concerns\BelongsToCompany;
 use DomainException;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -10,7 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['company_id', 'product_id', 'name', 'is_active', 'sort_order'])]
+#[Fillable(['company_id', 'product_id', 'purpose', 'name', 'is_active', 'sort_order'])]
 class ProductModifier extends Model
 {
     use BelongsToCompany, HasUlids;
@@ -32,7 +33,11 @@ class ProductModifier extends Model
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean', 'sort_order' => 'integer'];
+        return [
+            'purpose' => ProductModifierPurpose::class,
+            'is_active' => 'boolean',
+            'sort_order' => 'integer',
+        ];
     }
 
     public function product(): BelongsTo

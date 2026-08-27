@@ -27,6 +27,8 @@ class UpdateOrderItemRequest extends FormRequest
             'modifiers' => ['nullable', 'array'],
             'modifiers.*.option' => ['nullable', 'string', Rule::exists('modifier_options', 'ulid')->where('company_id', $companyId)],
             'modifiers.*.section_position' => ['nullable', 'integer', 'min:1', 'max:4'],
+            'toppings' => ['nullable', 'array'],
+            'toppings.*' => ['required', 'string', 'distinct', Rule::exists('modifier_options', 'ulid')->where('company_id', $companyId)],
         ];
     }
 

@@ -37,10 +37,14 @@ document.querySelectorAll('[data-pos-category]').forEach((button, index) => {
 
 document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
     const size = composer.querySelector('[data-pizza-size]');
+    const sizeOptions = [...composer.querySelectorAll('[data-pizza-size-option]')];
     const rows = [...composer.querySelectorAll('[data-pizza-section]')];
     const form = composer.querySelector('[data-pizza-form]');
     const error = composer.querySelector('[data-pizza-error]');
     const price = composer.querySelector('[data-pizza-price]');
+    const basePrice = composer.querySelector('[data-pizza-base-price]');
+    const extrasPrice = composer.querySelector('[data-pizza-extras-price]');
+    const toppings = [...composer.querySelectorAll('[data-pizza-topping]')];
     const compatibility = composer.querySelector('[data-pizza-compatibility]');
     const combineToggle = composer.querySelector('[data-pizza-combine-toggle]');
     const combination = composer.querySelector('[data-pizza-combination]');
@@ -79,7 +83,13 @@ document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
 
     const formatCents = (value) => `Bs ${(value / 100n).toString()},${(value % 100n).toString().padStart(2, '0')}`;
 
+    const toppingPrice = (topping) => {
+        const sizePrices = JSON.parse(topping.dataset.sizePrices || '{}');
+        return priceInCents(sizePrices[size.value] ?? topping.dataset.priceDefault ?? '0');
+    };
+
     const refresh = () => {
+        sizeOptions.forEach((option) => { option.checked = option.value === size.value; });
         const canCombine = ['mediana', 'familiar'].includes(size.value);
         if (combineToggle) combineToggle.hidden = !canCombine;
         if (!canCombine && sectionCount > 1) resetCombination();
@@ -132,9 +142,19 @@ document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
             .map((row) => row.querySelector('[data-pizza-variant]').selectedOptions[0]?.dataset.price)
             .filter(Boolean)
             .map(priceInCents);
-        price.textContent = prices.length > 0
-            ? `Precio estimado: ${formatCents(prices.reduce((highest, candidate) => candidate > highest ? candidate : highest, 0n))}`
-            : 'Precio estimado: —';
+        const pizzaCents = prices.length > 0
+            ? prices.reduce((highest, candidate) => candidate > highest ? candidate : highest, 0n)
+            : null;
+        let toppingCents = 0n;
+        toppings.forEach((topping) => {
+            const cents = toppingPrice(topping);
+            topping.closest('label')?.querySelector('[data-topping-price-label]')
+                ?.replaceChildren(document.createTextNode(`+ ${formatCents(cents)}`));
+            if (topping.checked) toppingCents += cents;
+        });
+        basePrice.textContent = pizzaCents === null ? '—' : formatCents(pizzaCents);
+        extrasPrice.textContent = formatCents(toppingCents);
+        price.textContent = pizzaCents === null ? '—' : formatCents(pizzaCents + toppingCents);
         error.hidden = true;
         error.textContent = '';
 
@@ -159,8 +179,10 @@ document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
         resetCombination();
         refresh();
     });
-    size?.addEventListener('change', () => {
+    const changePizzaSize = (sizeKey) => {
+        if (!optionTemplates.has(sizeKey)) return;
         const selectedProductId = rows[0].querySelector('[data-pizza-variant]').selectedOptions[0]?.dataset.productId;
+        size.value = sizeKey;
         rows.forEach((row) => {
             const variant = row.querySelector('[data-pizza-variant]');
             delete variant.dataset.loadedSizeKey;
@@ -172,7 +194,11 @@ document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
             .find((option) => option.dataset.productId === selectedProductId);
         if (compatibleFlavor) rows[0].querySelector('[data-pizza-variant]').value = compatibleFlavor.value;
         refresh();
-    });
+    };
+    sizeOptions.forEach((option) => option.addEventListener('change', () => {
+        if (option.checked) changePizzaSize(option.value);
+    }));
+    toppings.forEach((topping) => topping.addEventListener('change', refresh));
     rows.forEach((row) => row.querySelector('[data-pizza-variant]')?.addEventListener('change', refresh));
     form?.addEventListener('submit', (event) => {
         const flavors = rows.slice(0, sectionCount).map((row) => row.querySelector('[data-pizza-variant]').value);
@@ -188,15 +214,8 @@ document.querySelectorAll('[data-pizza-composer]').forEach((composer) => {
     });
     composer.addEventListener('pizza:open', (event) => {
         composer.hidden = false;
-        size.value = event.detail.sizeKey;
-        rows.forEach((row) => {
-            const variant = row.querySelector('[data-pizza-variant]');
-            delete variant.dataset.loadedSizeKey;
-            variant.replaceChildren();
-        });
-        sectionCount = 1;
-        if (combination) combination.hidden = true;
-        refresh();
+        toppings.forEach((topping) => { topping.checked = false; });
+        changePizzaSize(event.detail.sizeKey);
         rows[0].querySelector('[data-pizza-variant]').value = event.detail.variant;
         refresh();
         composer.scrollIntoView({ behavior: 'smooth', block: 'start' });

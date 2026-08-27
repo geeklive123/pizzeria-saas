@@ -16,6 +16,7 @@ use App\Models\Membership;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Purchase;
+use App\Models\Recipe;
 use App\Models\Unit;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -109,6 +110,77 @@ class WebUiTest extends TestCase
             ->assertOk()
             ->assertSee('Ingrediente sin caducidad')
             ->assertSee('Sin caducidad');
+    }
+
+    public function test_dashboard_attention_renders_human_messages_without_blade_source(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $unit = $this->unit($company);
+
+        $outIngredient = Ingredient::factory()->for($company)->for($unit)->create();
+        InventoryItem::factory()->for($company)->for($unit)->create([
+            'ingredient_id' => $outIngredient->id,
+            'name' => 'Ingrediente agotado',
+        ]);
+
+        $lowIngredient = Ingredient::factory()->for($company)->for($unit)->create();
+        $lowItem = InventoryItem::factory()->for($company)->for($unit)->create([
+            'ingredient_id' => $lowIngredient->id,
+            'name' => 'Ingrediente con stock bajo',
+        ]);
+        InventoryStock::factory()->create([
+            'company_id' => $company->id,
+            'branch_id' => $branch->id,
+            'inventory_item_id' => $lowItem->id,
+            'quantity' => '2.000',
+            'minimum_quantity' => '5.000',
+        ]);
+
+        $expiringIngredient = Ingredient::factory()->for($company)->for($unit)->create();
+        $expiringItem = InventoryItem::factory()->for($company)->for($unit)->create([
+            'ingredient_id' => $expiringIngredient->id,
+            'name' => 'Ingrediente por vencer',
+        ]);
+        InventoryStock::factory()->create([
+            'company_id' => $company->id,
+            'branch_id' => $branch->id,
+            'inventory_item_id' => $expiringItem->id,
+            'quantity' => '10.000',
+            'minimum_quantity' => '1.000',
+        ]);
+        InventoryBatch::factory()->create([
+            'company_id' => $company->id,
+            'branch_id' => $branch->id,
+            'inventory_item_id' => $expiringItem->id,
+            'quantity_received' => '10.000',
+            'quantity_remaining' => '10.000',
+            'expires_at' => now('America/La_Paz')->addDays(3)->toDateString(),
+        ]);
+
+        $pizza = Product::factory()->for($company)->create([
+            'name' => 'Pizza sin receta completa',
+            'type' => ProductType::Pizza,
+        ]);
+        $variant = ProductVariant::factory()->for($company)->for($pizza)->create([
+            'name' => 'Mediana',
+            'requires_preparation' => true,
+        ]);
+        Recipe::factory()->for($company)->for($variant)->create(['is_active' => true]);
+
+        $response = $this->asUser($owner, $company, $branch)->get(route('dashboard'));
+
+        $response->assertOk()
+            ->assertSee('Agotado')
+            ->assertSee('Stock bajo')
+            ->assertSee('Próximo a vencer')
+            ->assertSee('Sin vencimiento próximo')
+            ->assertSee('Receta incompleta')
+            ->assertSee('Ver inventario')
+            ->assertDontSee('@if', false)
+            ->assertDontSee('@elseif', false)
+            ->assertDontSee('@else', false)
+            ->assertDontSee('App\\Enums', false)
+            ->assertDontSee('if($item->expiration_status', false);
     }
 
     public function test_company_resources_are_not_opened_from_another_company(): void
