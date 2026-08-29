@@ -68,6 +68,10 @@ class KitchenCommandRenderer
             return $quantity.' x PIZZA '.mb_strtoupper($item->sections->first()->variant_name_snapshot);
         }
 
+        if (($item->configuration_snapshot['type'] ?? null) === 'promotion') {
+            return $quantity.' x '.mb_strtoupper($item->displayName());
+        }
+
         $product = mb_strtoupper($item->productVariant->product->name);
         $variant = mb_strtoupper($item->productVariant->name);
 

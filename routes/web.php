@@ -16,6 +16,7 @@ use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MembershipController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ProductController;
+use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\PurchaseController;
 use App\Http\Controllers\RecipeController;
 use App\Http\Controllers\ReportController;
@@ -58,6 +59,7 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');
             Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
             Route::post('/orders/{order}/items', [OrderController::class, 'addItem'])->name('orders.items.store');
+            Route::post('/orders/{order}/promotions', [OrderController::class, 'addPromotion'])->name('orders.promotions.store');
             Route::post('/orders/{order}/dispatch', [OrderController::class, 'dispatch'])->name('orders.dispatch');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/print', [OrderController::class, 'printKitchen'])->name('orders.kitchen.print');
             Route::put('/orders/{order}/items/{item}', [OrderController::class, 'updateItem'])->name('orders.items.update');
@@ -106,6 +108,8 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/kitchen/items/{item}/ready', [KitchenController::class, 'ready'])->name('kitchen.items.ready');
 
             Route::resource('products', ProductController::class)->except(['show', 'destroy']);
+            Route::resource('promotions', PromotionController::class)->except(['show', 'destroy']);
+            Route::post('/promotions/{promotion}/toggle', [PromotionController::class, 'toggle'])->name('promotions.toggle');
             Route::resource('toppings', ToppingController::class)->except(['show', 'destroy']);
             Route::post('/toppings/{topping}/toggle', [ToppingController::class, 'toggle'])->name('toppings.toggle');
             Route::resource('categories', CategoryController::class)->except(['show', 'destroy']);

@@ -83,12 +83,17 @@ class SalesReportService
 
     private function productRanking(Collection $items, bool $variant): Collection
     {
-        return $items->groupBy(fn (OrderItem $item) => $variant ? $item->product_variant_id : $item->productVariant->product_id)
+        return $items->groupBy(function (OrderItem $item) use ($variant): string|int {
+            $promotionUlid = $item->configuration_snapshot['promotion']['ulid'] ?? null;
+
+            return $promotionUlid ? 'promotion:'.$promotionUlid : ($variant ? $item->product_variant_id : $item->productVariant->product_id);
+        })
             ->map(function (Collection $group) use ($variant): array {
                 $first = $group->first();
+                $promotionName = $first->configuration_snapshot['promotion']['name'] ?? null;
 
                 return [
-                    'name' => $variant ? $first->productVariant->product->name.' · '.$first->productVariant->name : $first->productVariant->product->name,
+                    'name' => $promotionName ?: ($variant ? $first->productVariant->product->name.' · '.$first->productVariant->name : $first->productVariant->product->name),
                     'quantity' => $this->sumQuantity($group, 'quantity'),
                     'revenue' => $this->sum($group, 'line_total'),
                 ];
@@ -97,7 +102,9 @@ class SalesReportService
 
     private function categoryRanking(Collection $items): Collection
     {
-        return $items->groupBy(fn (OrderItem $item) => $item->productVariant->product->category?->name ?? 'Sin categoría')
+        return $items->groupBy(fn (OrderItem $item) => ($item->configuration_snapshot['type'] ?? null) === 'promotion'
+            ? 'Promociones'
+            : ($item->productVariant->product->category?->name ?? 'Sin categoría'))
             ->map(fn (Collection $group, string $name) => ['name' => $name, 'count' => $this->sumQuantity($group, 'quantity'), 'amount' => $this->sum($group, 'line_total')])
             ->sort(fn (array $left, array $right) => BigDecimal::of($right['amount'])->compareTo($left['amount']))->values();
     }

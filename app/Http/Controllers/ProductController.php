@@ -17,7 +17,8 @@ class ProductController extends Controller
     public function index(SellableAvailabilityService $availability): View
     {
         Gate::authorize('viewAny', Product::class);
-        $products = Product::query()->forCompany($this->company())->with(['category', 'variants.recipe'])->orderBy('name')->paginate(15);
+        $products = Product::query()->forCompany($this->company())->whereDoesntHave('variants.promotion')
+            ->with(['category', 'variants.recipe'])->orderBy('name')->paginate(15);
         $products->getCollection()->each(function (Product $product) use ($availability): void {
             $product->variants->each(fn ($variant) => $variant->setAttribute(
                 'sellable_availability',
@@ -75,6 +76,7 @@ class ProductController extends Controller
 
     private function find(string $ulid): Product
     {
-        return Product::query()->forCompany($this->company())->where('ulid', $ulid)->firstOrFail();
+        return Product::query()->forCompany($this->company())->whereDoesntHave('variants.promotion')
+            ->where('ulid', $ulid)->firstOrFail();
     }
 }

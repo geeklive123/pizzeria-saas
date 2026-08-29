@@ -21,6 +21,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Models\Promotion;
 use App\Models\Purchase;
 use App\Models\PurchaseItem;
 use App\Models\Recipe;
@@ -87,6 +88,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Category::class, CatalogPolicy::class);
         Gate::policy(Product::class, CatalogPolicy::class);
         Gate::policy(ProductVariant::class, CatalogPolicy::class);
+        Gate::policy(Promotion::class, CatalogPolicy::class);
         Gate::policy(Ingredient::class, CatalogPolicy::class);
         Gate::policy(ModifierOption::class, CatalogPolicy::class);
         Gate::policy(Recipe::class, RecipePolicy::class);

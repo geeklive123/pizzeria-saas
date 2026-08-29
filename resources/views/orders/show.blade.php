@@ -64,6 +64,9 @@
                 <input class="input" type="search" placeholder="Buscar producto..." data-pos-search autofocus>
                 <div class="mt-3 flex flex-wrap gap-2">
                     <button class="btn-secondary" type="button" data-pos-category="all">Todos</button>
+                    @if ($promotions->isNotEmpty())
+                        <button class="btn-secondary" type="button" data-pos-category="promotions">Promociones</button>
+                    @endif
                     @foreach ($products->pluck('category')->filter()->unique('id') as $category)
                         <button class="btn-secondary" type="button" data-pos-category="{{ $category->id }}">{{ $category->name }}</button>
                     @endforeach
@@ -241,6 +244,26 @@
             @endif
 
             <div class="grid gap-4 md:grid-cols-2">
+                @foreach ($promotions as $promotion)
+                    @php($promotionAvailable = \Brick\Math\BigDecimal::of($promotion->sellable_availability->availableQuantity)->isGreaterThan(0))
+                    <article class="card border-orange-200 bg-orange-50/40 p-5" data-pos-product data-name="{{ str($promotion->productVariant->product->name)->lower() }}" data-category="promotions" data-product-kind="promotion">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-orange-700">Promoción</p>
+                        <h2 class="mt-1 text-lg font-semibold">{{ $promotion->productVariant->product->name }}</h2>
+                        <p class="mt-1 text-xl font-bold text-orange-700">{{ \App\Support\UiFormatter::money($promotion->productVariant->price) }}</p>
+                        <div class="mt-3 space-y-1 text-xs text-stone-600">
+                            @foreach ($promotion->components as $component)
+                                <p>{{ $component->inventoryItem->name }} × {{ \App\Support\UiFormatter::quantity($component->quantity, $component->inventoryItem->unit->symbol) }}</p>
+                            @endforeach
+                        </div>
+                        <p class="mt-3 text-xs {{ $promotionAvailable ? 'text-emerald-700' : 'text-red-700' }}">{{ $promotionAvailable ? 'Disponibles: '.\App\Support\UiFormatter::inputQuantity($promotion->sellable_availability->availableQuantity) : 'AGOTADO' }}</p>
+                        <form method="POST" action="{{ route('orders.promotions.store', $order->ulid) }}" class="mt-4">
+                            @csrf
+                            <input type="hidden" name="promotion" value="{{ $promotion->ulid }}">
+                            <input type="hidden" name="quantity" value="1">
+                            <button class="btn-primary w-full" @disabled(! $promotionAvailable)>Agregar promoción</button>
+                        </form>
+                    </article>
+                @endforeach
                 @foreach ($products as $product)
                     <article class="card p-5" data-pos-product data-name="{{ str($product->name)->lower() }}" data-category="{{ $product->category_id }}" data-product-kind="{{ $product->type->value }}">
                         <h2 class="text-lg font-semibold">{{ $product->name }}</h2>
@@ -302,9 +325,14 @@
                 <div class="p-4 {{ $item->status === \App\Enums\OrderItemStatus::Cancelled ? 'opacity-50' : '' }}">
                     <div class="flex justify-between gap-3">
                         <div>
-                            <p class="font-semibold">{{ $item->sections->isNotEmpty() ? 'Pizza '.$item->sections->first()->variant_name_snapshot : $item->productVariant->product->name.' · '.$item->productVariant->name }}</p>
+                            <p class="font-semibold">{{ $item->displayName() }}</p>
                             @if ($item->sections->isNotEmpty())
                                 <p class="text-sm text-stone-700">{{ $item->sections->pluck('product_name_snapshot')->join(' / ') }}</p>
+                            @endif
+                            @if (($item->configuration_snapshot['type'] ?? null) === 'promotion')
+                                @foreach ($item->configuration_snapshot['components'] ?? [] as $component)
+                                    <p class="text-xs text-stone-500">{{ $component['inventory_item_name'] }} × {{ \App\Support\UiFormatter::quantity($component['quantity_applied'], $component['unit_symbol'] ?? null) }}</p>
+                                @endforeach
                             @endif
                             <p class="text-xs text-stone-500">Cantidad: {{ \App\Support\UiFormatter::quantity($item->quantity) }}</p>
                             <p class="text-xs text-stone-500">{{ $item->fulfillment_type === \App\Enums\OrderType::Takeaway ? 'Para llevar' : 'Comer aquí' }} · {{ \App\Support\UiFormatter::orderItemStatus($item->status) }}</p>

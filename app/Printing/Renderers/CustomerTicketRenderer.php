@@ -74,9 +74,13 @@ class CustomerTicketRenderer
             $flavors = $item->sections->pluck('product_name_snapshot')->join('/');
             $name = $flavors.' '.$item->sections->first()->variant_name_snapshot;
         } else {
-            $product = $item->productVariant->product->name;
-            $variant = $item->productVariant->name;
-            $name = $product.($variant !== $product ? ' '.$variant : '');
+            if (($item->configuration_snapshot['type'] ?? null) === 'promotion') {
+                $name = $item->displayName();
+            } else {
+                $product = $item->productVariant->product->name;
+                $variant = $item->productVariant->name;
+                $name = $product.($variant !== $product ? ' '.$variant : '');
+            }
         }
 
         return $quantity.' '.mb_strtoupper($name);

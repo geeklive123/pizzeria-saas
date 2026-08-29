@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
-#[Fillable(['company_id', 'branch_id', 'order_id', 'product_variant_id', 'quantity', 'unit_price', 'line_total', 'fulfillment_type', 'requires_preparation', 'status', 'notes', 'configuration_snapshot', 'created_by', 'sent_at', 'preparing_at', 'ready_at', 'served_at', 'cancelled_at', 'cancelled_by', 'cancellation_reason'])]
+#[Fillable(['company_id', 'branch_id', 'order_id', 'product_variant_id', 'promotion_id', 'quantity', 'unit_price', 'line_total', 'fulfillment_type', 'requires_preparation', 'status', 'notes', 'configuration_snapshot', 'created_by', 'sent_at', 'preparing_at', 'ready_at', 'served_at', 'cancelled_at', 'cancelled_by', 'cancellation_reason'])]
 class OrderItem extends Model
 {
     use BelongsToCompany, HasFactory, HasUlids;
@@ -49,6 +49,24 @@ class OrderItem extends Model
     public function productVariant(): BelongsTo
     {
         return $this->belongsTo(ProductVariant::class);
+    }
+
+    public function promotion(): BelongsTo
+    {
+        return $this->belongsTo(Promotion::class);
+    }
+
+    public function displayName(): string
+    {
+        $promotionName = $this->configuration_snapshot['promotion']['name'] ?? null;
+        if (is_string($promotionName) && $promotionName !== '') {
+            return $promotionName;
+        }
+        if ($this->sections->isNotEmpty()) {
+            return 'Pizza '.$this->sections->first()->variant_name_snapshot;
+        }
+
+        return $this->productVariant->product->name.' · '.$this->productVariant->name;
     }
 
     public function createdBy(): BelongsTo

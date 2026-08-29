@@ -41,6 +41,7 @@
                 @include('partials.nav-link', ['route' => 'categories.index', 'label' => 'Categorías', 'icon' => '≡', 'pattern' => 'categories.*'])
                 @include('partials.nav-link', ['route' => 'units.index', 'label' => 'Unidades', 'icon' => 'u', 'pattern' => 'units.*'])
                 @include('partials.nav-link', ['route' => 'products.index', 'label' => 'Productos', 'icon' => '◫', 'pattern' => 'products.*'])
+                @include('partials.nav-link', ['route' => 'promotions.index', 'label' => 'Promociones', 'icon' => '%', 'pattern' => 'promotions.*'])
                 @include('partials.nav-link', ['route' => 'ingredients.index', 'label' => 'Ingredientes', 'icon' => '◇', 'pattern' => 'ingredients.*'])
             @endcan
             @can('viewAny', \App\Models\Recipe::class)

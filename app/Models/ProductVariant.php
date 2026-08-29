@@ -74,4 +74,9 @@ class ProductVariant extends Model
     {
         return $this->hasMany(OrderItemSection::class);
     }
+
+    public function promotion(): HasOne
+    {
+        return $this->hasOne(Promotion::class);
+    }
 }

@@ -61,11 +61,22 @@ class UpdateOrderItemQuantityAction
             } elseif ($new->isLessThan($current)) {
                 $this->release->execute($item, (string) $current->minus($new));
             }
+            $snapshot = $item->configuration_snapshot;
+            if (($snapshot['type'] ?? null) === 'promotion') {
+                $snapshot['components'] = collect($snapshot['components'] ?? [])->map(function (array $component) use ($new): array {
+                    $perPromotion = $component['quantity_per_promotion'] ?? $component['quantity'];
+                    $component['quantity_applied'] = (string) BigDecimal::of($perPromotion)
+                        ->multipliedBy($new)->toScale(3, RoundingMode::HalfUp);
+
+                    return $component;
+                })->all();
+            }
             $item->forceFill([
                 'quantity' => (string) $new,
                 'line_total' => (string) BigDecimal::of($item->unit_price)->multipliedBy($new)->toScale(2, RoundingMode::HalfUp),
                 'fulfillment_type' => $fulfillment ?? $item->fulfillment_type,
                 'notes' => $notes,
+                'configuration_snapshot' => $snapshot,
             ])->save();
             $this->totals->recalculate($item->order);
 

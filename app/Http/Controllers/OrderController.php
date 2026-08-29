@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\AddOrderItemAction;
+use App\Actions\AddPromotionToOrderAction;
 use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
@@ -17,6 +18,7 @@ use App\Enums\OrderType;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
+use App\Http\Requests\AddPromotionRequest;
 use App\Http\Requests\CancelOrderItemRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
@@ -24,6 +26,7 @@ use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\ProductVariant;
+use App\Models\Promotion;
 use App\Services\OrderPosCatalogService;
 use DomainException;
 use Illuminate\Http\RedirectResponse;
@@ -65,11 +68,33 @@ class OrderController extends Controller
             'kitchenDispatches' => fn ($query) => $query->with('printAttempts')->latest('sequence_number'),
         ]);
         Gate::authorize('view', $order);
-        ['products' => $products, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
+        ['products' => $products, 'promotions' => $promotions, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
 
         $lastDispatch = $order->kitchenDispatches->first();
 
-        return view('orders.show', compact('order', 'products', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch'));
+    }
+
+    public function addPromotion(AddPromotionRequest $request, string $order, AddPromotionToOrderAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('update', $order);
+        $promotion = Promotion::query()->forCompany($this->company())
+            ->where('ulid', $request->validated('promotion'))->firstOrFail();
+        try {
+            $action->execute(
+                $order,
+                $promotion,
+                $request->validated('quantity'),
+                $request->user(),
+                $request->enum('fulfillment_type', OrderType::class),
+                $request->validated('notes'),
+            );
+        } catch (DomainException $exception) {
+            return back()->withErrors(['item' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'Promoción agregada a la cuenta.');
     }
 
     public function addItem(AddOrderItemRequest $request, string $order, AddOrderItemAction $action, AddConfiguredPizzaAction $configuredPizza): RedirectResponse

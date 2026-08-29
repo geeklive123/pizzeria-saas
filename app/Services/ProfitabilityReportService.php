@@ -32,7 +32,11 @@ class ProfitabilityReportService
             ->where('type', InventoryMovementType::OrderConsumption->value)->whereDoesntHave('reversals')
             ->where('reference_type', OrderItem::class)->whereIn('reference_id', $items->pluck('id'))->get(['reference_id', 'total_cost']);
         $costsByItem = $movements->groupBy('reference_id')->map(fn (Collection $group) => $this->sum($group, 'total_cost'));
-        $byVariant = $items->groupBy('product_variant_id')->map(function (Collection $group) use ($costsByItem): array {
+        $byVariant = $items->groupBy(function (OrderItem $item): string|int {
+            $promotionUlid = $item->configuration_snapshot['promotion']['ulid'] ?? null;
+
+            return $promotionUlid ? 'promotion:'.$promotionUlid : $item->product_variant_id;
+        })->map(function (Collection $group) use ($costsByItem): array {
             $first = $group->first();
             $revenue = $this->sum($group, 'line_total');
             $cost = BigDecimal::zero();
@@ -42,7 +46,8 @@ class ProfitabilityReportService
             $cost = $this->decimal->money((string) $cost);
 
             return [
-                'name' => $first->productVariant->product->name.' · '.$first->productVariant->name,
+                'name' => $first->configuration_snapshot['promotion']['name']
+                    ?? $first->productVariant->product->name.' · '.$first->productVariant->name,
                 'revenue' => $revenue,
                 'estimated_cost' => $cost,
                 'estimated_margin' => $this->decimal->subtract($revenue, $cost),
