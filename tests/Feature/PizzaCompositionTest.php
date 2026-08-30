@@ -291,7 +291,10 @@ class PizzaCompositionTest extends TestCase
     {
         $f = $this->fixture(sharedTopping: true);
         $remove = $this->remove($f, $f['a_item'], 'Sin topping');
-        $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::Takeaway, [[$remove, 1]]);
+        // Este test valida la representación de una pizza compuesta en KDS.
+        // Usamos consumo en mesa para que el dispatch la libere a cocina sin
+        // depender del flujo de cobro previo propio de Takeaway.
+        $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn, [[$remove, 1]]);
         app(DispatchOrderToKitchenAction::class)->execute($item->order, $f['owner']);
 
         $this->actingAs($f['owner'])->withSession(['active_company_id' => $f['company']->id, 'active_branch_id' => $f['branch']->id])

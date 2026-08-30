@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\OpenTableOrderAction;
 use App\Actions\SaveRestaurantTableAction;
+use App\Http\Requests\OpenTableOrderRequest;
 use App\Http\Requests\RestaurantTableRequest;
 use App\Models\Order;
 use App\Models\RestaurantTable;
@@ -60,12 +61,12 @@ class RestaurantTableController extends Controller
         return redirect()->route('tables.index')->with('success', 'Mesa actualizada.');
     }
 
-    public function open(string $table, OpenTableOrderAction $action): RedirectResponse
+    public function open(OpenTableOrderRequest $request, string $table, OpenTableOrderAction $action): RedirectResponse
     {
         Gate::authorize('create', Order::class);
         $table = RestaurantTable::query()->forCompany($this->company())->forBranch($this->branch())->where('ulid', $table)->firstOrFail();
         try {
-            $order = $action->execute($this->company(), $this->branch(), $table, request()->user());
+            $order = $action->execute($this->company(), $this->branch(), $table, $request->user(), $request->validated('customer_name'));
         } catch (DomainException $exception) {
             return back()->withErrors(['table' => $exception->getMessage()]);
         }

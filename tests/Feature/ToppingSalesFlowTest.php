@@ -5,8 +5,8 @@ namespace Tests\Feature;
 use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CancelOrderItemAction;
-use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\OpenTableOrderAction;
 use App\Actions\SaveToppingAction;
 use App\Actions\StartKitchenItemAction;
 use App\Actions\UpdateConfiguredPizzaAction;
@@ -30,6 +30,7 @@ use App\Models\Membership;
 use App\Models\ModifierOption;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\OrderPosCatalogService;
@@ -254,7 +255,7 @@ class ToppingSalesFlowTest extends TestCase
             'type' => InventoryMovementType::OrderConsumption->value,
         ]);
 
-        $secondOrder = app(CreateTakeawayOrderAction::class)->execute($f['company'], $f['branch'], $f['owner']);
+        $secondOrder = $this->kitchenTableOrder($f['company'], $f['branch'], $f['owner']);
         $f['order'] = $secondOrder;
         $preparing = $this->add($f, [$f['a']], [$topping]);
         app(DispatchOrderToKitchenAction::class)->execute($secondOrder, $f['owner']);
@@ -295,6 +296,13 @@ class ToppingSalesFlowTest extends TestCase
         $this->add($f, [$f['a']], [$foreign]);
     }
 
+    private function kitchenTableOrder(Company $company, Branch $branch, User $owner)
+    {
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+
+        return app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner);
+    }
+
     /** @return array<string, mixed> */
     private function fixture(): array
     {
@@ -312,7 +320,7 @@ class ToppingSalesFlowTest extends TestCase
             $this->stock(compact('company', 'branch', 'owner'), $flavorItem, '1000.000');
             $variants[$key] = $this->flavor($company, $name, $price, $base, $flavor);
         }
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
 
         return compact('company', 'branch', 'owner', 'grams', 'order') + $variants;
     }

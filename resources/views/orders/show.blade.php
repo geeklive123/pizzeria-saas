@@ -4,12 +4,15 @@
 @section('heading', 'Venta')
 
 @section('content')
-@php($canRequestPayment = $order->items->isNotEmpty() && $order->items->every(fn ($item) => in_array($item->status, [\App\Enums\OrderItemStatus::Served, \App\Enums\OrderItemStatus::Cancelled], true)))
+@php($hasDraft = $order->items->contains('status', \App\Enums\OrderItemStatus::Draft))
+@php($isPerBatch = $order->charge_mode === \App\Enums\TableChargeMode::PerBatch)
 <div class="page-heading">
     <div>
         <a class="back-link" href="{{ route('orders.index') }}">← Pedidos abiertos</a>
         <h1>{{ $order->restaurantTable?->name ?? 'Para llevar' }} · {{ $order->formattedNumber() }}</h1>
         <p>Cuenta abierta desde {{ \App\Support\UiFormatter::date($order->opened_at, true) }}</p>
+        <p class='mt-1 text-sm font-semibold text-stone-700'>{{ $order->restaurantTable?->name ?? 'Para llevar' }}{{ $order->customer_name ? ' · '.$order->customer_name : '' }}</p>
+        @can('update', $order)<form method='POST' action='{{ route('orders.customer.update', $order->ulid) }}' class='mt-3 flex max-w-md gap-2'>@csrf @method('PUT')<input class='input' name='customer_name' value='{{ $order->customer_name }}' maxlength='255' placeholder='Cliente opcional'><button class='btn-secondary'>Guardar</button></form>@endcan
         @if ($order->type === \App\Enums\OrderType::Takeaway && ($order->customer_name || $order->customer_phone || $order->notes))
             <p class="mt-1 text-sm text-stone-600">
                 {{ $order->customer_name ?: 'Cliente sin nombre' }}
@@ -19,6 +22,36 @@
         @endif
     </div>
     <div class="flex flex-wrap gap-2">
+        @can('update', $order)
+            @if ($order->status === \App\Enums\OrderStatus::Open && $hasDraft && ! $pendingDispatch)
+                <form method='POST' action='{{ route('orders.dispatch', $order->ulid) }}'>@csrf
+                    @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
+                        @if (($isPerBatch || $order->type === \App\Enums\OrderType::Takeaway) && $draftFinancial['eligible'])
+                            <label class='mb-2 block'><span class='label'>Descuento pizzas (%)</span><input class='input w-40' name='discount_percentage' inputmode='decimal' placeholder='Ej. 25'></label>
+                        @endif
+                    @endcan
+                    <button class='btn-primary'>{{ $order->type === \App\Enums\OrderType::Takeaway ? 'Cobrar y enviar' : ($isPerBatch ? 'Cobrar y confirmar tanda' : 'Confirmar pedido') }}</button>
+                </form>
+            @endif
+            @if ($order->type === \App\Enums\OrderType::DineIn && ! $isPerBatch && $order->status === \App\Enums\OrderStatus::Open && $order->items->isNotEmpty() && ! $hasDraft)
+                <form method='POST' action='{{ route('orders.request-payment', $order->ulid) }}'>@csrf
+                    @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
+                        @if (\Brick\Math\BigDecimal::of($order->pizza_base_subtotal)->isGreaterThan('80.00'))
+                            <label class='mb-2 block'><span class='label'>Descuento pizzas (%)</span><input class='input w-40' name='discount_percentage' inputmode='decimal' placeholder='Ej. 25'></label>
+                        @endif
+                    @endcan
+                    <button class='btn-primary'>Finalizar mesa / Cobrar cuenta</button>
+                </form>
+            @endif
+            @if ($order->type === \App\Enums\OrderType::DineIn && $isPerBatch && ! $hasDraft && ! $pendingDispatch && $orderBalance === '0.00' && $order->items->isNotEmpty())
+                <form method='POST' action='{{ route('orders.finalize-table', $order->ulid) }}' onsubmit='return confirm(&quot;Todos los pedidos estan pagados. Finalizar y liberar la mesa?&quot;)'>@csrf<button class='btn-primary'>Finalizar mesa</button></form>
+            @endif
+        @endcan
+        @can('create', \App\Models\Payment::class)
+            @if ($pendingDispatch)<a class='btn-primary' href='{{ route('orders.checkout', ['order' => $order->ulid, 'dispatch' => $pendingDispatch->ulid]) }}'>Continuar pago de tanda</a>
+            @elseif($order->status === \App\Enums\OrderStatus::ReadyForPayment)<a class='btn-primary' href='{{ route('orders.checkout', $order->ulid) }}'>Continuar cobro</a>@endif
+        @endcan
+        @if(false)
         @can('update', $order)
             @if (in_array($order->status, [\App\Enums\OrderStatus::Open, \App\Enums\OrderStatus::ReadyForPayment], true) && $order->items->contains('status', \App\Enums\OrderItemStatus::Draft))
                 <form method="POST" action="{{ route('orders.dispatch', $order->ulid) }}">
@@ -46,6 +79,7 @@
         @can('create', \App\Models\Payment::class)
             <a class="btn-primary" href="{{ route('orders.checkout', $order->ulid) }}">Cobrar</a>
         @endcan
+        @endif
         @can('cancel', $order)
             @if ($order->status === \App\Enums\OrderStatus::Open)
                 <form method="POST" action="{{ route('orders.cancel', $order->ulid) }}" onsubmit="return confirm('¿Cancelar la cuenta?')">
@@ -449,4 +483,14 @@
         </div>
     </aside>
 </div>
+<section class='card mt-6 p-5'>
+    <h2 class='card-title'>Resumen financiero</h2>
+    <div class='mt-4 space-y-2 text-sm'>
+        <p class='flex justify-between'><span>Pizza base</span><strong>{{ \App\Support\UiFormatter::money($order->pizza_base_subtotal) }}</strong></p>
+        <p class='flex justify-between'><span>Toppings / extras</span><strong>{{ \App\Support\UiFormatter::money($order->extras_subtotal) }}</strong></p>
+        <p class='flex justify-between'><span>Otros productos</span><strong>{{ \App\Support\UiFormatter::money($order->other_subtotal) }}</strong></p>
+        <p class='flex justify-between text-red-700'><span>Descuento pizzas{{ $order->discount_percentage ? ' '.$order->discount_percentage.'%' : '' }}</span><strong>-{{ \App\Support\UiFormatter::money($order->discount_total) }}</strong></p>
+        <p class='flex justify-between border-t pt-3 text-xl'><span>TOTAL</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></p>
+    </div>
+</section>
 @endsection

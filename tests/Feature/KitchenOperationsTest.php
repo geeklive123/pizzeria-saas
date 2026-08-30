@@ -7,6 +7,7 @@ use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\OpenTableOrderAction;
 use App\Actions\MarkKitchenItemReadyAction;
 use App\Actions\MarkOrderItemServedAction;
 use App\Actions\StartKitchenItemAction;
@@ -26,6 +27,7 @@ use App\Models\InventoryStock;
 use App\Models\Membership;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\InventoryAvailabilityService;
@@ -41,7 +43,7 @@ class KitchenOperationsTest extends TestCase
     {
         [$company, $branch, $owner, $unit] = $this->context();
         [$variant] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza Primavera');
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
         $firstItem = app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
 
         $firstDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
@@ -67,12 +69,13 @@ class KitchenOperationsTest extends TestCase
     {
         [$company, $branch, $owner, $unit] = $this->context();
         [$variant, $inventoryItem] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza Hawaiana');
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
         $item = app(AddOrderItemAction::class)->execute($order, $variant, '2.000', $owner);
         app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
 
-        $this->assertSame('10.000', $this->stockQuantity($branch, $inventoryItem));
-        $this->assertSame(InventoryReservationStatus::Reserved, $item->reservations()->firstOrFail()->status);
+        // En cobrar al final, liberar la tanda consume la reserva una sola vez.
+        $this->assertSame('8.000', $this->stockQuantity($branch, $inventoryItem));
+        $this->assertSame(InventoryReservationStatus::Consumed, $item->reservations()->firstOrFail()->status);
 
         app(StartKitchenItemAction::class)->execute($item, $owner);
         app(StartKitchenItemAction::class)->execute($item->refresh(), $owner);
@@ -93,7 +96,7 @@ class KitchenOperationsTest extends TestCase
     {
         [$company, $branch, $owner, $unit] = $this->context();
         [$variant, $inventoryItem] = $this->directVariant($company, $branch, $owner, $unit);
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
         $item = app(AddOrderItemAction::class)->execute($order, $variant, '2.000', $owner);
 
         app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
@@ -114,7 +117,7 @@ class KitchenOperationsTest extends TestCase
         [$company, $branch, $owner, $unit] = $this->context();
         [$pizza] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza Pepperoni');
         [$drink] = $this->directVariant($company, $branch, $owner, $unit);
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
         app(AddOrderItemAction::class)->execute($order, $pizza, '1.000', $owner, notes: 'Sin cebolla');
         app(AddOrderItemAction::class)->execute($order, $drink, '1.000', $owner);
         app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
@@ -156,7 +159,7 @@ class KitchenOperationsTest extends TestCase
     {
         [$company, $branch, $owner, $unit] = $this->context();
         [$variant, $inventoryItem] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza en horno');
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
         $item = app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
         app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
 
@@ -236,6 +239,13 @@ class KitchenOperationsTest extends TestCase
         $this->assertSame('10.000', $stock->quantity);
         $this->assertSame('3.000', $availability->reservedQuantity);
         $this->assertSame('7.000', $availability->availableQuantity);
+    }
+
+    private function kitchenTableOrder(Company $company, Branch $branch, User $owner)
+    {
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+
+        return app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner);
     }
 
     private function context(): array

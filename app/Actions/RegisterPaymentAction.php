@@ -4,11 +4,13 @@ namespace App\Actions;
 
 use App\Enums\CashMovementType;
 use App\Enums\CashSessionStatus;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\Permission;
 use App\Models\CashSession;
+use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
@@ -27,6 +29,7 @@ class RegisterPaymentAction
         private readonly ClosePaidOrderAction $closeOrder,
         private readonly OrderPaymentService $balances,
         private readonly CompanyAccessService $access,
+        private readonly SettleKitchenDispatchAction $settleDispatch,
     ) {}
 
     public function execute(
@@ -38,6 +41,7 @@ class RegisterPaymentAction
         string $idempotencyKey,
         ?string $receivedAmount = null,
         ?string $reference = null,
+        ?KitchenDispatch $dispatch = null,
     ): Payment {
         $this->access->ensure($user, $order->company, Permission::CreatePayments);
         $existing = Payment::query()->forCompany($order->company)->where('idempotency_key', $idempotencyKey)->first();
@@ -46,9 +50,10 @@ class RegisterPaymentAction
         }
 
         try {
-            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference): Payment {
+            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch): Payment {
                 $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
                 $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
+                $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
                 $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
                 if ($duplicate) {
                     return $this->validateDuplicate($duplicate, $order, $method, $amount);
@@ -62,8 +67,12 @@ class RegisterPaymentAction
                 if (! in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)) {
                     throw new DomainException('Este pedido no está disponible para cobrar.');
                 }
+                if ($dispatch && ((int) $dispatch->order_id !== (int) $order->id
+                    || ! in_array($dispatch->status, [KitchenDispatchStatus::AwaitingPayment, KitchenDispatchStatus::Released], true))) {
+                    throw new DomainException('La tanda no está disponible para cobrar.');
+                }
                 $amount = BigDecimal::of($amount)->toScale(2, RoundingMode::HalfUp);
-                $balance = BigDecimal::of($this->balances->balance($order));
+                $balance = BigDecimal::of($dispatch ? $this->balances->dispatchBalance($dispatch) : $this->balances->balance($order));
                 if ($amount->isLessThanOrEqualTo(0) || $amount->isGreaterThan($balance)) {
                     throw new DomainException('El monto debe ser mayor que cero y no puede superar el saldo pendiente.');
                 }
@@ -82,6 +91,7 @@ class RegisterPaymentAction
                     'company_id' => $order->company_id,
                     'branch_id' => $order->branch_id,
                     'order_id' => $order->id,
+                    'kitchen_dispatch_id' => $dispatch?->id,
                     'cash_session_id' => $session->id,
                     'method' => $method,
                     'amount' => (string) $amount,
@@ -99,7 +109,9 @@ class RegisterPaymentAction
                 if ($order->status === OrderStatus::Open) {
                     $order->forceFill(['status' => OrderStatus::ReadyForPayment])->save();
                 }
-                if (BigDecimal::of($this->balances->balance($order))->isZero()) {
+                if ($dispatch && BigDecimal::of($this->balances->dispatchBalance($dispatch))->isZero()) {
+                    $this->settleDispatch->execute($dispatch, $user);
+                } elseif (! $dispatch && BigDecimal::of($this->balances->balance($order))->isZero()) {
                     $this->closeOrder->executeIfEligibleLocked($order);
                 }
 

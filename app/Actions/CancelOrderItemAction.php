@@ -2,6 +2,7 @@
 
 namespace App\Actions;
 
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\Permission;
@@ -21,7 +22,7 @@ class CancelOrderItemAction
         $this->access->ensure($user, $item->company, Permission::ManageOrders);
 
         return DB::transaction(function () use ($item, $user, $reason): OrderItem {
-            $item = OrderItem::query()->with(['order', 'productVariant'])->lockForUpdate()->findOrFail($item->id);
+            $item = OrderItem::query()->with(['order', 'productVariant', 'kitchenDispatchItem.dispatch'])->lockForUpdate()->findOrFail($item->id);
             if ($item->status === OrderItemStatus::Cancelled) {
                 return $item;
             }
@@ -34,7 +35,7 @@ class CancelOrderItemAction
                     throw new DomainException('Indica el motivo para cancelar un producto que ya fue enviado.');
                 }
             }
-            if (in_array($item->status, [OrderItemStatus::Draft, OrderItemStatus::Sent], true)) {
+            if (in_array($item->status, [OrderItemStatus::Draft, OrderItemStatus::PendingPayment, OrderItemStatus::Sent], true)) {
                 $this->release->execute($item, $item->quantity);
             }
             $item->forceFill([
@@ -43,6 +44,10 @@ class CancelOrderItemAction
                 'cancelled_by' => $user->getKey(),
                 'cancellation_reason' => $reason,
             ])->save();
+            $dispatch = $item->kitchenDispatchItem?->dispatch;
+            if ($dispatch && ! $dispatch->items()->whereHas('orderItem', fn ($query) => $query->where('status', '!=', OrderItemStatus::Cancelled->value))->exists()) {
+                $dispatch->forceFill(['status' => KitchenDispatchStatus::Cancelled])->save();
+            }
             $this->totals->recalculate($item->order);
 
             return $item->refresh();

@@ -32,6 +32,7 @@ enum Permission: string
     case RegisterManualCashMovements = 'cash.manual_movements.create';
     case AuthorizeCashWithdrawals = 'cash.withdrawals.authorize';
     case CreatePayments = 'payments.create';
+    case ApplyOrderDiscounts = 'orders.discounts.apply';
     case ReversePayments = 'payments.reverse';
     case ViewExpenses = 'expenses.view';
     case CreateExpenses = 'expenses.create';
@@ -46,7 +47,7 @@ enum Permission: string
     public function module(): PermissionModule
     {
         return match ($this) {
-            self::CreatePayments, self::ReversePayments => PermissionModule::Sales,
+            self::CreatePayments, self::ApplyOrderDiscounts, self::ReversePayments => PermissionModule::Sales,
             self::ViewOrders, self::ManageOrders, self::CancelOrders, self::ViewTables, self::ManageTables => PermissionModule::TablesAndOrders,
             self::ViewKitchen, self::ManageKitchen => PermissionModule::Kitchen,
             self::ViewCash, self::OpenCash, self::CloseCash, self::ManageCash, self::RegisterManualCashMovements,
@@ -104,6 +105,7 @@ enum Permission: string
             self::RegisterManualCashMovements => 'Registrar movimientos manuales',
             self::AuthorizeCashWithdrawals => 'Autorizar retiros de propietario',
             self::CreatePayments => 'Registrar cobros',
+            self::ApplyOrderDiscounts => 'Aplicar descuentos manuales a pizzas elegibles',
             self::ReversePayments => 'Revertir o corregir cobros',
             self::ViewExpenses => 'Ver gastos',
             self::CreateExpenses => 'Registrar gastos',

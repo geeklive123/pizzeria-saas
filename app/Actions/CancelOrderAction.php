@@ -2,6 +2,7 @@
 
 namespace App\Actions;
 
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
@@ -30,7 +31,7 @@ class CancelOrderAction
                 throw new DomainException('Solo un pedido abierto puede cancelarse.');
             }
             foreach ($order->items->where('status', '!=', OrderItemStatus::Cancelled) as $item) {
-                if (in_array($item->status, [OrderItemStatus::Draft, OrderItemStatus::Sent], true)) {
+                if (in_array($item->status, [OrderItemStatus::Draft, OrderItemStatus::PendingPayment, OrderItemStatus::Sent], true)) {
                     $this->release->execute($item, $item->quantity);
                 }
                 $item->forceFill([
@@ -39,6 +40,7 @@ class CancelOrderAction
                     'cancelled_by' => $user->getKey(),
                 ])->save();
             }
+            $order->kitchenDispatches()->where('status', KitchenDispatchStatus::AwaitingPayment->value)->update(['status' => KitchenDispatchStatus::Cancelled->value]);
             $order->forceFill(['status' => OrderStatus::Cancelled, 'active_restaurant_table_id' => null, 'closed_at' => now()])->save();
 
             return $this->totals->recalculate($order);

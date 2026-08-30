@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
+use App\Enums\TableChargeMode;
 use App\Models\Branch;
 use App\Models\Order;
 use App\Models\User;
@@ -22,6 +23,7 @@ class OrderFactory extends Factory
             'active_restaurant_table_id' => null,
             'order_number' => fake()->unique()->numberBetween(1, 999999),
             'type' => OrderType::Takeaway,
+            'charge_mode' => TableChargeMode::AtEnd,
             'status' => OrderStatus::Open,
             'subtotal' => '0.00',
             'discount_total' => '0.00',

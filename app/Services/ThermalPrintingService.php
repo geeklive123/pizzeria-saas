@@ -54,6 +54,21 @@ class ThermalPrintingService
         );
     }
 
+    public function dispatchTicket(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
+    {
+        $setting = $this->setting($dispatch->company_id, $dispatch->branch_id, PrinterPurpose::CustomerTicket);
+
+        return $this->enqueue(
+            $setting,
+            $this->ticketRenderer->renderDispatch($dispatch, $user),
+            $user,
+            $reprint,
+            $dispatch,
+            $dispatch->order,
+            $reprint ? 'customer_ticket:dispatch:'.$dispatch->ulid.':reprint:'.Str::ulid() : 'customer_ticket:dispatch:'.$dispatch->ulid.':original',
+        );
+    }
+
     public function testPage(PrinterSetting $setting, User $user): PrintAttempt
     {
         return $this->enqueue(
@@ -111,7 +126,8 @@ class ThermalPrintingService
         return DB::transaction(function () use ($setting, $document, $user, $reprint, $dispatch, $order, $idempotencyKey): PrintAttempt {
             if ($dispatch) {
                 KitchenDispatch::query()->whereKey($dispatch->getKey())->lockForUpdate()->firstOrFail();
-            } elseif ($order) {
+            }
+            if ($order) {
                 Order::query()->whereKey($order->getKey())->lockForUpdate()->firstOrFail();
             }
 

@@ -56,6 +56,7 @@
                     <form class="mt-4 rounded-2xl border border-stone-200 p-4" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="cash" data-cash-payment hidden>
                         @csrf
                         <input type="hidden" name="method" value="cash">
+                        @if ($dispatch)<input type="hidden" name="kitchen_dispatch" value="{{ $dispatch->ulid }}">@endif
                         <input type="hidden" name="idempotency_key" value="{{ $idempotencyCash }}">
                         <label class="mt-3 block"><span class="label">Monto aplicado a la cuenta</span><input class="input" name="amount" value="{{ $balance }}" max="{{ $balance }}" inputmode="decimal" required></label>
                         <label class="mt-3 block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $balance }}" inputmode="decimal" required></label>
@@ -66,6 +67,7 @@
                     <form class="mt-4 rounded-2xl border border-stone-200 p-4" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="qr" hidden>
                         @csrf
                         <input type="hidden" name="method" value="qr">
+                        @if ($dispatch)<input type="hidden" name="kitchen_dispatch" value="{{ $dispatch->ulid }}">@endif
                         <input type="hidden" name="idempotency_key" value="{{ $idempotencyQr }}">
                         <label class="mt-3 block"><span class="label">Monto aplicado por QR</span><input class="input" name="amount" value="{{ $balance }}" max="{{ $balance }}" inputmode="decimal" required></label>
                         <label class="mt-3 block"><span class="label">Referencia opcional</span><input class="input" name="reference"></label>

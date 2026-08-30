@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\TableChargeMode;
 use Database\Factories\CompanyFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Builder;
@@ -11,7 +12,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['name', 'legal_name', 'tax_id', 'phone', 'email', 'is_active'])]
+#[Fillable(['name', 'legal_name', 'tax_id', 'phone', 'email', 'is_active', 'table_charge_mode'])]
 class Company extends Model
 {
     /** @use HasFactory<CompanyFactory> */
@@ -24,7 +25,7 @@ class Company extends Model
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean'];
+        return ['is_active' => 'boolean', 'table_charge_mode' => TableChargeMode::class];
     }
 
     public function branches(): HasMany

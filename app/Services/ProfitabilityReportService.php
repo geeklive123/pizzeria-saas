@@ -24,10 +24,9 @@ class ProfitabilityReportService
     public function data(Company $company, Branch $branch, ReportDateRange $range, array $filters = []): array
     {
         $sales = $this->sales->data($company, $branch, $range, $filters);
-        $orderIds = $sales['orders']->pluck('id');
         $items = OrderItem::query()->forCompany($company)->where('branch_id', $branch->id)
-            ->whereIn('order_id', $orderIds)->where('status', '!=', OrderItemStatus::Cancelled->value)
-            ->with('productVariant.product')->get();
+            ->whereIn('id', $sales['recognized_item_ids'])->where('status', '!=', OrderItemStatus::Cancelled->value)
+            ->with(['productVariant.product', 'kitchenDispatchItem'])->get();
         $movements = InventoryMovement::query()->forCompany($company)->where('branch_id', $branch->id)
             ->where('type', InventoryMovementType::OrderConsumption->value)->whereDoesntHave('reversals')
             ->where('reference_type', OrderItem::class)->whereIn('reference_id', $items->pluck('id'))->get(['reference_id', 'total_cost']);
@@ -38,7 +37,7 @@ class ProfitabilityReportService
             return $promotionUlid ? 'promotion:'.$promotionUlid : $item->product_variant_id;
         })->map(function (Collection $group) use ($costsByItem): array {
             $first = $group->first();
-            $revenue = $this->sum($group, 'line_total');
+            $revenue = $this->sumNetRevenue($group);
             $cost = BigDecimal::zero();
             foreach ($group as $item) {
                 $cost = $cost->plus($costsByItem->get($item->id, '0.00'));
@@ -74,6 +73,16 @@ class ProfitabilityReportService
         $total = BigDecimal::zero();
         foreach ($rows as $row) {
             $total = $total->plus($row->{$attribute});
+        }
+
+        return $this->decimal->money((string) $total);
+    }
+
+    private function sumNetRevenue(iterable $items): string
+    {
+        $total = BigDecimal::zero();
+        foreach ($items as $item) {
+            $total = $total->plus($item->kitchenDispatchItem?->net_total ?? $item->line_total);
         }
 
         return $this->decimal->money((string) $total);

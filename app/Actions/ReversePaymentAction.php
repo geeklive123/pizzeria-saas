@@ -4,12 +4,14 @@ namespace App\Actions;
 
 use App\Enums\CashMovementType;
 use App\Enums\CashSessionStatus;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\Permission;
 use App\Models\CashMovement;
 use App\Models\CashSession;
+use App\Models\KitchenDispatch;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
@@ -44,6 +46,7 @@ class ReversePaymentAction
                 'company_id' => $payment->company_id,
                 'branch_id' => $payment->branch_id,
                 'order_id' => $payment->order_id,
+                'kitchen_dispatch_id' => $payment->kitchen_dispatch_id,
                 'cash_session_id' => $payment->cash_session_id,
                 'method' => $payment->method,
                 'amount' => $payment->amount,
@@ -55,6 +58,12 @@ class ReversePaymentAction
                 'idempotency_key' => 'reverse-'.$payment->ulid,
             ]);
             $payment->forceFill(['status' => PaymentStatus::Reversed])->save();
+            if ($payment->kitchen_dispatch_id) {
+                KitchenDispatch::query()->whereKey($payment->kitchen_dispatch_id)->update([
+                    'status' => KitchenDispatchStatus::Released->value,
+                    'settled_at' => null,
+                ]);
+            }
 
             if ($payment->method === PaymentMethod::Cash) {
                 $cashMovement = CashMovement::query()

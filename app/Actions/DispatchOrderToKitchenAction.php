@@ -2,14 +2,20 @@
 
 namespace App\Actions;
 
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
+use App\Enums\OrderType;
 use App\Enums\Permission;
+use App\Enums\TableChargeMode;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OrderFinancialService;
+use App\Services\OrderTotalsService;
+use Brick\Math\BigDecimal;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -18,13 +24,15 @@ class DispatchOrderToKitchenAction
     public function __construct(
         private readonly ConsumeInventoryReservationAction $consume,
         private readonly CompanyAccessService $access,
+        private readonly OrderFinancialService $financials,
+        private readonly OrderTotalsService $totals,
     ) {}
 
-    public function execute(Order $order, User $user): ?KitchenDispatch
+    public function execute(Order $order, User $user, int|string|null $discountPercentage = null): ?KitchenDispatch
     {
         $this->access->ensure($user, $order->company, Permission::ManageOrders);
 
-        return DB::transaction(function () use ($order, $user): ?KitchenDispatch {
+        return DB::transaction(function () use ($order, $user, $discountPercentage): ?KitchenDispatch {
             $order = Order::query()->with(['company', 'branch'])->lockForUpdate()->findOrFail($order->getKey());
 
             if (! in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)) {
@@ -38,14 +46,28 @@ class DispatchOrderToKitchenAction
                 return null;
             }
 
+            if ($order->kitchenDispatches()->where('status', KitchenDispatchStatus::AwaitingPayment->value)->exists()) {
+                throw new DomainException('Existe una tanda pendiente de pago. Complétala antes de confirmar otra.');
+            }
+
+            $requiresPayment = $order->type === OrderType::Takeaway || $order->charge_mode === TableChargeMode::PerBatch;
+            if (! $requiresPayment && filled($discountPercentage) && BigDecimal::of($discountPercentage)->isGreaterThan(0)) {
+                throw new DomainException('En el modo cobrar al final, el descuento se define al solicitar la cuenta.');
+            }
+            if (filled($discountPercentage) && BigDecimal::of($discountPercentage)->isGreaterThan(0)) {
+                $this->access->ensure($user, $order->company, Permission::ApplyOrderDiscounts);
+            }
+
             $sequence = ((int) $order->kitchenDispatches()->max('sequence_number')) + 1;
             $dispatch = KitchenDispatch::query()->create([
                 'company_id' => $order->company_id,
                 'branch_id' => $order->branch_id,
                 'order_id' => $order->getKey(),
                 'sequence_number' => $sequence,
+                'status' => $requiresPayment ? KitchenDispatchStatus::AwaitingPayment : KitchenDispatchStatus::Released,
                 'dispatched_at' => now(),
                 'dispatched_by' => $user->getKey(),
+                'released_at' => $requiresPayment ? null : now(),
             ]);
 
             foreach ($items as $item) {
@@ -55,19 +77,25 @@ class DispatchOrderToKitchenAction
                     'kitchen_dispatch_id' => $dispatch->getKey(),
                     'order_item_id' => $item->getKey(),
                 ]);
-                $status = $item->requires_preparation ? OrderItemStatus::Sent : OrderItemStatus::Ready;
-                if (! $item->requires_preparation) {
+                $status = $requiresPayment
+                    ? OrderItemStatus::PendingPayment
+                    : ($item->requires_preparation ? OrderItemStatus::Sent : OrderItemStatus::Ready);
+                if (! $requiresPayment) {
                     $item->loadMissing(['company', 'order.branch', 'reservations.inventoryItem']);
                     $this->consume->execute($item, $user);
                 }
                 $item->forceFill([
                     'status' => $status,
-                    'sent_at' => now(),
+                    'sent_at' => $requiresPayment ? null : now(),
                     'ready_at' => $status === OrderItemStatus::Ready ? now() : null,
                 ])->save();
             }
 
-            return $dispatch->load('items.orderItem');
+            $dispatch->load('items.orderItem.sections');
+            $this->financials->applyToDispatch($dispatch, $requiresPayment ? $discountPercentage : null);
+            $this->totals->recalculate($order);
+
+            return $dispatch->refresh()->load('items.orderItem');
         });
     }
 }

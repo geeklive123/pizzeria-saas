@@ -18,11 +18,11 @@ class OpenTableOrderAction
 {
     public function __construct(private readonly NextOrderNumberAction $numbers, private readonly CompanyAccessService $access) {}
 
-    public function execute(Company $company, Branch $branch, RestaurantTable $table, User $user): Order
+    public function execute(Company $company, Branch $branch, RestaurantTable $table, User $user, ?string $customerName = null): Order
     {
         $this->access->ensure($user, $company, Permission::ManageOrders);
 
-        return DB::transaction(function () use ($company, $branch, $table, $user): Order {
+        return DB::transaction(function () use ($company, $branch, $table, $user, $customerName): Order {
             $table = RestaurantTable::query()->where('company_id', $company->id)->where('branch_id', $branch->id)
                 ->whereKey($table->id)->lockForUpdate()->firstOrFail();
 
@@ -39,7 +39,8 @@ class OpenTableOrderAction
                 'company_id' => $company->id, 'branch_id' => $branch->id,
                 'restaurant_table_id' => $table->id, 'active_restaurant_table_id' => $table->id,
                 'order_number' => $this->numbers->execute($company, $branch),
-                'type' => OrderType::DineIn, 'status' => OrderStatus::Open,
+                'type' => OrderType::DineIn, 'charge_mode' => $company->table_charge_mode,
+                'status' => OrderStatus::Open, 'customer_name' => blank($customerName) ? null : trim($customerName),
                 'subtotal' => '0.00', 'discount_total' => '0.00', 'total' => '0.00',
                 'opened_at' => now(), 'created_by' => $user->id,
             ]);

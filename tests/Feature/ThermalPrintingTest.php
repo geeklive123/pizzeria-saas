@@ -62,7 +62,8 @@ class ThermalPrintingTest extends TestCase
     {
         [$company, $branch, $owner] = $this->context();
         $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
-        $order = $this->order($company, $branch, $owner, customer: 'Javier');
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id, 'name' => 'MESA IMPRESIÓN']);
+        $order = $this->order($company, $branch, $owner, $table, 'Javier');
         $firstItem = $this->simpleItem($order, $owner, 'Pizza Mediana', 'Mediana', '45.00');
 
         $first = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner);
@@ -152,7 +153,8 @@ class ThermalPrintingTest extends TestCase
     {
         [$company, $branch, $owner] = $this->context();
         $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
-        $order = $this->order($company, $branch, $owner);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id, 'name' => 'MESA OFFLINE']);
+        $order = $this->order($company, $branch, $owner, $table);
         $item = $this->simpleItem($order, $owner, 'Pizza', 'Familiar', '87.00');
         $this->actingInContext($owner, $company, $branch)
             ->post(route('orders.dispatch', $order->ulid))

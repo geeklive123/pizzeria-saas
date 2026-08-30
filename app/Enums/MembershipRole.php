@@ -66,6 +66,7 @@ enum MembershipRole: string
                 Permission::RegisterManualCashMovements,
                 Permission::AuthorizeCashWithdrawals,
                 Permission::CreatePayments,
+                Permission::ApplyOrderDiscounts,
                 Permission::ReversePayments,
                 Permission::ViewExpenses,
                 Permission::CreateExpenses,
@@ -89,6 +90,7 @@ enum MembershipRole: string
                 Permission::OpenCash,
                 Permission::CloseCash,
                 Permission::CreatePayments,
+                Permission::ApplyOrderDiscounts,
             ],
             self::Waiter => [
                 Permission::ViewCompany,

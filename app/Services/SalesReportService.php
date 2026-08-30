@@ -3,12 +3,16 @@
 namespace App\Services;
 
 use App\Data\ReportDateRange;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\ModifierOptionType;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
+use App\Enums\OrderType;
 use App\Enums\PaymentStatus;
+use App\Enums\TableChargeMode;
 use App\Models\Branch;
 use App\Models\Company;
+use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
@@ -28,8 +32,16 @@ class SalesReportService
             ->when($filters['category_id'] ?? null, fn (Builder $query, int $category) => $query->whereHas('items.productVariant.product', fn (Builder $products) => $products->where('category_id', $category)))
             ->when($filters['product_id'] ?? null, fn (Builder $query, int $product) => $query->whereHas('items.productVariant', fn (Builder $variants) => $variants->where('product_id', $product)))
             ->when($filters['variant_id'] ?? null, fn (Builder $query, int $variant) => $query->whereHas('items', fn (Builder $items) => $items->where('product_variant_id', $variant)))
-            ->get(['id', 'total', 'type', 'closed_at', 'created_by']);
-        $salesTotal = $this->sum($orders, 'total');
+            ->get(['id', 'subtotal', 'discount_total', 'total', 'type', 'closed_at', 'created_by']);
+        $batchDispatches = KitchenDispatch::query()->forCompany($company)->forBranch($branch)
+            ->where('status', KitchenDispatchStatus::Settled->value)
+            ->whereBetween('settled_at', [$range->fromUtc(), $range->toUtc()])
+            ->whereHas('order', fn (Builder $query) => $query->where('type', OrderType::DineIn->value)->where('charge_mode', TableChargeMode::PerBatch->value))
+            ->when($filters['payment_method'] ?? null, fn (Builder $query, string $method) => $query->whereHas('payments', fn (Builder $payments) => $payments->where('status', PaymentStatus::Completed->value)->where('method', $method)))
+            ->with('order:id,type,closed_at,created_by')->get();
+        $salesTotal = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'total'))->plus($this->sum($batchDispatches, 'total')));
+        $grossSales = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'subtotal'))->plus($this->sum($batchDispatches, 'gross_subtotal')));
+        $discountTotal = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'discount_total'))->plus($this->sum($batchDispatches, 'discount_total')));
         $payments = Payment::query()->forCompany($company)->where('branch_id', $branch->id)
             ->where('status', PaymentStatus::Completed->value)
             ->whereBetween('paid_at', [$range->fromUtc(), $range->toUtc()])
@@ -37,18 +49,23 @@ class SalesReportService
             ->with('receivedBy:id,name')->get(['id', 'method', 'amount', 'paid_at', 'received_by']);
 
         $items = OrderItem::query()->forCompany($company)->where('branch_id', $branch->id)
-            ->whereIn('order_id', $orders->pluck('id'))
+            ->where(function (Builder $query) use ($orders, $batchDispatches): void {
+                $query->whereIn('order_id', $orders->pluck('id'))
+                    ->orWhereHas('kitchenDispatchItem', fn (Builder $items) => $items->whereIn('kitchen_dispatch_id', $batchDispatches->pluck('id')));
+            })
             ->where('status', '!=', OrderItemStatus::Cancelled->value)
             ->when($filters['category_id'] ?? null, fn (Builder $query, int $category) => $query->whereHas('productVariant.product', fn (Builder $products) => $products->where('category_id', $category)))
             ->when($filters['product_id'] ?? null, fn (Builder $query, int $product) => $query->whereHas('productVariant', fn (Builder $variants) => $variants->where('product_id', $product)))
             ->when($filters['variant_id'] ?? null, fn (Builder $query, int $variant) => $query->where('product_variant_id', $variant))
-            ->with(['productVariant.product.category', 'sections', 'modifiers'])
+            ->with(['productVariant.product.category', 'sections', 'modifiers', 'kitchenDispatchItem'])
             ->get();
 
         return [
             'sales_total' => $salesTotal,
-            'orders_paid' => $orders->count(),
-            'average_ticket' => $this->decimal->average($salesTotal, $orders->count()),
+            'gross_sales' => $grossSales,
+            'discount_total' => $discountTotal,
+            'orders_paid' => $orders->count() + $batchDispatches->count(),
+            'average_ticket' => $this->decimal->average($salesTotal, $orders->count() + $batchDispatches->count()),
             'by_day' => $this->ordersByLocalKey($orders, $range, 'Y-m-d'),
             'by_hour' => $this->ordersByLocalKey($orders, $range, 'H:00'),
             'by_type' => $this->groupOrders($orders, fn (Order $order) => $order->type->value),
@@ -58,6 +75,7 @@ class SalesReportService
             'by_category' => $this->categoryRanking($items),
             'pizza_analysis' => $this->pizzaAnalysis($items),
             'orders' => $orders,
+            'recognized_item_ids' => $items->pluck('id'),
         ];
     }
 
@@ -65,6 +83,7 @@ class SalesReportService
     {
         return Order::query()->forCompany($company)->forBranch($branch)
             ->where('status', OrderStatus::Paid->value)
+            ->where(fn (Builder $query) => $query->where('type', '!=', OrderType::DineIn->value)->orWhere('charge_mode', '!=', TableChargeMode::PerBatch->value))
             ->whereBetween('closed_at', [$range->fromUtc(), $range->toUtc()]);
     }
 
@@ -95,7 +114,7 @@ class SalesReportService
                 return [
                     'name' => $promotionName ?: ($variant ? $first->productVariant->product->name.' · '.$first->productVariant->name : $first->productVariant->product->name),
                     'quantity' => $this->sumQuantity($group, 'quantity'),
-                    'revenue' => $this->sum($group, 'line_total'),
+                    'revenue' => $this->sumRevenue($group),
                 ];
             })->sort(fn (array $left, array $right) => BigDecimal::of($right['quantity'])->compareTo($left['quantity']))->values();
     }
@@ -105,7 +124,7 @@ class SalesReportService
         return $items->groupBy(fn (OrderItem $item) => ($item->configuration_snapshot['type'] ?? null) === 'promotion'
             ? 'Promociones'
             : ($item->productVariant->product->category?->name ?? 'Sin categoría'))
-            ->map(fn (Collection $group, string $name) => ['name' => $name, 'count' => $this->sumQuantity($group, 'quantity'), 'amount' => $this->sum($group, 'line_total')])
+            ->map(fn (Collection $group, string $name) => ['name' => $name, 'count' => $this->sumQuantity($group, 'quantity'), 'amount' => $this->sumRevenue($group)])
             ->sort(fn (array $left, array $right) => BigDecimal::of($right['amount'])->compareTo($left['amount']))->values();
     }
 
@@ -183,5 +202,15 @@ class SalesReportService
         }
 
         return $this->decimal->quantity((string) $total);
+    }
+
+    private function sumRevenue(iterable $items): string
+    {
+        $total = BigDecimal::zero();
+        foreach ($items as $item) {
+            $total = $total->plus($item->kitchenDispatchItem?->net_total ?? $item->line_total);
+        }
+
+        return $this->decimal->money((string) $total);
     }
 }

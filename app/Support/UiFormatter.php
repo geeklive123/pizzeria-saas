@@ -90,6 +90,7 @@ class UiFormatter
     {
         return match ($status) {
             OrderItemStatus::Draft => 'Borrador',
+            OrderItemStatus::PendingPayment => 'Pendiente de cobro',
             OrderItemStatus::Sent => 'Enviado',
             OrderItemStatus::Preparing => 'Preparando',
             OrderItemStatus::Ready => 'Listo',

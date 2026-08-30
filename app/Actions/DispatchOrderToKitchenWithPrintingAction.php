@@ -16,14 +16,14 @@ class DispatchOrderToKitchenWithPrintingAction
         private readonly ThermalPrintingService $printing,
     ) {}
 
-    public function execute(Order $order, User $user): DispatchWithPrintResult
+    public function execute(Order $order, User $user, int|string|null $discountPercentage = null): DispatchWithPrintResult
     {
-        $dispatch = $this->dispatch->execute($order, $user);
+        $dispatch = $this->dispatch->execute($order, $user, $discountPercentage);
         if (! $dispatch) {
             return new DispatchWithPrintResult(null, null);
         }
 
-        $autoPrint = PrinterSetting::query()
+        $autoPrint = $dispatch->released_at !== null && PrinterSetting::query()
             ->where('company_id', $dispatch->company_id)
             ->where('branch_id', $dispatch->branch_id)
             ->where('purpose', PrinterPurpose::Kitchen->value)

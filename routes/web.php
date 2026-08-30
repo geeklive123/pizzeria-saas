@@ -58,9 +58,11 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');
             Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+            Route::put('/orders/{order}/customer', [OrderController::class, 'updateCustomer'])->name('orders.customer.update');
             Route::post('/orders/{order}/items', [OrderController::class, 'addItem'])->name('orders.items.store');
             Route::post('/orders/{order}/promotions', [OrderController::class, 'addPromotion'])->name('orders.promotions.store');
             Route::post('/orders/{order}/dispatch', [OrderController::class, 'dispatch'])->name('orders.dispatch');
+            Route::post('/orders/{order}/finalize-table', [OrderController::class, 'finalizeTable'])->name('orders.finalize-table');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/print', [OrderController::class, 'printKitchen'])->name('orders.kitchen.print');
             Route::put('/orders/{order}/items/{item}', [OrderController::class, 'updateItem'])->name('orders.items.update');
             Route::post('/orders/{order}/items/{item}/served', [OrderController::class, 'serveItem'])->name('orders.items.served');
@@ -141,6 +143,7 @@ Route::middleware('auth')->group(function (): void {
             Route::put('/users/{membership}', [MembershipController::class, 'update'])->name('memberships.update');
             Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');
             Route::put('/settings', [SettingsController::class, 'update'])->name('settings.update');
+            Route::put('/settings/charge-mode', [SettingsController::class, 'updateChargeMode'])->name('settings.charge-mode');
             Route::post('/settings/printers/{purpose}/test', [SettingsController::class, 'printTest'])->name('settings.printers.test');
         });
     });

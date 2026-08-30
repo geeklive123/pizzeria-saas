@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Enums\TableChargeMode;
 use App\Models\Company;
 use Illuminate\Database\Eloquent\Factories\Factory;
 
@@ -17,6 +18,7 @@ class CompanyFactory extends Factory
             'phone' => fake()->optional()->phoneNumber(),
             'email' => fake()->optional()->companyEmail(),
             'is_active' => true,
+            'table_charge_mode' => TableChargeMode::AtEnd,
         ];
     }
 }

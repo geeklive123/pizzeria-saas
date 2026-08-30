@@ -7,6 +7,7 @@ use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\OpenTableOrderAction;
 use App\Actions\SavePromotionAction;
 use App\Enums\InventoryMovementType;
 use App\Enums\InventoryReservationStatus;
@@ -20,6 +21,7 @@ use App\Models\InventoryMovement;
 use App\Models\InventoryStock;
 use App\Models\Membership;
 use App\Models\Promotion;
+use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use Carbon\CarbonImmutable;
@@ -37,7 +39,7 @@ class PromotionsTest extends TestCase
         $chop = $this->inventoryItem($company, $unit, 'CHOP DE CERVEZA');
         $this->stock($company, $branch, $chop, $owner, '5.000');
         $promotion = $this->promotion($company, $owner, '2x1 CHOP DE CERVEZA', '25.00', [[$chop, '2.000']]);
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->releasedTableOrder($company, $branch, $owner);
         $item = app(AddPromotionToOrderAction::class)->execute($order, $promotion, '1.000', $owner);
 
         $this->assertSame('2.000', $item->reservations()->firstOrFail()->quantity);
@@ -55,7 +57,7 @@ class PromotionsTest extends TestCase
         $wine = $this->inventoryItem($company, $unit, 'VINO TINTO TERRUÑO');
         $this->stock($company, $branch, $wine, $owner, '2.000');
         $promotion = $this->promotion($company, $owner, '2x1 COPA DE VINO TINTO', '20.00', [[$wine, '0.500']]);
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->releasedTableOrder($company, $branch, $owner);
         $item = app(AddPromotionToOrderAction::class)->execute($order, $promotion, '1.000', $owner);
 
         $this->assertSame('0.500', $item->reservations()->firstOrFail()->quantity);
@@ -70,7 +72,7 @@ class PromotionsTest extends TestCase
         $wine = $this->inventoryItem($company, $unit, 'VINO SANTA ANA ROSADO SEMI DULCE');
         $this->stock($company, $branch, $wine, $owner, '1.000');
         $promotion = $this->promotion($company, $owner, '2x1 COPA DE VINO ROSADO', '25.00', [[$wine, '0.500']]);
-        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $order = $this->releasedTableOrder($company, $branch, $owner);
         $item = app(AddPromotionToOrderAction::class)->execute($order, $promotion, '1.000', $owner);
         app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
 
@@ -180,6 +182,13 @@ class PromotionsTest extends TestCase
             ->assertSee('2x1 COPA DE VINO TINTO')
             ->assertSee('Disponibles: 2')
             ->assertSee('0,5 u');
+    }
+
+    private function releasedTableOrder(Company $company, Branch $branch, User $owner)
+    {
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+
+        return app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner);
     }
 
     private function context(): array

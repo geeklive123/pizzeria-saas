@@ -21,6 +21,7 @@ class PaymentRequest extends FormRequest
             'received_amount' => ['nullable', 'decimal:0,2', 'gte:0'],
             'reference' => ['nullable', 'string', 'max:190'],
             'idempotency_key' => ['required', 'string', 'max:64'],
+            'kitchen_dispatch' => ['nullable', 'ulid'],
         ];
     }
 

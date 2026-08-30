@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use LogicException;
 
-#[Fillable(['company_id', 'branch_id', 'order_id', 'cash_session_id', 'method', 'amount', 'reference', 'received_amount', 'change_amount', 'paid_at', 'received_by', 'status', 'reversal_of_id', 'idempotency_key'])]
+#[Fillable(['company_id', 'branch_id', 'order_id', 'kitchen_dispatch_id', 'cash_session_id', 'method', 'amount', 'reference', 'received_amount', 'change_amount', 'paid_at', 'received_by', 'status', 'reversal_of_id', 'idempotency_key'])]
 class Payment extends Model
 {
     use BelongsToCompany, HasUlids;
@@ -47,6 +47,11 @@ class Payment extends Model
     public function cashSession(): BelongsTo
     {
         return $this->belongsTo(CashSession::class);
+    }
+
+    public function kitchenDispatch(): BelongsTo
+    {
+        return $this->belongsTo(KitchenDispatch::class);
     }
 
     public function receivedBy(): BelongsTo

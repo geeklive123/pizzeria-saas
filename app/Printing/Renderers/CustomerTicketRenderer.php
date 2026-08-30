@@ -2,9 +2,11 @@
 
 namespace App\Printing\Renderers;
 
+use App\Enums\ModifierOptionType;
 use App\Enums\OrderItemStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
+use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\User;
@@ -40,9 +42,13 @@ class CustomerTicketRenderer
         $builder->line(str_repeat('-', 48));
         foreach ($order->items->where('status', '!=', OrderItemStatus::Cancelled) as $item) {
             $builder->line($this->amountLine($this->itemName($item), $item->line_total));
+            $this->extras($builder, $item);
         }
         $builder->line(str_repeat('-', 48))->line()
             ->line($this->amountLine('SUBTOTAL', $order->subtotal))
+            ->line($this->amountLine('PIZZA BASE', $order->pizza_base_subtotal))
+            ->line($this->amountLine('TOPPINGS / EXTRAS', $order->extras_subtotal))
+            ->line($this->amountLine('OTROS', $order->other_subtotal))
             ->line($this->amountLine('DESCUENTO', $order->discount_total))
             ->bold()->line($this->amountLine('TOTAL', $order->total))->bold(false)->line();
 
@@ -65,6 +71,47 @@ class CustomerTicketRenderer
             ->bold()->line($this->amountLine('PAGADO', $this->payments->paid($order)))
             ->line($this->amountLine('SALDO', $this->payments->balance($order)))->bold(false)
             ->line()->alignCenter()->line('Gracias por su preferencia')->finish();
+    }
+
+    public function renderDispatch(KitchenDispatch $dispatch, User $requestedBy): ThermalDocument
+    {
+        $dispatch->loadMissing(['order.restaurantTable', 'items.orderItem.productVariant.product', 'items.orderItem.sections', 'items.orderItem.modifiers', 'payments.receivedBy']);
+        $order = $dispatch->order;
+        $payments = $dispatch->payments->where('status', PaymentStatus::Completed)->sortBy('paid_at')->values();
+        $date = ($payments->last()?->paid_at ?? $dispatch->settled_at ?? now())->setTimezone(new DateTimeZone('America/La_Paz'));
+        $builder = (new EscPosDocumentBuilder)
+            ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
+            ->bold()->line('PEDIDO '.$order->formattedNumber().' · TANDA #'.$dispatch->sequence_number)
+            ->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
+            ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
+            ->line('Cajera: '.($payments->last()?->receivedBy?->name ?? $requestedBy->name));
+        if ($order->customer_name) {
+            $builder->line('Cliente: '.$order->customer_name);
+        }
+        $builder->line(str_repeat('-', 48));
+        foreach ($dispatch->items as $dispatchItem) {
+            $builder->line($this->amountLine($this->itemName($dispatchItem->orderItem), $dispatchItem->gross_total));
+            $this->extras($builder, $dispatchItem->orderItem);
+        }
+        $builder->line(str_repeat('-', 48))->line()
+            ->line($this->amountLine('SUBTOTAL', $dispatch->gross_subtotal))
+            ->line($this->amountLine('PIZZA BASE', $dispatch->pizza_base_subtotal))
+            ->line($this->amountLine('TOPPINGS / EXTRAS', $dispatch->extras_subtotal))
+            ->line($this->amountLine('OTROS', $dispatch->other_subtotal))
+            ->line($this->amountLine('DESCUENTO PIZZAS', $dispatch->discount_total))
+            ->bold()->line($this->amountLine('TOTAL', $dispatch->total))->bold(false)->line();
+        foreach ($payments as $payment) {
+            $builder->line($this->amountLine(mb_strtoupper(UiFormatter::paymentMethod($payment->method)), $payment->amount));
+        }
+
+        return $builder->line()->alignCenter()->line('Gracias por su preferencia')->finish();
+    }
+
+    private function extras(EscPosDocumentBuilder $builder, OrderItem $item): void
+    {
+        foreach ($item->modifiers->where('type', ModifierOptionType::Add) as $modifier) {
+            $builder->line('  + '.mb_strtoupper($modifier->name_snapshot).'  Bs '.UiFormatter::decimal($modifier->price_delta_snapshot, 2));
+        }
     }
 
     private function itemName(OrderItem $item): string

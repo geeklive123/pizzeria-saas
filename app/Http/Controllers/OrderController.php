@@ -9,10 +9,14 @@ use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenWithPrintingAction;
+use App\Actions\FinalizePerBatchTableAction;
 use App\Actions\MarkOrderItemServedAction;
 use App\Actions\PrintKitchenDispatchAction;
 use App\Actions\UpdateConfiguredPizzaAction;
+use App\Actions\UpdateOrderCustomerAction;
 use App\Actions\UpdateOrderItemQuantityAction;
+use App\Enums\KitchenDispatchStatus;
+use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PrintAttemptStatus;
@@ -20,6 +24,8 @@ use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
 use App\Http\Requests\AddPromotionRequest;
 use App\Http\Requests\CancelOrderItemRequest;
+use App\Http\Requests\DispatchOrderRequest;
+use App\Http\Requests\OrderCustomerRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
@@ -27,6 +33,8 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\ProductVariant;
 use App\Models\Promotion;
+use App\Services\OrderFinancialService;
+use App\Services\OrderPaymentService;
 use App\Services\OrderPosCatalogService;
 use DomainException;
 use Illuminate\Http\RedirectResponse;
@@ -60,7 +68,7 @@ class OrderController extends Controller
         return redirect()->route('orders.show', $order->ulid)->with('success', "Pedido {$order->formattedNumber()} creado.");
     }
 
-    public function show(string $order, OrderPosCatalogService $catalog): View
+    public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments): View
     {
         $order = $this->order($order)->load([
             'restaurantTable',
@@ -71,8 +79,20 @@ class OrderController extends Controller
         ['products' => $products, 'promotions' => $promotions, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
 
         $lastDispatch = $order->kitchenDispatches->first();
+        $draftFinancial = $financials->preview($order->items->where('status', OrderItemStatus::Draft));
+        $pendingDispatch = $order->kitchenDispatches->firstWhere('status', KitchenDispatchStatus::AwaitingPayment);
+        $orderBalance = $payments->balance($order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'orderBalance'));
+    }
+
+    public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('update', $order);
+        $action->execute($order, $request->user(), $request->validated('customer_name'));
+
+        return back()->with('success', 'Cliente actualizado.');
     }
 
     public function addPromotion(AddPromotionRequest $request, string $order, AddPromotionToOrderAction $action): RedirectResponse
@@ -148,21 +168,37 @@ class OrderController extends Controller
         return back()->with('success', 'Ítem actualizado.');
     }
 
-    public function dispatch(string $order, DispatchOrderToKitchenWithPrintingAction $action): RedirectResponse
+    public function dispatch(DispatchOrderRequest $request, string $order, DispatchOrderToKitchenWithPrintingAction $action): RedirectResponse
     {
         $order = $this->order($order);
         Gate::authorize('update', $order);
         try {
-            $result = $action->execute($order, request()->user());
+            $result = $action->execute($order, $request->user(), $request->validated('discount_percentage'));
         } catch (DomainException $exception) {
             return back()->withErrors(['order' => $exception->getMessage()]);
         }
 
+        if ($result->dispatch?->status === KitchenDispatchStatus::AwaitingPayment) {
+            return redirect()->route('orders.checkout', ['order' => $order->ulid, 'dispatch' => $result->dispatch->ulid]);
+        }
         if ($result->printAttempt?->status === PrintAttemptStatus::Failed) {
             return back()->with('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
         }
 
         return back()->with('success', $result->dispatch ? "Tanda #{$result->dispatch->sequence_number} enviada." : 'No hay productos nuevos para enviar.');
+    }
+
+    public function finalizeTable(string $order, FinalizePerBatchTableAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('update', $order);
+        try {
+            $action->execute($order, request()->user());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['order' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('tables.index')->with('success', 'Mesa finalizada y liberada sin generar un nuevo cobro.');
     }
 
     public function printKitchen(string $order, string $dispatch, PrintKitchenDispatchAction $action): RedirectResponse

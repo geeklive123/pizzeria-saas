@@ -3,6 +3,7 @@
 namespace App\Actions;
 
 use App\Enums\InventoryReservationStatus;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Models\Order;
@@ -22,7 +23,7 @@ class ClosePaidOrderAction
         if (! in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
             || ! BigDecimal::of($this->payments->balance($order))->isZero()
             || $order->reservations()->where('status', InventoryReservationStatus::Reserved->value)->exists()
-            || $order->items()->whereNotIn('status', [OrderItemStatus::Served->value, OrderItemStatus::Cancelled->value])->exists()) {
+            || $this->hasPendingSalesWork($order)) {
             return $order;
         }
 
@@ -43,20 +44,26 @@ class ClosePaidOrderAction
         if ($order->reservations()->where('status', InventoryReservationStatus::Reserved->value)->exists()) {
             throw new DomainException('El pedido todavía tiene reservas activas de inventario.');
         }
-        if ($order->items()->whereNotIn('status', [OrderItemStatus::Served->value, OrderItemStatus::Cancelled->value])->exists()) {
-            throw new DomainException('Aún hay productos pendientes en cocina. Antes de finalizar el pedido, todos los productos deben estar servidos.');
+        if ($this->hasPendingSalesWork($order)) {
+            throw new DomainException('Aún existen productos o tandas pendientes de confirmar.');
         }
 
         return $this->close($order);
     }
 
+    private function hasPendingSalesWork(Order $order): bool
+    {
+        return $order->items()->whereIn('status', [OrderItemStatus::Draft->value, OrderItemStatus::PendingPayment->value])->exists()
+            || $order->kitchenDispatches()->where('status', KitchenDispatchStatus::AwaitingPayment->value)->exists();
+    }
+
     private function close(Order $order): Order
     {
-        $order->forceFill([
-            'status' => OrderStatus::Paid,
-            'active_restaurant_table_id' => null,
-            'closed_at' => now(),
-        ])->save();
+        $order->kitchenDispatches()->where('status', KitchenDispatchStatus::Released->value)->update([
+            'status' => KitchenDispatchStatus::Settled->value,
+            'settled_at' => now(),
+        ]);
+        $order->forceFill(['status' => OrderStatus::Paid, 'active_restaurant_table_id' => null, 'closed_at' => now()])->save();
 
         return $order->refresh();
     }

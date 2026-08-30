@@ -7,6 +7,7 @@ use App\Actions\UpdatePrinterSettingsAction;
 use App\Actions\UpdateSettingsAction;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
+use App\Http\Requests\ChargeModeRequest;
 use App\Http\Requests\SettingsRequest;
 use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
@@ -48,6 +49,14 @@ class SettingsController extends Controller
         $printers->execute($this->company(), $this->branch(), $request->user(), $request->validated('printers'));
 
         return back()->with('success', 'Configuración actualizada correctamente.');
+    }
+
+    public function updateChargeMode(ChargeModeRequest $request): RedirectResponse
+    {
+        Gate::authorize('update', $this->company());
+        $this->company()->update(['table_charge_mode' => $request->validated('table_charge_mode')]);
+
+        return back()->with('success', 'Modo de cobro actualizado para nuevas mesas.');
     }
 
     public function printTest(string $purpose, PrintTestPageAction $action): RedirectResponse
