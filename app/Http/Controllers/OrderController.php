@@ -36,6 +36,7 @@ use App\Models\ProductVariant;
 use App\Models\Promotion;
 use App\Services\CurrentCashSessionService;
 use App\Services\OrderFinancialService;
+use App\Services\OrderHistoryService;
 use App\Services\OrderPaymentService;
 use App\Services\OrderPosCatalogService;
 use DomainException;
@@ -71,7 +72,7 @@ class OrderController extends Controller
         return redirect()->route('orders.show', $order->ulid)->with('success', "Pedido {$order->formattedNumber()} creado.");
     }
 
-    public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments, CurrentCashSessionService $cashSessions): View
+    public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, OrderHistoryService $history): View
     {
         $order = $this->order($order)->load([
             'restaurantTable',
@@ -93,9 +94,11 @@ class OrderController extends Controller
         $idempotencyQr = (string) Str::ulid();
         $idempotencyMixedCash = (string) Str::ulid();
         $idempotencyMixedQr = (string) Str::ulid();
+        $orderPaid = $payments->paid($order);
         $orderBalance = $payments->balance($order);
+        $orderHistory = $history->forOrder($order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderBalance'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse

@@ -13,6 +13,6 @@ class SaleController extends Controller
     {
         Gate::authorize('create', Order::class);
 
-        return view('sales.create', ['tables' => $sales->activeTables($this->company(), $this->branch())]);
+        return view('sales.create', $sales->data($this->company(), $this->branch()));
     }
 }

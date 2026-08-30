@@ -4,13 +4,16 @@ namespace App\Http\Controllers;
 
 use App\Actions\MarkOrderReadyForPaymentAction;
 use App\Actions\PrintOrderTicketAction;
+use App\Actions\RegisterMixedPaymentAction;
 use App\Actions\RegisterPaymentAction;
 use App\Actions\ReversePaymentAction;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderStatus;
+use App\Enums\OrderType;
 use App\Enums\PaymentMethod;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
+use App\Enums\TableChargeMode;
 use App\Http\Requests\PaymentRequest;
 use App\Http\Requests\PrepareCheckoutRequest;
 use App\Http\Requests\ReversePaymentRequest;
@@ -69,10 +72,14 @@ class CheckoutController extends Controller
             return back()->withErrors(['order' => $exception->getMessage()]);
         }
 
+        if ($order->type === OrderType::DineIn && $order->charge_mode === TableChargeMode::AtEnd) {
+            return redirect()->route('orders.show', $order->ulid)->with('success', 'Cuenta lista para cobrar.');
+        }
+
         return redirect()->route('orders.checkout', $order->ulid)->with('success', 'Cuenta lista para cobrar.');
     }
 
-    public function store(PaymentRequest $request, string $order, RegisterPaymentAction $action, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, ThermalPrintingService $printing): RedirectResponse
+    public function store(PaymentRequest $request, string $order, RegisterPaymentAction $action, RegisterMixedPaymentAction $mixedPayments, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, ThermalPrintingService $printing): RedirectResponse
     {
         $order = $this->order($order);
         $dispatch = $this->dispatch($order, $request->validated('kitchen_dispatch'))
@@ -83,17 +90,30 @@ class CheckoutController extends Controller
             return back()->withInput()->withErrors(['payment' => 'Debes abrir tu propio turno de caja antes de cobrar.']);
         }
         try {
-            $payment = $action->execute(
-                $order,
-                $session,
-                PaymentMethod::from($request->validated('method')),
-                $request->validated('amount'),
-                $request->user(),
-                $request->validated('idempotency_key'),
-                $request->validated('received_amount'),
-                $request->validated('reference'),
-                $dispatch,
-            );
+            if ($request->validated('method') === 'mixed') {
+                $payment = $mixedPayments->execute(
+                    $order,
+                    $session,
+                    $request->validated('cash_amount'),
+                    $request->user(),
+                    $request->validated('idempotency_key'),
+                    $request->validated('received_amount'),
+                    $request->validated('reference'),
+                    $dispatch,
+                );
+            } else {
+                $payment = $action->execute(
+                    $order,
+                    $session,
+                    PaymentMethod::from($request->validated('method')),
+                    $request->validated('amount'),
+                    $request->user(),
+                    $request->validated('idempotency_key'),
+                    $request->validated('received_amount'),
+                    $request->validated('reference'),
+                    $dispatch,
+                );
+            }
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['payment' => $exception->getMessage()]);
         }

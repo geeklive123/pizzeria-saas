@@ -41,17 +41,29 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
         $this->assertTrue(MembershipRole::Cashier->allows(Permission::CreatePayments));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::RegisterManualCashMovements));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::AuthorizeCashWithdrawals));
-        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewInventory));
+        $this->assertTrue(MembershipRole::Cashier->allows(Permission::ViewInventory));
+        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ManageInventory));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewExpenses));
-        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewReports));
+        $this->assertTrue(MembershipRole::Cashier->allows(Permission::ViewReports));
+        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewFinancialReports));
+        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ExportReports));
 
-        [$company, $branch, , , $cashier] = $this->context();
+        [$company, $branch, $owner, $admin, $cashier] = $this->context();
         $this->actingInContext($cashier, $company, $branch)->get(route('cash.index'))
-            ->assertOk()->assertSee('Venta')->assertSee('Mesas')->assertSee('Pedidos')->assertSee('Caja')
+            ->assertOk()->assertSee('Venta')->assertSee('Pedidos')->assertSee('Caja')
+            ->assertSee('Inventario')->assertSee('Reportes')->assertDontSee('Mesas')
             ->assertDontSee('Usuarios')->assertDontSee('Configuración')->assertDontSee('Recetas')
-            ->assertDontSee('Inventario')->assertDontSee('Compras')->assertDontSee('Gastos')
-            ->assertDontSee('Proveedores')->assertDontSee('Categorías de gasto')->assertDontSee('Reportes');
-        foreach (['memberships.index', 'settings.edit', 'recipes.index', 'inventory.index', 'purchases.index', 'expenses.index', 'suppliers.index', 'expense-categories.index', 'reports.sales'] as $routeName) {
+            ->assertDontSee('Compras')->assertDontSee('Gastos')
+            ->assertDontSee('Proveedores')->assertDontSee('Categorías de gasto');
+        $this->actingInContext($cashier, $company, $branch)->get(route('tables.index'))->assertOk();
+        $this->actingInContext($cashier, $company, $branch)->get(route('inventory.index'))->assertOk();
+        $this->actingInContext($cashier, $company, $branch)->get(route('reports.sales'))->assertOk();
+        $this->actingInContext($cashier, $company, $branch)->get(route('reports.index'))->assertForbidden();
+        foreach ([$owner, $admin] as $manager) {
+            $this->actingInContext($manager, $company, $branch)->get(route('cash.index'))
+                ->assertOk()->assertSee('Mesas');
+        }
+        foreach (['memberships.index', 'settings.edit', 'recipes.index', 'purchases.index', 'expenses.index', 'suppliers.index', 'expense-categories.index'] as $routeName) {
             $this->actingInContext($cashier, $company, $branch)->get(route($routeName))->assertForbidden();
         }
     }
@@ -157,7 +169,7 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
         $this->assertTrue($cashier->canForCompany(Permission::ViewReports, $company));
         $this->assertFalse($cashier->canForCompany(Permission::CancelOrders, $company));
         $this->actingInContext($cashier, $company, $branch)->get(route('reports.sales'))->assertOk();
-        $this->actingInContext($cashier, $company, $branch)->get(route('inventory.index'))->assertForbidden();
+        $this->actingInContext($cashier, $company, $branch)->get(route('inventory.index'))->assertOk();
     }
 
     public function test_administrator_cannot_grant_a_permission_removed_from_their_own_membership_or_manage_an_owner(): void
@@ -171,7 +183,11 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
             'name' => $cashier->name, 'role' => MembershipRole::Cashier->value, 'is_active' => '1',
             'permissions' => [Permission::ViewReports->value => 'allow'],
         ])->assertForbidden();
-        $this->assertFalse($cashier->canForCompany(Permission::ViewReports, $company));
+        $this->assertTrue($cashier->canForCompany(Permission::ViewReports, $company));
+        $this->assertDatabaseMissing('membership_permission_overrides', [
+            'membership_id' => $cashierMembership->id,
+            'permission' => Permission::ViewReports->value,
+        ]);
         $this->actingInContext($admin, $company, $branch)->get(route('memberships.edit', $ownerMembership->id))->assertForbidden();
     }
 

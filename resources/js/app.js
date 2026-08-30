@@ -8,6 +8,17 @@ const toggleSidebar = () => {
 document.querySelector('#sidebar-toggle')?.addEventListener('click', toggleSidebar);
 backdrop?.addEventListener('click', toggleSidebar);
 
+const orderHistoryModal = document.querySelector('[data-order-history-modal]');
+document.querySelector('[data-order-history-open]')?.addEventListener('click', () => {
+    orderHistoryModal?.showModal();
+});
+document.querySelectorAll('[data-order-history-close]').forEach((button) => {
+    button.addEventListener('click', () => orderHistoryModal?.close());
+});
+orderHistoryModal?.addEventListener('click', (event) => {
+    if (event.target === orderHistoryModal) orderHistoryModal.close();
+});
+
 const filterPosProducts = () => {
     const term = document.querySelector('[data-pos-search]')?.value.toLocaleLowerCase() ?? '';
     const category = document.querySelector('[data-pos-category].is-active')?.dataset.posCategory ?? 'all';

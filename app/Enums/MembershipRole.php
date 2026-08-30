@@ -82,6 +82,7 @@ enum MembershipRole: string
                 Permission::ViewCompany,
                 Permission::ViewBranches,
                 Permission::ViewCatalog,
+                Permission::ViewInventory,
                 Permission::ViewOrders,
                 Permission::ManageOrders,
                 Permission::CancelOrders,
@@ -91,6 +92,7 @@ enum MembershipRole: string
                 Permission::CloseCash,
                 Permission::CreatePayments,
                 Permission::ApplyOrderDiscounts,
+                Permission::ViewReports,
             ],
             self::Waiter => [
                 Permission::ViewCompany,

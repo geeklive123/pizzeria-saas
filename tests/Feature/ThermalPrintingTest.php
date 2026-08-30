@@ -317,15 +317,21 @@ class ThermalPrintingTest extends TestCase
             'last_seen_at' => now(),
         ]);
         $users = collect([MembershipRole::Cashier, MembershipRole::Waiter, MembershipRole::Kitchen])
-            ->map(function (MembershipRole $role) use ($company): User {
+            ->mapWithKeys(function (MembershipRole $role) use ($company): array {
                 $user = User::factory()->create();
                 Membership::factory()->for($company)->for($user)->create(['role' => $role]);
 
-                return $user;
+                return [$role->value => $user];
             });
 
-        foreach ($users as $user) {
-            $this->actingInContext($user, $company, $branch)->get(route('dashboard'))
+        foreach ($users as $role => $user) {
+            $response = $this->actingInContext($user, $company, $branch)->get(route('dashboard'));
+            if ($role === MembershipRole::Cashier->value) {
+                $response->assertRedirect(route('sales.create'));
+                $response = $this->actingInContext($user, $company, $branch)->get(route('sales.create'));
+            }
+
+            $response
                 ->assertOk()
                 ->assertSee('Impresora')
                 ->assertSee('En línea')
@@ -350,8 +356,10 @@ class ThermalPrintingTest extends TestCase
             'last_seen_at' => now(),
         ]);
 
-        foreach ($users as $user) {
-            $this->actingInContext($user, $company, $branch)->get(route('dashboard'))
+        foreach ($users as $role => $user) {
+            $landingRoute = $role === MembershipRole::Cashier->value ? 'sales.create' : 'dashboard';
+
+            $this->actingInContext($user, $company, $branch)->get(route($landingRoute))
                 ->assertOk()
                 ->assertSee('Fuera de línea');
         }

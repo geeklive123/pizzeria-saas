@@ -16,8 +16,9 @@ class PaymentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'method' => ['required', Rule::in([PaymentMethod::Cash->value, PaymentMethod::Qr->value])],
-            'amount' => ['required', 'decimal:0,2', 'gt:0'],
+            'method' => ['required', Rule::in([PaymentMethod::Cash->value, PaymentMethod::Qr->value, 'mixed'])],
+            'amount' => ['required_unless:method,mixed', 'nullable', 'decimal:0,2', 'gt:0'],
+            'cash_amount' => ['required_if:method,mixed', 'nullable', 'decimal:0,2', 'gte:0'],
             'received_amount' => ['nullable', 'decimal:0,2', 'gte:0'],
             'reference' => ['nullable', 'string', 'max:190'],
             'idempotency_key' => ['required', 'string', 'max:64'],
@@ -33,6 +34,9 @@ class PaymentRequest extends FormRequest
             'amount.required' => 'Indica el monto a cobrar.',
             'amount.decimal' => 'El monto debe tener hasta dos decimales.',
             'amount.gt' => 'El monto debe ser mayor que cero.',
+            'cash_amount.required_if' => 'Indica cuánto se pagará en efectivo.',
+            'cash_amount.decimal' => 'El efectivo debe tener hasta dos decimales.',
+            'cash_amount.gte' => 'El efectivo no puede ser negativo.',
             'received_amount.decimal' => 'El efectivo recibido debe tener hasta dos decimales.',
             'received_amount.gte' => 'El efectivo recibido no puede ser negativo.',
             'idempotency_key.required' => 'No se pudo identificar la operación de pago. Inténtalo nuevamente.',

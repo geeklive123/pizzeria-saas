@@ -18,72 +18,83 @@
         <div class="mt-4 rounded-xl bg-amber-100 p-3 text-sm text-amber-900">Debes abrir tu turno de caja antes de cobrar. <a class="link" href="{{ route('cash.open.form') }}">Abrir caja</a></div>
     @else
         @can('create', $paymentClass)
-        <div class="mt-5" data-payment-selector>
-            <h4 class="font-semibold">FORMA DE PAGO</h4>
-            <div class="mt-3 grid grid-cols-3 gap-2">
-                <button class="btn-secondary" type="button" data-payment-method="cash">EFECTIVO</button>
-                <button class="btn-secondary" type="button" data-payment-method="qr">QR</button>
-                <button class="btn-secondary" type="button" data-payment-method="mixed">MIXTO</button>
-            </div>
-            <form class="mt-3 rounded-xl border bg-white p-3" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="cash" data-cash-payment hidden>
-                @csrf<input type="hidden" name="method" value="cash"><input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}"><input type="hidden" name="idempotency_key" value="{{ $idempotencyCash }}">
-                <label class="block"><span class="label">Monto aplicado</span><input class="input" name="amount" value="{{ $pendingBalance }}" max="{{ $pendingBalance }}" inputmode="decimal" required></label>
-                <label class="mt-2 block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $pendingBalance }}" inputmode="decimal" required></label>
-                <div class="mt-2 rounded-xl bg-emerald-50 p-3"><span class="text-sm">Vuelto</span><strong class="block text-xl" data-cash-change>Bs 0,00</strong></div>
-                <button class="btn-primary mt-3 w-full">Confirmar efectivo</button>
-            </form>
-            <form class="mt-3 rounded-xl border bg-white p-3" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="qr" hidden>
-                @csrf<input type="hidden" name="method" value="qr"><input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}"><input type="hidden" name="idempotency_key" value="{{ $idempotencyQr }}">
-                <label class="block"><span class="label">Monto QR</span><input class="input" name="amount" value="{{ $pendingBalance }}" max="{{ $pendingBalance }}" inputmode="decimal" required></label>
-                <label class="mt-2 block"><span class="label">Referencia opcional</span><input class="input" name="reference"></label>
-                <button class="btn-primary mt-3 w-full">Confirmar QR</button>
-            </form>
-            <div class="mt-3 rounded-xl border bg-white p-3" data-payment-form="mixed" hidden>
-                <p class="text-sm text-stone-600">Registra el efectivo parcial; al volver al panel completa el saldo restante con QR.</p>
-                <form class="mt-3" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-cash-payment>
-                    @csrf<input type="hidden" name="method" value="cash"><input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}"><input type="hidden" name="idempotency_key" value="{{ $idempotencyMixedCash }}">
-                    <label class="block"><span class="label">Efectivo parcial</span><input class="input" name="amount" max="{{ $pendingBalance }}" inputmode="decimal" required></label>
-                    <label class="mt-2 block"><span class="label">Monto recibido</span><input class="input" name="received_amount" inputmode="decimal" required></label>
-                    <div class="mt-2 rounded-xl bg-emerald-50 p-3"><span class="text-sm">Vuelto</span><strong class="block text-xl" data-cash-change>Bs 0,00</strong></div>
-                    <button class="btn-primary mt-3 w-full">Registrar efectivo parcial</button>
+        <div class="mt-4" data-payment-selector data-balance="{{ $pendingBalance }}">
+            <h4 class="text-sm font-bold">FORMA DE PAGO</h4>
+            <div class="mt-2 grid grid-cols-3 gap-2">
+                <form method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-quick-payment>
+                    @csrf
+                    <input type="hidden" name="method" value="cash">
+                    <input type="hidden" name="amount" value="{{ $pendingBalance }}">
+                    <input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}">
+                    <input type="hidden" name="idempotency_key" value="{{ $idempotencyCash }}">
+                    <button class="btn-secondary w-full px-2" data-payment-submit>EFECTIVO</button>
                 </form>
-                <form class="mt-4 border-t pt-4" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}">
-                    @csrf<input type="hidden" name="method" value="qr"><input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}"><input type="hidden" name="idempotency_key" value="{{ $idempotencyMixedQr }}">
-                    <label class="block"><span class="label">QR parcial</span><input class="input" name="amount" value="{{ $pendingBalance }}" max="{{ $pendingBalance }}" inputmode="decimal" required></label>
-                    <label class="mt-2 block"><span class="label">Referencia opcional</span><input class="input" name="reference"></label>
-                    <button class="btn-primary mt-3 w-full">Completar saldo con QR</button>
+                <form method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-quick-payment>
+                    @csrf
+                    <input type="hidden" name="method" value="qr">
+                    <input type="hidden" name="amount" value="{{ $pendingBalance }}">
+                    <input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}">
+                    <input type="hidden" name="idempotency_key" value="{{ $idempotencyQr }}">
+                    <button class="btn-secondary w-full px-2" data-payment-submit>QR</button>
                 </form>
+                <button class="btn-secondary px-2" type="button" data-payment-method="mixed">MIXTO</button>
             </div>
+
+            <form class="mt-3 space-y-3 rounded-xl border bg-white p-3" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="mixed" hidden>
+                @csrf
+                <input type="hidden" name="method" value="mixed">
+                <input type="hidden" name="kitchen_dispatch" value="{{ $pendingDispatch->ulid }}">
+                <input type="hidden" name="idempotency_key" value="{{ $idempotencyMixedCash }}">
+                <p class="flex justify-between text-sm"><span>Saldo total</span><strong>{{ \App\Support\UiFormatter::money($pendingBalance) }}</strong></p>
+                <label class="block"><span class="label">Efectivo</span><input class="input" name="cash_amount" value="0.00" inputmode="decimal" required data-mixed-cash></label>
+                <p class="flex justify-between text-sm"><span>QR</span><strong data-mixed-qr>{{ \App\Support\UiFormatter::money($pendingBalance) }}</strong></p>
+                <button class="btn-primary w-full" data-payment-submit>CONFIRMAR PAGO MIXTO</button>
+            </form>
         </div>
         @endcan
     @endif
 </section>
 <script>
 document.querySelectorAll('[data-payment-selector]').forEach((selector) => {
+    const toCents = (value) => {
+        const normalized = String(value || '').trim().replace(',', '.');
+        const negative = normalized.startsWith('-');
+        const parts = normalized.replace('-', '').split('.');
+        const cents = (Number.parseInt(parts[0] || '0', 10) * 100)
+            + Number.parseInt(((parts[1] || '') + '00').slice(0, 2), 10);
+
+        return negative ? -cents : cents;
+    };
+    const money = (cents) => 'Bs ' + Math.trunc(cents / 100) + ',' + String(Math.abs(cents % 100)).padStart(2, '0');
+    const balance = toCents(selector.dataset.balance);
+
     selector.querySelectorAll('[data-payment-method]').forEach((button) => {
         button.addEventListener('click', () => {
-            selector.querySelectorAll('[data-payment-form]').forEach((form) => {
-                form.hidden = form.dataset.paymentForm !== button.dataset.paymentMethod;
-            });
+            selector.querySelector('[data-payment-form="mixed"]').hidden = false;
         });
     });
-});
-document.querySelectorAll('[data-cash-payment]').forEach((form) => {
-    const amount = form.querySelector('[name="amount"]');
-    const received = form.querySelector('[name="received_amount"]');
-    const output = form.querySelector('[data-cash-change]');
-    const cents = (value) => {
-        const parts = String(value || '').replace(',', '.').split('.');
 
-        return (Number.parseInt(parts[0] || '0', 10) * 100) + Number.parseInt(((parts[1] || '') + '00').slice(0, 2), 10);
+    const mixedForm = selector.querySelector('[data-payment-form="mixed"]');
+    const mixedCash = mixedForm.querySelector('[data-mixed-cash]');
+    const updateMixed = () => {
+        const cash = toCents(mixedCash.value);
+        mixedCash.setCustomValidity(cash < 0 || cash > balance ? 'El efectivo debe estar entre cero y el saldo.' : '');
+        mixedForm.querySelector('[data-mixed-qr]').textContent = money(Math.max(0, balance - cash));
     };
-    const update = () => {
-        const change = Math.max(0, cents(received.value) - cents(amount.value));
-        output.textContent = 'Bs ' + Math.floor(change / 100) + ',' + String(change % 100).padStart(2, '0');
-    };
-    amount.addEventListener('input', update);
-    received.addEventListener('input', update);
-    update();
+    mixedCash.addEventListener('input', updateMixed);
+    updateMixed();
+
+    selector.querySelectorAll('form').forEach((form) => {
+        form.addEventListener('submit', (event) => {
+            const submitter = event.submitter ?? form.querySelector('[data-payment-submit]');
+            selector.querySelectorAll('button').forEach((button) => {
+                button.disabled = true;
+            });
+            if (submitter) {
+                submitter.textContent = 'Procesando...';
+            }
+        });
+    });
 });
 </script>
 @endif

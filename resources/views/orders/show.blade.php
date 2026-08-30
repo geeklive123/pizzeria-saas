@@ -2,27 +2,43 @@
 
 @section('title', $order->formattedNumber())
 @section('heading', 'Venta')
+@section('main-class', '!max-w-none')
 
 @section('content')
 @php($hasDraft = $order->items->contains('status', \App\Enums\OrderItemStatus::Draft))
 @php($isPerBatch = $order->charge_mode === \App\Enums\TableChargeMode::PerBatch)
+@php($isAtEndCheckout = ! $isPerBatch && $order->type === \App\Enums\OrderType::DineIn && $order->status === \App\Enums\OrderStatus::ReadyForPayment)
 @php($visibleItems = $isPerBatch ? $order->items->where('status', \App\Enums\OrderItemStatus::Draft) : $order->items)
-<div class="page-heading">
-    <div>
-        <a class="back-link" href="{{ route('orders.index') }}">← Pedidos abiertos</a>
-        <h1>{{ $order->restaurantTable?->name ?? 'Para llevar' }} · {{ $order->formattedNumber() }}</h1>
-        <p>Cuenta abierta desde {{ \App\Support\UiFormatter::date($order->opened_at, true) }}</p>
-        <p class='mt-1 text-sm font-semibold text-stone-700'>{{ $order->restaurantTable?->name ?? 'Para llevar' }}{{ $order->customer_name ? ' · '.$order->customer_name : '' }}</p>
-        @can('update', $order)<form method='POST' action='{{ route('orders.customer.update', $order->ulid) }}' class='mt-3 flex max-w-md gap-2'>@csrf @method('PUT')<input class='input' name='customer_name' value='{{ $order->customer_name }}' maxlength='255' placeholder='Cliente opcional'><button class='btn-secondary'>Guardar</button></form>@endcan
-        @if ($order->type === \App\Enums\OrderType::Takeaway && ($order->customer_name || $order->customer_phone || $order->notes))
-            <p class="mt-1 text-sm text-stone-600">
-                {{ $order->customer_name ?: 'Cliente sin nombre' }}
-                @if ($order->customer_phone) · {{ $order->customer_phone }} @endif
-                @if ($order->notes) · {{ $order->notes }} @endif
-            </p>
-        @endif
-    </div>
-    <div class="flex flex-wrap gap-2">
+@php([$accountStatus, $accountStatusClasses] = match ($order->status) {
+    \App\Enums\OrderStatus::Open => ['CUENTA ABIERTA', 'bg-emerald-100 text-emerald-700'],
+    \App\Enums\OrderStatus::ReadyForPayment => ['COBRO PENDIENTE', 'bg-amber-100 text-amber-700'],
+    \App\Enums\OrderStatus::Paid => ['PAGADA', 'bg-emerald-100 text-emerald-700'],
+    \App\Enums\OrderStatus::Cancelled => ['CANCELADA', 'bg-red-100 text-red-700'],
+})
+<section class="relative mb-6 overflow-hidden rounded-3xl border border-stone-200 bg-white shadow-sm shadow-stone-200/70">
+    <span class="absolute inset-y-0 left-0 w-1 bg-orange-500" aria-hidden="true"></span>
+    <div class="p-5 sm:p-6 lg:p-7">
+        <a class="back-link inline-flex items-center gap-2" href="{{ route('orders.index') }}"><span aria-hidden="true">←</span> Pedidos abiertos</a>
+        <div class="mt-5 flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+            <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <h1 class="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+                        {{ str($order->restaurantTable?->name ?? 'Para llevar')->ucfirst() }}
+                        <span class="text-orange-600">· {{ $order->formattedNumber() }}</span>
+                    </h1>
+                    <span class="rounded-full px-3 py-1 text-xs font-bold tracking-wide {{ $accountStatusClasses }}">{{ $accountStatus }}</span>
+                </div>
+                <p class="mt-3 flex items-center gap-2 text-sm text-slate-500">
+                    <svg class="size-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
+                    Abierta desde {{ \App\Support\UiFormatter::date($order->opened_at, true) }}
+                </p>
+                @if($order->customer_name)<p class="mt-2 text-sm font-medium text-slate-600">Cliente: {{ $order->customer_name }}</p>@endif
+            </div>
+            <div class="flex flex-wrap gap-2 xl:justify-end">
+                <button class="btn-secondary border-orange-200 text-orange-700 max-sm:w-full" type="button" data-order-history-open>
+                    <svg class="mr-2 size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
+                    HISTORIAL
+                </button>
         @can('update', $order)
             @if ($order->status === \App\Enums\OrderStatus::Open && $hasDraft && ! $pendingDispatch && ! $isPerBatch)
                 <form method='POST' action='{{ route('orders.dispatch', $order->ulid) }}'>@csrf
@@ -45,11 +61,11 @@
                 </form>
             @endif
             @if ($order->type === \App\Enums\OrderType::DineIn && $isPerBatch && ! $hasDraft && ! $pendingDispatch && $orderBalance === '0.00' && $order->items->isNotEmpty())
-                <form method='POST' action='{{ route('orders.finalize-table', $order->ulid) }}' onsubmit='return confirm(&quot;Todos los pedidos estan pagados. Finalizar y liberar la mesa?&quot;)'>@csrf<button class='btn-primary'>Finalizar mesa</button></form>
+                <form method='POST' action='{{ route('orders.finalize-table', $order->ulid) }}' onsubmit='return confirm(&quot;Todos los pedidos estan pagados. Finalizar y liberar la mesa?&quot;)'>@csrf<button class='btn-primary max-sm:w-full'>FINALIZAR MESA</button></form>
             @endif
         @endcan
         @can('create', \App\Models\Payment::class)
-            @if($order->status === \App\Enums\OrderStatus::ReadyForPayment)<a class='btn-primary' href='{{ route('orders.checkout', $order->ulid) }}'>Continuar cobro</a>@endif
+            @if($order->status === \App\Enums\OrderStatus::ReadyForPayment && ($isPerBatch || $order->type !== \App\Enums\OrderType::DineIn))<a class='btn-primary' href='{{ route('orders.checkout', $order->ulid) }}'>Continuar cobro</a>@endif
         @endcan
         @if(false)
         @can('update', $order)
@@ -84,15 +100,17 @@
             @if ($order->status === \App\Enums\OrderStatus::Open)
                 <form method="POST" action="{{ route('orders.cancel', $order->ulid) }}" onsubmit="return confirm('¿Cancelar la cuenta?')">
                     @csrf
-                    <button class="btn-danger">Cancelar cuenta</button>
+                    <button class="btn-danger max-sm:w-full">CANCELAR CUENTA</button>
                 </form>
             @endif
         @endcan
+            </div>
+        </div>
     </div>
-</div>
+</section>
 
-<div class="grid gap-6 xl:grid-cols-[1.45fr_.85fr]">
-    <section>
+<div class="grid min-w-0 items-start gap-6 min-[1180px]:grid-cols-[minmax(0,2.15fr)_minmax(20rem,1fr)]">
+    <section class="min-w-0">
         @if ($order->status === \App\Enums\OrderStatus::Open)
             <div class="card mb-4 p-4">
                 <input class="input" type="search" placeholder="Buscar producto..." data-pos-search autofocus>
@@ -277,7 +295,7 @@
                 </div>
             @endif
 
-            <div class="grid gap-4 md:grid-cols-2">
+            <div class="grid gap-4 min-[1280px]:grid-cols-2 min-[1800px]:grid-cols-3">
                 @foreach ($promotions as $promotion)
                     @php($promotionAvailable = \Brick\Math\BigDecimal::of($promotion->sellable_availability->availableQuantity)->isGreaterThan(0))
                     <article class="card border-orange-200 bg-orange-50/40 p-5" data-pos-product data-name="{{ str($promotion->productVariant->product->name)->lower() }}" data-category="promotions" data-product-kind="promotion">
@@ -338,7 +356,7 @@
                     </article>
                 @endforeach
             </div>
-        @else
+        @elseif(! $isAtEndCheckout)
             <div class="card p-8 text-center">
                 <h2 class="text-xl font-semibold">Cuenta en proceso de cobro</h2>
                 <p class="mt-2 text-stone-500">No se pueden agregar productos después de registrar pagos. El pedido seguirá activo hasta que cocina termine y todos los productos estén servidos.</p>
@@ -347,37 +365,55 @@
         @endif
     </section>
 
-    <aside class="card self-start xl:sticky xl:top-24">
-        <div class="card-header">
+    <aside class="card min-w-0 w-full self-start border-stone-200 shadow-md shadow-stone-200/40 min-[1180px]:sticky min-[1180px]:top-24 min-[1180px]:max-h-[calc(100vh-7rem)] min-[1180px]:overflow-y-auto min-[1180px]:overscroll-contain">
+        <div class="flex items-start gap-3 border-b border-stone-100 px-5 py-5">
+            <span class="mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl bg-orange-50 text-orange-600" aria-hidden="true">
+                <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h10v3h2v15l-2-1.5L15 21l-3-1.5L9 21l-2-1.5L5 21V6h2V3Z"/><path d="M9 3h6M8.5 10h7M8.5 14h7"/></svg>
+            </span>
             <div>
-                <h2 class="card-title">{{ $isPerBatch && $pendingDispatch ? 'TANDA #'.$pendingDispatch->sequence_number.' PENDIENTE DE PAGO' : ($isPerBatch ? 'PEDIDO ACTUAL / BORRADOR' : 'Pedido actual') }}</h2>
-                <p class="card-subtitle">Cada envío crea una tanda solo con borradores</p>
+                <h2 class="text-base font-bold tracking-tight text-slate-900">{{ $isAtEndCheckout ? 'COBRAR CUENTA' : 'PEDIDO ACTUAL' }}</h2>
+                <p class="mt-1 text-sm text-slate-500">{{ $isAtEndCheckout ? 'Completa el pago total para finalizar y liberar la mesa.' : 'Productos que agregarás en el próximo envío.' }}</p>
             </div>
         </div>
-        <div class="divide-y">
+        @unless($isAtEndCheckout)
+        <div class="space-y-3 p-4">
             @forelse ($visibleItems as $item)
-                <div class="p-4 {{ $item->status === \App\Enums\OrderItemStatus::Cancelled ? 'opacity-50' : '' }}">
-                    <div class="flex justify-between gap-3">
-                        <div>
-                            <p class="font-semibold">{{ $item->displayName() }}</p>
+                <article class="rounded-2xl border {{ $item->status === \App\Enums\OrderItemStatus::Draft ? 'border-orange-300 bg-orange-50/20' : 'border-stone-200 bg-white' }} p-4 shadow-sm {{ $item->status === \App\Enums\OrderItemStatus::Cancelled ? 'opacity-50' : '' }}">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="flex min-w-0 gap-3">
+                            <span class="grid size-7 shrink-0 place-items-center rounded-full bg-orange-600 text-xs font-bold text-white">{{ \App\Support\UiFormatter::inputQuantity($item->quantity) }}</span>
+                            <div class="min-w-0">
+                            <p class="truncate font-bold text-slate-900">{{ $item->displayName() }}</p>
                             @if ($item->sections->isNotEmpty())
-                                <p class="text-sm text-stone-700">{{ $item->sections->pluck('product_name_snapshot')->join(' / ') }}</p>
+                                <p class="mt-1 truncate text-sm font-medium uppercase text-slate-600">{{ $item->sections->pluck('product_name_snapshot')->join(' / ') }}</p>
                             @endif
                             @if (($item->configuration_snapshot['type'] ?? null) === 'promotion')
                                 @foreach ($item->configuration_snapshot['components'] ?? [] as $component)
-                                    <p class="text-xs text-stone-500">{{ $component['inventory_item_name'] }} × {{ \App\Support\UiFormatter::quantity($component['quantity_applied'], $component['unit_symbol'] ?? null) }}</p>
+                                    <p class="mt-1 text-xs text-slate-500">{{ $component['inventory_item_name'] }} × {{ \App\Support\UiFormatter::quantity($component['quantity_applied'], $component['unit_symbol'] ?? null) }}</p>
                                 @endforeach
                             @endif
-                            <p class="text-xs text-stone-500">Cantidad: {{ \App\Support\UiFormatter::quantity($item->quantity) }}</p>
-                            <p class="text-xs text-stone-500">{{ $item->fulfillment_type === \App\Enums\OrderType::Takeaway ? 'Para llevar' : 'Comer aquí' }} · {{ \App\Support\UiFormatter::orderItemStatus($item->status) }}</p>
+                            @php($itemStatusLabel = match ($item->status) {
+                                \App\Enums\OrderItemStatus::Draft => 'Sin enviar',
+                                \App\Enums\OrderItemStatus::PendingPayment => 'Pendiente de pago',
+                                \App\Enums\OrderItemStatus::Sent, \App\Enums\OrderItemStatus::Preparing => 'Enviado a cocina',
+                                \App\Enums\OrderItemStatus::Ready => 'Listo en cocina',
+                                \App\Enums\OrderItemStatus::Served => 'Servido',
+                                \App\Enums\OrderItemStatus::Cancelled => 'Cancelado',
+                            })
+                            <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                                @if($item->sections->isNotEmpty())<span>{{ $item->sections->count() }} {{ $item->sections->count() === 1 ? 'sabor' : 'sabores' }}</span><span>·</span>@endif
+                                <span>{{ $item->fulfillment_type === \App\Enums\OrderType::Takeaway ? 'Para llevar' : 'Comer aquí' }}</span><span>·</span>
+                                <span class="rounded-full px-2 py-0.5 font-semibold {{ $item->status === \App\Enums\OrderItemStatus::Draft ? 'bg-amber-100 text-amber-700' : ($item->status === \App\Enums\OrderItemStatus::Served ? 'bg-emerald-100 text-emerald-700' : ($item->status === \App\Enums\OrderItemStatus::Cancelled ? 'bg-red-100 text-red-700' : 'bg-blue-50 text-blue-700')) }}">{{ $itemStatusLabel }}</span>
+                            </p>
+                            </div>
                         </div>
-                        <p class="font-semibold">{{ \App\Support\UiFormatter::money($item->line_total) }}</p>
+                        <p class="shrink-0 font-bold text-slate-900">{{ \App\Support\UiFormatter::money($item->line_total) }}</p>
                     </div>
                     @if ($item->sections->isNotEmpty())
-                        <div class="mt-2 space-y-1">
+                        <div class="ml-10 mt-2 space-y-1">
                             @foreach ($item->sections as $section)
                                 @foreach ($item->modifiers->where('order_item_section_id', $section->id) as $modifier)
-                                    <p class="pl-4 text-xs font-semibold {{ $modifier->type === \App\Enums\ModifierOptionType::Add ? 'text-emerald-700' : 'text-red-700' }}">{{ $modifier->type === \App\Enums\ModifierOptionType::Add ? '+' : '-' }} {{ $modifier->name_snapshot }}</p>
+                                    <p class="text-xs font-semibold {{ $modifier->type === \App\Enums\ModifierOptionType::Add ? 'text-emerald-700' : 'text-red-700' }}">{{ $modifier->type === \App\Enums\ModifierOptionType::Add ? '+' : '-' }} {{ $modifier->name_snapshot }}</p>
                                 @endforeach
                             @endforeach
                             @foreach ($item->modifiers->whereNull('order_item_section_id') as $modifier)
@@ -386,21 +422,23 @@
                         </div>
                     @endif
                     @if ($item->notes)
-                        <p class="mt-2 text-xs font-semibold uppercase text-red-700">{{ $item->notes }}</p>
+                        <p class="ml-10 mt-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-800">{{ $item->notes }}</p>
                     @endif
 
                     @if ($item->status === \App\Enums\OrderItemStatus::Draft && $order->status === \App\Enums\OrderStatus::Open)
                         @can('update', $order)
-                            <details class="mt-3 rounded-xl border border-stone-200 p-3">
-                                <summary class="cursor-pointer text-sm font-semibold text-orange-700">Editar</summary>
-                            <form method="POST" action="{{ route('orders.items.update', [$order->ulid, $item->ulid]) }}" class="mt-3 grid grid-cols-[auto_1fr_auto] gap-2">
+                            <details class="group mt-3">
+                                <summary class="ml-auto flex min-h-10 w-fit cursor-pointer list-none items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-orange-300 hover:text-orange-700">
+                                    <span aria-hidden="true">✎</span><span class="group-open:hidden">Editar</span><span class="hidden group-open:inline">Cerrar edición</span>
+                                </summary>
+                            <form method="POST" action="{{ route('orders.items.update', [$order->ulid, $item->ulid]) }}" class="mt-3 space-y-4 rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
                                 @csrf
                                 @method('PUT')
                                 @if ($item->sections->isNotEmpty())
-                                    <div class="col-span-3 space-y-2">
+                                    <div class="space-y-3">
                                         @foreach ($item->sections as $index => $section)
                                             <div>
-                                                <label class="label">Sabor {{ $index + 1 }}</label>
+                                                <label class="label text-slate-700">Sabor {{ $index + 1 }}</label>
                                                 <select class="input" name="sections[{{ $index }}][variant]">
                                                     @foreach ($pizzaVariants->get($pizzaSizeKeys->get($section->product_variant_id), collect()) as $candidate)
                                                         <option value="{{ $candidate->ulid }}" @selected($candidate->id === $section->product_variant_id)>{{ $candidate->product->name }}</option>
@@ -409,48 +447,60 @@
                                             </div>
                                         @endforeach
                                     </div>
-                                    @foreach ($modifierOptions as $modifierIndex => $option)
-                                        @php($selected = $item->modifiers->firstWhere('modifier_option_id', $option->id))
-                                        <div class="col-span-3 grid grid-cols-[1fr_8rem] gap-2">
-                                            <label class="text-xs"><input type="checkbox" name="modifiers[{{ $modifierIndex }}][option]" value="{{ $option->ulid }}" @checked($selected)> {{ $option->name }}</label>
-                                            <select class="input py-1 text-xs" name="modifiers[{{ $modifierIndex }}][section_position]">
-                                                <option value="">Completa</option>
-                                                @foreach ($item->sections as $section)
-                                                    <option value="{{ $section->position }}" @selected($selected?->section?->position === $section->position)>Sabor {{ $section->position }}</option>
+                                    @if($modifierOptions->isNotEmpty())
+                                        <fieldset>
+                                            <legend class="label text-slate-700">Modificadores</legend>
+                                            <div class="space-y-2">
+                                                @foreach ($modifierOptions as $modifierIndex => $option)
+                                                    @php($selected = $item->modifiers->firstWhere('modifier_option_id', $option->id))
+                                                    <div class="grid grid-cols-[1fr_8rem] items-center gap-2 rounded-xl border border-stone-200 p-2.5">
+                                                        <label class="flex cursor-pointer items-center gap-2 text-xs font-medium"><input class="size-4 accent-orange-600" type="checkbox" name="modifiers[{{ $modifierIndex }}][option]" value="{{ $option->ulid }}" @checked($selected)> {{ $option->name }}</label>
+                                                        <select class="input min-h-9 py-1 text-xs" name="modifiers[{{ $modifierIndex }}][section_position]">
+                                                            <option value="">Completa</option>
+                                                            @foreach ($item->sections as $section)
+                                                                <option value="{{ $section->position }}" @selected($selected?->section?->position === $section->position)>Sabor {{ $section->position }}</option>
+                                                            @endforeach
+                                                        </select>
+                                                    </div>
                                                 @endforeach
-                                            </select>
-                                        </div>
-                                    @endforeach
+                                            </div>
+                                        </fieldset>
+                                    @endif
                                     @if ($toppingOptions->isNotEmpty())
-                                        <fieldset class="col-span-3">
-                                            <legend class="label">Toppings / extras</legend>
-                                            <div class="grid gap-2 sm:grid-cols-2">
+                                        <fieldset>
+                                            <legend class="label text-slate-700">Toppings / extras</legend>
+                                            <div class="space-y-2">
                                                 @foreach ($toppingOptions as $option)
                                                     @php($selectedTopping = $item->modifiers->firstWhere('modifier_option_id', $option->id))
                                                     @php($itemSizeRule = $option->sizeRules->firstWhere('size_key', $item->configuration_snapshot['size_key'] ?? null))
-                                                    <label class="flex cursor-pointer items-center gap-2 rounded-xl border border-stone-200 p-2 text-xs">
-                                                        <input type="checkbox" name="toppings[]" value="{{ $option->ulid }}" @checked($selectedTopping)>
-                                                        <span>+ {{ $option->name }} · {{ \App\Support\UiFormatter::money($itemSizeRule?->price_delta ?? $option->price_delta) }}</span>
+                                                    <label class="flex min-h-12 cursor-pointer items-center justify-between gap-3 rounded-xl border border-stone-200 px-3 py-2 text-sm transition hover:border-orange-300">
+                                                        <span class="flex items-center gap-2"><input class="size-4 accent-orange-600" type="checkbox" name="toppings[]" value="{{ $option->ulid }}" @checked($selectedTopping)><span>+ {{ $option->name }}</span></span>
+                                                        <strong class="shrink-0 text-xs text-orange-600">{{ \App\Support\UiFormatter::money($itemSizeRule?->price_delta ?? $option->price_delta) }}</strong>
                                                     </label>
                                                 @endforeach
                                             </div>
                                         </fieldset>
                                     @endif
                                 @endif
-                                <button class="btn-secondary px-4 text-lg" type="button" data-quantity-step="-1">−</button>
-                                <input class="input text-center" name="quantity" value="{{ \App\Support\UiFormatter::inputQuantity($item->quantity) }}" inputmode="decimal" aria-label="Cantidad" data-quantity-input>
-                                <button class="btn-secondary px-4 text-lg" type="button" data-quantity-step="1">+</button>
-                                <select class="input col-span-3" name="fulfillment_type">
+                                <div>
+                                    <label class="label text-slate-700">Cantidad</label>
+                                    <div class="grid grid-cols-[3.5rem_1fr_3.5rem] gap-2">
+                                        <button class="btn-secondary px-0 text-xl" type="button" data-quantity-step="-1" aria-label="Disminuir cantidad">−</button>
+                                        <input class="input text-center font-semibold" name="quantity" value="{{ \App\Support\UiFormatter::inputQuantity($item->quantity) }}" inputmode="decimal" aria-label="Cantidad" data-quantity-input>
+                                        <button class="btn-secondary px-0 text-xl" type="button" data-quantity-step="1" aria-label="Aumentar cantidad">+</button>
+                                    </div>
+                                </div>
+                                <label class="block"><span class="label text-slate-700">Entrega</span><select class="input" name="fulfillment_type">
                                     <option value="dine_in" @selected($item->fulfillment_type === \App\Enums\OrderType::DineIn)>Comer aquí</option>
                                     <option value="takeaway" @selected($item->fulfillment_type === \App\Enums\OrderType::Takeaway)>Para llevar</option>
-                                </select>
-                                <input class="input col-span-3" name="notes" value="{{ $item->notes }}" placeholder="Observación">
-                                <button class="btn-secondary col-span-3">Guardar cambios</button>
+                                </select></label>
+                                <label class="block"><span class="label text-slate-700">Observación</span><input class="input" name="notes" value="{{ $item->notes }}" placeholder="Ej: Sin cebolla, bien cocida..."></label>
+                                <button class="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-orange-100 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-200">Guardar cambios</button>
                             </form>
                             </details>
                             <form method="POST" action="{{ route('orders.items.cancel', [$order->ulid, $item->ulid]) }}" class="mt-2 text-right">
                                 @csrf
-                                <button class="text-xs font-semibold text-red-600">Quitar</button>
+                                <button class="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 text-sm font-semibold text-red-600 transition hover:bg-red-100"><span aria-hidden="true">⌫</span> Eliminar</button>
                             </form>
                         @endcan
                     @elseif ($item->status === \App\Enums\OrderItemStatus::Draft)
@@ -471,46 +521,68 @@
                             </form>
                         @endcan
                     @endif
-                </div>
+                </article>
             @empty
-                <div class="empty-state">{{ $pendingDispatch ? 'La tanda esta bloqueada hasta completar su pago.' : 'Toca un producto para agregarlo.' }}</div>
+                @if($pendingDispatch)
+                    <div class="rounded-2xl bg-amber-50 p-5 text-center text-sm font-medium text-amber-800">La tanda está bloqueada hasta completar su pago.</div>
+                @else
+                    <div class="grid min-h-52 place-items-center rounded-2xl border border-dashed border-stone-300 bg-stone-50/40 p-6 text-center">
+                        <div>
+                            <svg class="mx-auto size-16 text-stone-400" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 43h36M18 39h28M21 39a11 11 0 0 1 22 0M32 28v-5M28 21h8"/><path d="M12 16h5M14.5 13.5v5M48 12h6M51 9v6M51 25h5M53.5 22.5v5"/></svg>
+                            <p class="mt-3 font-semibold text-slate-800">Aún no agregaste productos</p>
+                            <p class="mx-auto mt-1 max-w-64 text-sm text-slate-500">Selecciona un producto del catálogo para comenzar.</p>
+                        </div>
+                    </div>
+                @endif
             @endforelse
         </div>
-        @include('orders._per_batch_payment')
-        @if(! ($isPerBatch && $pendingDispatch))
-        <div class="border-t bg-stone-50 p-5">
-            @if($isPerBatch)
-                <form method="POST" action="{{ route('orders.dispatch', $order->ulid) }}" class="space-y-2">
+        @can('update', $order)
+            <div class="border-t border-stone-100 px-4 py-3">
+                <form method="POST" action="{{ route('orders.customer.update', $order->ulid) }}" class="rounded-2xl border border-stone-200 bg-white p-3 shadow-sm">
                     @csrf
-                    <p class="flex justify-between text-sm"><span>Subtotal pizzas</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['pizza_base']) }}</strong></p>
-                    <p class="flex justify-between text-sm"><span>Extras</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['extras']) }}</strong></p>
-                    <p class="flex justify-between text-sm"><span>Otros</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['other']) }}</strong></p>
-                    <p class="flex justify-between text-sm text-red-700"><span>Descuento pizzas</span><strong>-{{ \App\Support\UiFormatter::money($draftFinancial['discount']) }}</strong></p>
+                    @method('PUT')
+                    <label class="label text-slate-700">Cliente <span class="font-normal text-slate-500">(opcional)</span></label>
+                    <div class="grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <input class="input" name="customer_name" value="{{ $order->customer_name }}" maxlength="255" placeholder="Nombre del cliente">
+                        <button class="btn-secondary px-5 text-orange-600">Guardar</button>
+                    </div>
+                </form>
+            </div>
+        @endcan
+        @endunless
+        @include('orders._per_batch_payment')
+        @include('orders._at_end_payment')
+        @if(! ($isPerBatch && $pendingDispatch) && ! (! $isPerBatch && $order->type === \App\Enums\OrderType::DineIn && $order->status === \App\Enums\OrderStatus::ReadyForPayment))
+        <div class="border-t border-stone-100 bg-white p-5">
+            @if($isPerBatch)
+                <form method="POST" action="{{ route('orders.dispatch', $order->ulid) }}" class="space-y-3">
+                    @csrf
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Productos</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($draftFinancial['pizza_base']) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Extras</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($draftFinancial['extras']) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Otros</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($draftFinancial['other']) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-red-600"><span>Descuento</span><strong>-{{ \App\Support\UiFormatter::money($draftFinancial['discount']) }}</strong></p>
                     @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
                         @if($draftFinancial['eligible'])
                             <label class="block pt-2"><span class="label">Descuento pizzas</span><span class="flex items-center gap-2"><input class="input" name="discount_percentage" inputmode="decimal" placeholder="Ej. 10"><span>%</span></span></label>
                         @endif
                     @endcan
-                    <p class="flex justify-between border-t pt-3 text-xl"><span>Total</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['total']) }}</strong></p>
-                    @if($hasDraft)<button class="btn-primary mt-3 w-full">COBRAR Y CONFIRMAR TANDA</button>@endif
+                    <p class="flex items-end justify-between gap-4 border-t border-stone-300 pt-4 text-xl font-bold text-slate-900"><span>TOTAL</span><strong class="text-2xl">{{ \App\Support\UiFormatter::money($draftFinancial['total']) }}</strong></p>
+                    <p class="rounded-xl border border-orange-100 bg-orange-50/70 p-3 text-xs leading-5 text-slate-600"><span class="mr-1 font-bold text-orange-600">ⓘ</span> Cobrar registra pagos. El pedido se finaliza y la mesa se libera únicamente cuando el saldo es cero y todos los productos están servidos.</p>
+                    @if($hasDraft)<button class="btn-primary mt-2 min-h-14 w-full bg-gradient-to-r from-orange-600 to-orange-500 text-base shadow-md shadow-orange-200 hover:from-orange-700 hover:to-orange-600">COBRAR Y CONFIRMAR TANDA</button>@endif
                 </form>
             @else
-                <div class="flex justify-between text-sm"><span>Subtotal</span><strong>{{ \App\Support\UiFormatter::money($order->subtotal) }}</strong></div>
-                <div class="mt-3 flex justify-between text-xl"><span>Total</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></div>
+                <div class="space-y-3">
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Productos</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($order->pizza_base_subtotal) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Extras</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($order->extras_subtotal) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Otros</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($order->other_subtotal) }}</strong></p>
+                    <p class="flex justify-between gap-4 text-sm text-red-600"><span>Descuento</span><strong>-{{ \App\Support\UiFormatter::money($order->discount_total) }}</strong></p>
+                    <p class="flex items-end justify-between gap-4 border-t border-stone-300 pt-4 text-xl font-bold text-slate-900"><span>TOTAL</span><strong class="text-2xl">{{ \App\Support\UiFormatter::money($order->total) }}</strong></p>
+                </div>
+                <p class="mt-3 rounded-xl border border-orange-100 bg-orange-50/70 p-3 text-xs leading-5 text-slate-600"><span class="mr-1 font-bold text-orange-600">ⓘ</span> Cobrar registra pagos. El pedido se finaliza y la mesa se libera únicamente cuando el saldo es cero y todos los productos están servidos.</p>
             @endif
-            <p class="mt-3 text-xs text-stone-500">Cobrar registra pagos. El pedido se finaliza y la mesa se libera únicamente cuando el saldo es cero y todos los productos están servidos.</p>
         </div>
         @endif
     </aside>
 </div>
-<section class='card mt-6 p-5'>
-    <h2 class='card-title'>Resumen financiero</h2>
-    <div class='mt-4 space-y-2 text-sm'>
-        <p class='flex justify-between'><span>Pizzas</span><strong>{{ \App\Support\UiFormatter::money($order->pizza_base_subtotal) }}</strong></p>
-        <p class='flex justify-between'><span>Extras</span><strong>{{ \App\Support\UiFormatter::money($order->extras_subtotal) }}</strong></p>
-        <p class='flex justify-between'><span>Otros</span><strong>{{ \App\Support\UiFormatter::money($order->other_subtotal) }}</strong></p>
-        <p class='flex justify-between text-red-700'><span>Descuento pizzas{{ $order->discount_percentage ? ' '.$order->discount_percentage.'%' : '' }}</span><strong>-{{ \App\Support\UiFormatter::money($order->discount_total) }}</strong></p>
-        <p class='flex justify-between border-t pt-3 text-xl'><span>TOTAL</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></p>
-    </div>
-</section>
+@include('orders._history_modal', ['history' => $orderHistory])
 @endsection
