@@ -13,6 +13,6 @@ class PrepareCheckoutRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['discount_percentage' => ['nullable', 'decimal:0,2', 'gte:0', 'lte:100']];
+        return ['discount_percentage' => ['nullable', 'decimal:0,2', 'gt:0', 'lte:100']];
     }
 }

@@ -31,14 +31,17 @@ use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Payment;
 use App\Models\ProductVariant;
 use App\Models\Promotion;
+use App\Services\CurrentCashSessionService;
 use App\Services\OrderFinancialService;
 use App\Services\OrderPaymentService;
 use App\Services\OrderPosCatalogService;
 use DomainException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class OrderController extends Controller
@@ -68,7 +71,7 @@ class OrderController extends Controller
         return redirect()->route('orders.show', $order->ulid)->with('success', "Pedido {$order->formattedNumber()} creado.");
     }
 
-    public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments): View
+    public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments, CurrentCashSessionService $cashSessions): View
     {
         $order = $this->order($order)->load([
             'restaurantTable',
@@ -81,9 +84,18 @@ class OrderController extends Controller
         $lastDispatch = $order->kitchenDispatches->first();
         $draftFinancial = $financials->preview($order->items->where('status', OrderItemStatus::Draft));
         $pendingDispatch = $order->kitchenDispatches->firstWhere('status', KitchenDispatchStatus::AwaitingPayment);
+        $pendingDispatch?->load(['items.orderItem.productVariant.product', 'items.orderItem.sections', 'payments.receivedBy']);
+        $pendingPaid = $pendingDispatch ? $payments->dispatchPaid($pendingDispatch) : '0.00';
+        $pendingBalance = $pendingDispatch ? $payments->dispatchBalance($pendingDispatch) : '0.00';
+        $cashSession = $cashSessions->forUser($this->company(), $this->branch(), request()->user());
+        $paymentClass = Payment::class;
+        $idempotencyCash = (string) Str::ulid();
+        $idempotencyQr = (string) Str::ulid();
+        $idempotencyMixedCash = (string) Str::ulid();
+        $idempotencyMixedQr = (string) Str::ulid();
         $orderBalance = $payments->balance($order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'orderBalance'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderBalance'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
@@ -179,7 +191,7 @@ class OrderController extends Controller
         }
 
         if ($result->dispatch?->status === KitchenDispatchStatus::AwaitingPayment) {
-            return redirect()->route('orders.checkout', ['order' => $order->ulid, 'dispatch' => $result->dispatch->ulid]);
+            return redirect()->route('orders.show', $order->ulid)->with('success', "Tanda #{$result->dispatch->sequence_number} enviada a cocina. Registra el pago en este panel.");
         }
         if ($result->printAttempt?->status === PrintAttemptStatus::Failed) {
             return back()->with('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');

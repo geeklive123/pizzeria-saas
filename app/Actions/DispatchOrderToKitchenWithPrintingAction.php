@@ -23,7 +23,7 @@ class DispatchOrderToKitchenWithPrintingAction
             return new DispatchWithPrintResult(null, null);
         }
 
-        $autoPrint = $dispatch->released_at !== null && PrinterSetting::query()
+        $autoPrint = PrinterSetting::query()
             ->where('company_id', $dispatch->company_id)
             ->where('branch_id', $dispatch->branch_id)
             ->where('purpose', PrinterPurpose::Kitchen->value)

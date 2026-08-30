@@ -157,8 +157,8 @@ class OrderFinancialService
             return BigDecimal::zero()->toScale(2);
         }
         $percentage = BigDecimal::of($value)->toScale(2, RoundingMode::HalfUp);
-        if ($percentage->isLessThan(0) || $percentage->isGreaterThan('100')) {
-            throw new DomainException('El porcentaje de descuento debe estar entre 0 y 100.');
+        if ($percentage->isLessThanOrEqualTo(0) || $percentage->isGreaterThan('100')) {
+            throw new DomainException('El porcentaje de descuento debe ser mayor que 0 y menor o igual a 100.');
         }
 
         return $percentage;

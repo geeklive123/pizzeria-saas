@@ -51,21 +51,26 @@ class SalesFlowRedesignTest extends TestCase
         $this->withoutVite();
     }
 
-    public function test_company_mode_is_snapshotted_and_customer_is_optional(): void
+    public function test_each_table_account_snapshots_its_selected_charge_mode_independently(): void
     {
         [$company, $branch, $owner] = $this->context(TableChargeMode::AtEnd);
-        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
-        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, 'Carlos');
+        $perBatchTable = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $atEndTable = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $perBatch = app(OpenTableOrderAction::class)->execute($company, $branch, $perBatchTable, $owner, 'Carlos', TableChargeMode::PerBatch);
+        $atEnd = app(OpenTableOrderAction::class)->execute($company, $branch, $atEndTable, $owner, null, TableChargeMode::AtEnd);
 
-        $this->assertSame(TableChargeMode::AtEnd, $order->charge_mode);
-        $this->assertSame('Carlos', $order->customer_name);
+        $this->assertSame(TableChargeMode::PerBatch, $perBatch->charge_mode);
+        $this->assertSame(TableChargeMode::AtEnd, $atEnd->charge_mode);
+        $this->assertSame('Carlos', $perBatch->customer_name);
+        $this->assertNull($atEnd->customer_name);
+
         $company->update(['table_charge_mode' => TableChargeMode::PerBatch]);
-        $this->assertSame(TableChargeMode::AtEnd, $order->refresh()->charge_mode);
+        $this->assertSame(TableChargeMode::PerBatch, $perBatch->refresh()->charge_mode);
+        $this->assertSame(TableChargeMode::AtEnd, $atEnd->refresh()->charge_mode);
 
-        $secondTable = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
-        $second = app(OpenTableOrderAction::class)->execute($company->refresh(), $branch, $secondTable, $owner);
-        $this->assertSame(TableChargeMode::PerBatch, $second->charge_mode);
-        $this->assertNull($second->customer_name);
+        $thirdTable = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $third = app(OpenTableOrderAction::class)->execute($company->refresh(), $branch, $thirdTable, $owner, null, TableChargeMode::AtEnd);
+        $this->assertSame(TableChargeMode::AtEnd, $third->charge_mode);
     }
 
     public function test_per_batch_mixed_payments_release_only_their_lines_and_finalizing_does_not_charge_again(): void
@@ -73,7 +78,7 @@ class SalesFlowRedesignTest extends TestCase
         [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::PerBatch);
         [$variant, $inventory] = $this->directVariant($company, $branch, $owner, $unit);
         $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
-        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
 
         $firstItem = app(AddOrderItemAction::class)->execute($order, $variant, '2.000', $owner);
@@ -158,6 +163,8 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('20.00', $preview['other']);
         $this->assertSame('22.50', $preview['discount']);
         $this->assertSame('97.50', $preview['total']);
+        $this->assertSame('22.50', $preview['lines'][$pizza->id]['discount']);
+        $this->assertSame('77.50', $preview['lines'][$pizza->id]['net']);
 
         $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
             ->post(route('orders.dispatch', $order->ulid), ['discount_percentage' => '25', 'subtotal' => '1.00', 'discount_total' => '99.00', 'total' => '1.00'])
@@ -175,8 +182,23 @@ class SalesFlowRedesignTest extends TestCase
         $this->financialItem($above, $company, $owner, '80.01', '80.01', true);
         $this->assertTrue(app(OrderFinancialService::class)->preview($above->items()->with('sections')->get())['eligible']);
 
+        $twoPizzas = Order::factory()->for($branch)->create(['company_id' => $company->id, 'created_by' => $owner->id]);
+        $this->financialItem($twoPizzas, $company, $owner, '45.00', '45.00', true);
+        $this->financialItem($twoPizzas, $company, $owner, '45.00', '45.00', true);
+        $this->assertTrue(app(OrderFinancialService::class)->preview($twoPizzas->items()->with('sections')->get())['eligible']);
+
+        $example = Order::factory()->for($branch)->create(['company_id' => $company->id, 'created_by' => $owner->id]);
+        $this->financialItem($example, $company, $owner, '87.00', '92.00', true);
+        $this->financialItem($example, $company, $owner, '10.00', '10.00', false);
+        $examplePreview = app(OrderFinancialService::class)->preview($example->items()->with('sections')->get(), '10');
+        $this->assertSame('87.00', $examplePreview['pizza_base']);
+        $this->assertSame('5.00', $examplePreview['extras']);
+        $this->assertSame('8.70', $examplePreview['discount']);
+        $this->assertSame('93.30', $examplePreview['total']);
+
         $extrasOnly = Order::factory()->for($branch)->create(['company_id' => $company->id, 'created_by' => $owner->id]);
         $this->financialItem($extrasOnly, $company, $owner, '50.00', '90.00', true);
+        $this->assertFalse(app(OrderFinancialService::class)->preview($extrasOnly->items()->with('sections')->get())['eligible']);
         $this->expectException(DomainException::class);
         app(OrderFinancialService::class)->preview($extrasOnly->items()->with('sections')->get(), '25');
     }

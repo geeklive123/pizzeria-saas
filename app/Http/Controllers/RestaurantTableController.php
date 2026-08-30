@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\OpenTableOrderAction;
 use App\Actions\SaveRestaurantTableAction;
+use App\Enums\TableChargeMode;
 use App\Http\Requests\OpenTableOrderRequest;
 use App\Http\Requests\RestaurantTableRequest;
 use App\Models\Order;
@@ -66,7 +67,14 @@ class RestaurantTableController extends Controller
         Gate::authorize('create', Order::class);
         $table = RestaurantTable::query()->forCompany($this->company())->forBranch($this->branch())->where('ulid', $table)->firstOrFail();
         try {
-            $order = $action->execute($this->company(), $this->branch(), $table, $request->user(), $request->validated('customer_name'));
+            $order = $action->execute(
+                $this->company(),
+                $this->branch(),
+                $table,
+                $request->user(),
+                $request->validated('customer_name'),
+                $request->enum('charge_mode', TableChargeMode::class),
+            );
         } catch (DomainException $exception) {
             return back()->withErrors(['table' => $exception->getMessage()]);
         }

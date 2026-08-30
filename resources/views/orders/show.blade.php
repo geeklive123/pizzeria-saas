@@ -6,6 +6,7 @@
 @section('content')
 @php($hasDraft = $order->items->contains('status', \App\Enums\OrderItemStatus::Draft))
 @php($isPerBatch = $order->charge_mode === \App\Enums\TableChargeMode::PerBatch)
+@php($visibleItems = $isPerBatch ? $order->items->where('status', \App\Enums\OrderItemStatus::Draft) : $order->items)
 <div class="page-heading">
     <div>
         <a class="back-link" href="{{ route('orders.index') }}">← Pedidos abiertos</a>
@@ -23,11 +24,11 @@
     </div>
     <div class="flex flex-wrap gap-2">
         @can('update', $order)
-            @if ($order->status === \App\Enums\OrderStatus::Open && $hasDraft && ! $pendingDispatch)
+            @if ($order->status === \App\Enums\OrderStatus::Open && $hasDraft && ! $pendingDispatch && ! $isPerBatch)
                 <form method='POST' action='{{ route('orders.dispatch', $order->ulid) }}'>@csrf
                     @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
                         @if (($isPerBatch || $order->type === \App\Enums\OrderType::Takeaway) && $draftFinancial['eligible'])
-                            <label class='mb-2 block'><span class='label'>Descuento pizzas (%)</span><input class='input w-40' name='discount_percentage' inputmode='decimal' placeholder='Ej. 25'></label>
+                            <label class='mb-2 block'><span class='label'>Descuento en pizzas</span><span class='flex items-center gap-2'><input class='input w-32' name='discount_percentage' inputmode='decimal' placeholder='Ej. 10'><span>%</span></span></label>
                         @endif
                     @endcan
                     <button class='btn-primary'>{{ $order->type === \App\Enums\OrderType::Takeaway ? 'Cobrar y enviar' : ($isPerBatch ? 'Cobrar y confirmar tanda' : 'Confirmar pedido') }}</button>
@@ -37,7 +38,7 @@
                 <form method='POST' action='{{ route('orders.request-payment', $order->ulid) }}'>@csrf
                     @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
                         @if (\Brick\Math\BigDecimal::of($order->pizza_base_subtotal)->isGreaterThan('80.00'))
-                            <label class='mb-2 block'><span class='label'>Descuento pizzas (%)</span><input class='input w-40' name='discount_percentage' inputmode='decimal' placeholder='Ej. 25'></label>
+                            <label class='mb-2 block'><span class='label'>Descuento en pizzas</span><span class='flex items-center gap-2'><input class='input w-32' name='discount_percentage' inputmode='decimal' placeholder='Ej. 10'><span>%</span></span></label>
                         @endif
                     @endcan
                     <button class='btn-primary'>Finalizar mesa / Cobrar cuenta</button>
@@ -48,8 +49,7 @@
             @endif
         @endcan
         @can('create', \App\Models\Payment::class)
-            @if ($pendingDispatch)<a class='btn-primary' href='{{ route('orders.checkout', ['order' => $order->ulid, 'dispatch' => $pendingDispatch->ulid]) }}'>Continuar pago de tanda</a>
-            @elseif($order->status === \App\Enums\OrderStatus::ReadyForPayment)<a class='btn-primary' href='{{ route('orders.checkout', $order->ulid) }}'>Continuar cobro</a>@endif
+            @if($order->status === \App\Enums\OrderStatus::ReadyForPayment)<a class='btn-primary' href='{{ route('orders.checkout', $order->ulid) }}'>Continuar cobro</a>@endif
         @endcan
         @if(false)
         @can('update', $order)
@@ -350,12 +350,12 @@
     <aside class="card self-start xl:sticky xl:top-24">
         <div class="card-header">
             <div>
-                <h2 class="card-title">Pedido actual</h2>
+                <h2 class="card-title">{{ $isPerBatch && $pendingDispatch ? 'TANDA #'.$pendingDispatch->sequence_number.' PENDIENTE DE PAGO' : ($isPerBatch ? 'PEDIDO ACTUAL / BORRADOR' : 'Pedido actual') }}</h2>
                 <p class="card-subtitle">Cada envío crea una tanda solo con borradores</p>
             </div>
         </div>
         <div class="divide-y">
-            @forelse ($order->items as $item)
+            @forelse ($visibleItems as $item)
                 <div class="p-4 {{ $item->status === \App\Enums\OrderItemStatus::Cancelled ? 'opacity-50' : '' }}">
                     <div class="flex justify-between gap-3">
                         <div>
@@ -473,22 +473,42 @@
                     @endif
                 </div>
             @empty
-                <div class="empty-state">Toca un producto para agregarlo.</div>
+                <div class="empty-state">{{ $pendingDispatch ? 'La tanda esta bloqueada hasta completar su pago.' : 'Toca un producto para agregarlo.' }}</div>
             @endforelse
         </div>
+        @include('orders._per_batch_payment')
+        @if(! ($isPerBatch && $pendingDispatch))
         <div class="border-t bg-stone-50 p-5">
-            <div class="flex justify-between text-sm"><span>Subtotal</span><strong>{{ \App\Support\UiFormatter::money($order->subtotal) }}</strong></div>
-            <div class="mt-3 flex justify-between text-xl"><span>Total</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></div>
+            @if($isPerBatch)
+                <form method="POST" action="{{ route('orders.dispatch', $order->ulid) }}" class="space-y-2">
+                    @csrf
+                    <p class="flex justify-between text-sm"><span>Subtotal pizzas</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['pizza_base']) }}</strong></p>
+                    <p class="flex justify-between text-sm"><span>Extras</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['extras']) }}</strong></p>
+                    <p class="flex justify-between text-sm"><span>Otros</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['other']) }}</strong></p>
+                    <p class="flex justify-between text-sm text-red-700"><span>Descuento pizzas</span><strong>-{{ \App\Support\UiFormatter::money($draftFinancial['discount']) }}</strong></p>
+                    @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
+                        @if($draftFinancial['eligible'])
+                            <label class="block pt-2"><span class="label">Descuento pizzas</span><span class="flex items-center gap-2"><input class="input" name="discount_percentage" inputmode="decimal" placeholder="Ej. 10"><span>%</span></span></label>
+                        @endif
+                    @endcan
+                    <p class="flex justify-between border-t pt-3 text-xl"><span>Total</span><strong>{{ \App\Support\UiFormatter::money($draftFinancial['total']) }}</strong></p>
+                    @if($hasDraft)<button class="btn-primary mt-3 w-full">COBRAR Y CONFIRMAR TANDA</button>@endif
+                </form>
+            @else
+                <div class="flex justify-between text-sm"><span>Subtotal</span><strong>{{ \App\Support\UiFormatter::money($order->subtotal) }}</strong></div>
+                <div class="mt-3 flex justify-between text-xl"><span>Total</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></div>
+            @endif
             <p class="mt-3 text-xs text-stone-500">Cobrar registra pagos. El pedido se finaliza y la mesa se libera únicamente cuando el saldo es cero y todos los productos están servidos.</p>
         </div>
+        @endif
     </aside>
 </div>
 <section class='card mt-6 p-5'>
     <h2 class='card-title'>Resumen financiero</h2>
     <div class='mt-4 space-y-2 text-sm'>
-        <p class='flex justify-between'><span>Pizza base</span><strong>{{ \App\Support\UiFormatter::money($order->pizza_base_subtotal) }}</strong></p>
-        <p class='flex justify-between'><span>Toppings / extras</span><strong>{{ \App\Support\UiFormatter::money($order->extras_subtotal) }}</strong></p>
-        <p class='flex justify-between'><span>Otros productos</span><strong>{{ \App\Support\UiFormatter::money($order->other_subtotal) }}</strong></p>
+        <p class='flex justify-between'><span>Pizzas</span><strong>{{ \App\Support\UiFormatter::money($order->pizza_base_subtotal) }}</strong></p>
+        <p class='flex justify-between'><span>Extras</span><strong>{{ \App\Support\UiFormatter::money($order->extras_subtotal) }}</strong></p>
+        <p class='flex justify-between'><span>Otros</span><strong>{{ \App\Support\UiFormatter::money($order->other_subtotal) }}</strong></p>
         <p class='flex justify-between text-red-700'><span>Descuento pizzas{{ $order->discount_percentage ? ' '.$order->discount_percentage.'%' : '' }}</span><strong>-{{ \App\Support\UiFormatter::money($order->discount_total) }}</strong></p>
         <p class='flex justify-between border-t pt-3 text-xl'><span>TOTAL</span><strong>{{ \App\Support\UiFormatter::money($order->total) }}</strong></p>
     </div>

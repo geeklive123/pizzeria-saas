@@ -10,6 +10,7 @@ use App\Enums\InventoryMovementType;
 use App\Enums\MembershipRole;
 use App\Enums\OrderType;
 use App\Enums\ProductType;
+use App\Enums\TableChargeMode;
 use App\Enums\UnitType;
 use App\Models\Branch;
 use App\Models\Company;
@@ -156,13 +157,14 @@ class SprintNineCTest extends TestCase
         [$company, $branch, $owner] = $this->context();
         $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
 
-        $first = $this->asUser($owner, $company, $branch)->post(route('tables.open', $table->ulid));
+        $first = $this->asUser($owner, $company, $branch)->post(route('tables.open', $table->ulid), ['charge_mode' => TableChargeMode::PerBatch->value]);
         $order = Order::query()->firstOrFail();
         $first->assertRedirect(route('orders.show', $order->ulid));
-        $this->asUser($owner, $company, $branch)->post(route('tables.open', $table->ulid))->assertRedirect(route('orders.show', $order->ulid));
+        $this->asUser($owner, $company, $branch)->post(route('tables.open', $table->ulid), ['charge_mode' => TableChargeMode::PerBatch->value])->assertRedirect(route('orders.show', $order->ulid));
 
         $this->assertDatabaseCount('orders', 1);
         $this->assertSame($table->id, $order->active_restaurant_table_id);
+        $this->assertSame(TableChargeMode::PerBatch, $order->charge_mode);
     }
 
     public function test_takeaway_and_later_table_additions_keep_pos_kitchen_inventory_and_checkout_flow(): void

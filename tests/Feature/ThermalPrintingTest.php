@@ -16,6 +16,7 @@ use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\PrinterPurpose;
 use App\Enums\ProductType;
+use App\Enums\TableChargeMode;
 use App\Models\Branch;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
@@ -101,6 +102,41 @@ class ThermalPrintingTest extends TestCase
 
         $this->assertSame($before, $after);
         $this->assertDatabaseHas('print_attempts', ['kitchen_dispatch_id' => $second->dispatch->id, 'is_reprint' => true, 'status' => 'pending']);
+    }
+
+    public function test_per_batch_dispatch_prints_kitchen_before_payment_and_payment_does_not_print_it_again(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
+        $this->printer($company, $branch, PrinterPurpose::CustomerTicket);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = $this->order($company, $branch, $owner, $table);
+        $order->forceFill(['charge_mode' => TableChargeMode::PerBatch])->save();
+        $this->simpleItem($order, $owner, 'Pizza', 'Mediana', '45.00');
+
+        $result = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner);
+
+        $this->assertSame('awaiting_payment', $result->dispatch->status->value);
+        $this->assertDatabaseCount('kitchen_dispatches', 1);
+        $this->assertDatabaseHas('print_attempts', [
+            'kitchen_dispatch_id' => $result->dispatch->id,
+            'purpose' => PrinterPurpose::Kitchen->value,
+            'status' => 'pending',
+            'is_reprint' => false,
+        ]);
+
+        $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
+        app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $this->actingInContext($owner, $company, $branch)->post(route('orders.payments.store', $order->ulid), [
+            'method' => PaymentMethod::Qr->value,
+            'amount' => '45.00',
+            'idempotency_key' => (string) Str::ulid(),
+            'kitchen_dispatch' => $result->dispatch->ulid,
+        ])->assertRedirect(route('orders.show', $order->ulid));
+
+        $this->assertSame(1, $result->dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
+        $this->assertSame(1, $result->dispatch->printAttempts()->where('purpose', PrinterPurpose::CustomerTicket->value)->count());
+        $this->assertDatabaseCount('kitchen_dispatches', 1);
     }
 
     public function test_kitchen_document_handles_table_takeaway_one_to_four_flavors_notes_modifiers_and_no_prices(): void

@@ -17,6 +17,7 @@ use App\Enums\MembershipRole;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderType;
 use App\Enums\ProductType;
+use App\Enums\TableChargeMode;
 use App\Enums\UnitType;
 use App\Exceptions\InsufficientStockException;
 use App\Models\Branch;
@@ -242,7 +243,7 @@ class ToppingSalesFlowTest extends TestCase
 
     public function test_cancellation_releases_reserved_topping_and_preserves_already_consumed_topping(): void
     {
-        $f = $this->fixture();
+        $f = $this->fixture(TableChargeMode::PerBatch);
         [$inventoryItem] = $this->toppingInventory($f, 'Queso extra', '100.000');
         $topping = $this->topping($f, 'Queso extra', '5.00', $inventoryItem, '12.000');
         $sent = $this->add($f, [$f['a']], [$topping]);
@@ -255,7 +256,7 @@ class ToppingSalesFlowTest extends TestCase
             'type' => InventoryMovementType::OrderConsumption->value,
         ]);
 
-        $secondOrder = $this->kitchenTableOrder($f['company'], $f['branch'], $f['owner']);
+        $secondOrder = $this->kitchenTableOrder($f['company'], $f['branch'], $f['owner'], TableChargeMode::AtEnd);
         $f['order'] = $secondOrder;
         $preparing = $this->add($f, [$f['a']], [$topping]);
         app(DispatchOrderToKitchenAction::class)->execute($secondOrder, $f['owner']);
@@ -296,15 +297,15 @@ class ToppingSalesFlowTest extends TestCase
         $this->add($f, [$f['a']], [$foreign]);
     }
 
-    private function kitchenTableOrder(Company $company, Branch $branch, User $owner)
+    private function kitchenTableOrder(Company $company, Branch $branch, User $owner, TableChargeMode $chargeMode = TableChargeMode::AtEnd)
     {
         $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
 
-        return app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner);
+        return app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, $chargeMode);
     }
 
     /** @return array<string, mixed> */
-    private function fixture(): array
+    private function fixture(TableChargeMode $chargeMode = TableChargeMode::AtEnd): array
     {
         $company = Company::factory()->create();
         $branch = Branch::factory()->for($company)->create();
@@ -320,7 +321,7 @@ class ToppingSalesFlowTest extends TestCase
             $this->stock(compact('company', 'branch', 'owner'), $flavorItem, '1000.000');
             $variants[$key] = $this->flavor($company, $name, $price, $base, $flavor);
         }
-        $order = $this->kitchenTableOrder($company, $branch, $owner);
+        $order = $this->kitchenTableOrder($company, $branch, $owner, $chargeMode);
 
         return compact('company', 'branch', 'owner', 'grams', 'order') + $variants;
     }

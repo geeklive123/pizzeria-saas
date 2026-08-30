@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests;
 
+use App\Enums\TableChargeMode;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class OpenTableOrderRequest extends FormRequest
 {
@@ -13,6 +15,9 @@ class OpenTableOrderRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['customer_name' => ['nullable', 'string', 'max:255']];
+        return [
+            'charge_mode' => ['required', Rule::enum(TableChargeMode::class)],
+            'customer_name' => ['nullable', 'string', 'max:255'],
+        ];
     }
 }

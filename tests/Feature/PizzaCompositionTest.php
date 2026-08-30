@@ -6,6 +6,7 @@ use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\OpenTableOrderAction;
 use App\Actions\UpdateConfiguredPizzaAction;
 use App\Actions\UpdateOrderItemQuantityAction;
 use App\Actions\UpdateRecipeAction;
@@ -14,6 +15,7 @@ use App\Enums\MembershipRole;
 use App\Enums\ModifierOptionType;
 use App\Enums\OrderType;
 use App\Enums\ProductType;
+use App\Enums\TableChargeMode;
 use App\Enums\UnitType;
 use App\Exceptions\InsufficientStockException;
 use App\Models\Branch;
@@ -27,6 +29,7 @@ use App\Models\PackagingRule;
 use App\Models\Product;
 use App\Models\ProductModifier;
 use App\Models\ProductVariant;
+use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use DomainException;
@@ -294,6 +297,8 @@ class PizzaCompositionTest extends TestCase
         // Este test valida la representación de una pizza compuesta en KDS.
         // Usamos consumo en mesa para que el dispatch la libere a cocina sin
         // depender del flujo de cobro previo propio de Takeaway.
+        $table = RestaurantTable::factory()->for($f['branch'])->create(['company_id' => $f['company']->id]);
+        $f['order'] = app(OpenTableOrderAction::class)->execute($f['company'], $f['branch'], $table, $f['owner'], null, TableChargeMode::AtEnd);
         $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn, [[$remove, 1]]);
         app(DispatchOrderToKitchenAction::class)->execute($item->order, $f['owner']);
 

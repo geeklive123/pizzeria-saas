@@ -101,13 +101,12 @@ class CheckoutController extends Controller
         if ($dispatch) {
             $dispatch->refresh();
             if ($dispatch->status === KitchenDispatchStatus::Settled) {
-                $printing->kitchen($dispatch, $request->user(), false);
                 $printing->dispatchTicket($dispatch, $request->user(), false);
                 if ($dispatch->order()->value('status') === OrderStatus::Paid->value) {
-                    return redirect()->route('orders.index')->with('success', 'Pedido cobrado, enviado e impreso.');
+                    return redirect()->route('orders.index')->with('success', 'Pedido cobrado y ticket financiero enviado a impresión.');
                 }
 
-                return redirect()->route('orders.show', $order->ulid)->with('success', 'Tanda cobrada, liberada e impresa. La mesa continúa abierta.');
+                return redirect()->route('orders.show', $order->ulid)->with('success', 'Tanda cobrada y liberada. La mesa continúa abierta.');
             }
         }
         if ($payment->order()->value('status') === OrderStatus::Paid->value) {
