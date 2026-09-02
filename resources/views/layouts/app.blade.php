@@ -56,6 +56,9 @@
             @can('viewAny', \App\Models\InventoryItem::class)
                 @include('partials.nav-link', ['route' => 'inventory.index', 'label' => 'Inventario', 'icon' => '▦', 'pattern' => 'inventory.*'])
             @endcan
+            @can('viewAny', \App\Models\Preparation::class)
+                @include('partials.nav-link', ['route' => 'preparations.index', 'label' => 'Preparaciones', 'icon' => 'P', 'pattern' => 'preparations.*'])
+            @endcan
             @if($membership->role !== \App\Enums\MembershipRole::Cashier)
             @can('viewAny', \App\Models\Purchase::class)
                 @include('partials.nav-link', ['route' => 'purchases.index', 'label' => 'Compras', 'icon' => '↓', 'pattern' => 'purchases.*'])

@@ -115,4 +115,14 @@ class InventoryItem extends Model
     {
         return $this->hasMany(InventoryReservation::class);
     }
+
+    public function outputPreparations(): HasMany
+    {
+        return $this->hasMany(Preparation::class, 'output_inventory_item_id');
+    }
+
+    public function preparationComponents(): HasMany
+    {
+        return $this->hasMany(PreparationComponent::class);
+    }
 }

@@ -15,6 +15,7 @@ use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MembershipController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\PreparationController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\PurchaseController;
@@ -131,6 +132,10 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/inventory/{item}/operations', [InventoryController::class, 'operate'])->name('inventory.operate');
             Route::put('/inventory/{item}/minimum', [InventoryController::class, 'updateMinimum'])->name('inventory.minimum.update');
             Route::post('/inventory/{item}/batches/{batch}/discard-expired', [InventoryController::class, 'discardExpired'])->name('inventory.batches.discard-expired');
+
+            Route::resource('preparations', PreparationController::class)->except(['destroy']);
+            Route::post('/preparations/{preparation}/produce', [PreparationController::class, 'produce'])->name('preparations.produce');
+            Route::post('/preparations/{preparation}/productions/{production}/reverse', [PreparationController::class, 'reverse'])->name('preparations.productions.reverse');
 
             Route::resource('purchases', PurchaseController::class)->except(['destroy']);
             Route::post('/purchases/{purchase}/post', [PurchaseController::class, 'post'])->name('purchases.post');

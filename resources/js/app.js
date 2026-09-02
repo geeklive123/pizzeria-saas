@@ -326,3 +326,54 @@ document.addEventListener('click', (event) => {
         }
     }
 });
+
+const preparationMilliunits = (value) => {
+    const normalized = String(value).trim().replace(',', '.');
+    if (!/^\d+(?:\.\d{0,3})?$/.test(normalized)) return null;
+    const [whole, fraction = ''] = normalized.split('.');
+    return BigInt(whole) * 1000n + BigInt(fraction.padEnd(3, '0'));
+};
+
+const formatPreparationMilliunits = (value) => {
+    const whole = value / 1000n;
+    const fraction = (value % 1000n).toString().padStart(3, '0').replace(/0+$/, '');
+    const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return fraction ? `${grouped},${fraction}` : grouped;
+};
+
+document.querySelectorAll('[data-preparation-production]').forEach((section) => {
+    const form = section.querySelector('[data-production-form]');
+    const lotsInput = section.querySelector('[data-production-lots]');
+    const submit = section.querySelector('[data-production-submit]');
+    const error = section.querySelector('[data-production-error]');
+    const maximum = BigInt(section.dataset.maximumLots || '0');
+    const yieldPerLot = preparationMilliunits(section.dataset.yieldPerLot) ?? 0n;
+    const outputUnit = section.querySelector('[data-production-output]').textContent.trim().split(' ').at(-1);
+
+    const refresh = () => {
+        const validLots = /^\d+$/.test(lotsInput.value) ? BigInt(lotsInput.value) : 0n;
+        section.querySelectorAll('[data-production-quantity]').forEach((output) => {
+            const perLot = preparationMilliunits(output.dataset.perLot) ?? 0n;
+            output.textContent = formatPreparationMilliunits(perLot * validLots);
+        });
+        section.querySelectorAll('[data-production-output]').forEach((output) => {
+            output.textContent = `${formatPreparationMilliunits(yieldPerLot * validLots)} ${outputUnit}`;
+        });
+        const exceeds = validLots < 1n || validLots > maximum;
+        submit.disabled = exceeds;
+        error.hidden = !exceeds;
+        error.textContent = validLots > maximum
+            ? `La cantidad supera el máximo disponible de ${maximum.toString()} lotes.`
+            : 'Indica al menos un lote.';
+    };
+
+    lotsInput.addEventListener('input', refresh);
+    form.addEventListener('submit', (event) => {
+        refresh();
+        if (submit.disabled) {
+            event.preventDefault();
+            error.focus();
+        }
+    });
+    refresh();
+});

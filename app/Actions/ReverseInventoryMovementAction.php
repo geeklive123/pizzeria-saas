@@ -5,6 +5,7 @@ namespace App\Actions;
 use App\Enums\InventoryMovementType;
 use App\Enums\Permission;
 use App\Models\InventoryMovement;
+use App\Models\PreparationProduction;
 use App\Models\User;
 use App\Services\CompanyAccessService;
 use DomainException;
@@ -17,12 +18,19 @@ class ReverseInventoryMovementAction
         private readonly CompanyAccessService $access,
     ) {}
 
-    public function execute(InventoryMovement $movement, User $user, string $reason): InventoryMovement
-    {
+    public function execute(
+        InventoryMovement $movement,
+        User $user,
+        string $reason,
+        bool $allowGroupedProduction = false,
+    ): InventoryMovement {
         $this->access->ensure($user, $movement->company, Permission::ManageInventory);
 
         if (blank($reason)) {
             throw new DomainException('A reversal reason is required.');
+        }
+        if ($movement->reference_type === PreparationProduction::class && ! $allowGroupedProduction) {
+            throw new DomainException('Production movements must be reversed through their complete production.');
         }
 
         return DB::transaction(function () use ($movement, $user, $reason): InventoryMovement {

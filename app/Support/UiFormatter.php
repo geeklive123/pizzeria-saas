@@ -73,6 +73,8 @@ class UiFormatter
             InventoryMovementType::ManualIn => 'Entrada manual',
             InventoryMovementType::ManualOut => 'Salida manual',
             InventoryMovementType::OrderConsumption => 'Consumo de pedido',
+            InventoryMovementType::ProductionConsumption => 'Consumo de producción',
+            InventoryMovementType::ProductionOutput => 'Salida de producción',
             InventoryMovementType::Reversal => 'Reversión',
         };
     }

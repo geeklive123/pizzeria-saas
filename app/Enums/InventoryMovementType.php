@@ -14,13 +14,16 @@ enum InventoryMovementType: string
     case ManualIn = 'manual_in';
     case ManualOut = 'manual_out';
     case OrderConsumption = 'order_consumption';
+    case ProductionConsumption = 'production_consumption';
+    case ProductionOutput = 'production_output';
     case Reversal = 'reversal';
 
     public function direction(): int
     {
         return match ($this) {
-            self::Opening, self::Purchase, self::AdjustmentIn, self::ManualIn => 1,
-            self::AdjustmentOut, self::Waste, self::ManualOut, self::OrderConsumption => -1,
+            self::Opening, self::Purchase, self::AdjustmentIn, self::ManualIn, self::ProductionOutput => 1,
+            self::AdjustmentOut, self::Waste, self::ManualOut, self::OrderConsumption,
+            self::ProductionConsumption => -1,
             self::Reversal => throw new DomainException('A reversal derives its direction from the original movement.'),
         };
     }

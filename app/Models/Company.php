@@ -78,6 +78,16 @@ class Company extends Model
         return $this->hasMany(InventoryBatch::class);
     }
 
+    public function preparations(): HasMany
+    {
+        return $this->hasMany(Preparation::class);
+    }
+
+    public function preparationProductions(): HasMany
+    {
+        return $this->hasMany(PreparationProduction::class);
+    }
+
     public function purchases(): HasMany
     {
         return $this->hasMany(Purchase::class);
