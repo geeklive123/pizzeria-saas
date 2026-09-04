@@ -14,6 +14,7 @@ use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
+use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
 use App\Enums\ProductType;
 use App\Enums\TableChargeMode;
@@ -23,6 +24,7 @@ use App\Models\CashRegister;
 use App\Models\Company;
 use App\Models\InventoryMovement;
 use App\Models\InventoryReservation;
+use App\Models\InventoryStock;
 use App\Models\KitchenDispatch;
 use App\Models\Membership;
 use App\Models\Order;
@@ -275,6 +277,225 @@ class ThermalPrintingTest extends TestCase
         $this->assertDatabaseCount('print_attempts', 2);
         $this->assertDatabaseHas('print_attempts', ['order_id' => $order->id, 'is_reprint' => true]);
         $this->assertSame(2, $order->printAttempts()->oldest('attempted_at')->firstOrFail()->copies);
+    }
+
+    public function test_reprint_rejects_unpaid_and_cross_company_orders_without_creating_attempts(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen);
+        $this->printer($company, $branch, PrinterPurpose::CustomerTicket);
+        $unpaid = $this->order($company, $branch, $owner);
+
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.ticket', $unpaid->ulid))
+            ->assertRedirect()->assertSessionHasErrors('printing');
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.kitchen', $unpaid->ulid))
+            ->assertRedirect()->assertSessionHasErrors('printing');
+        $this->assertDatabaseCount('print_attempts', 0);
+
+        $otherCompany = Company::factory()->create();
+        $otherBranch = Branch::factory()->for($otherCompany)->create();
+        $otherOwner = User::factory()->create();
+        Membership::factory()->for($otherCompany)->for($otherOwner)->owner()->create();
+        $this->actingInContext($otherOwner, $otherCompany, $otherBranch)
+            ->post(route('orders.reprint.ticket', $unpaid->ulid))->assertNotFound();
+        $this->assertDatabaseCount('print_attempts', 0);
+    }
+
+    public function test_paid_reprint_routes_and_buttons_follow_existing_operational_permissions(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen);
+        $this->printer($company, $branch, PrinterPurpose::CustomerTicket);
+        $order = $this->order($company, $branch, $owner);
+        $this->simpleItem($order, $owner, 'Pizza permisos', 'Mediana', '50.00');
+        app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $order->forceFill([
+            'status' => OrderStatus::Paid, 'subtotal' => '50.00',
+            'total' => '50.00', 'closed_at' => now(),
+        ])->save();
+        $users = collect([MembershipRole::Admin, MembershipRole::Cashier, MembershipRole::Waiter, MembershipRole::Kitchen])
+            ->mapWithKeys(function (MembershipRole $role) use ($company): array {
+                $user = User::factory()->create();
+                Membership::factory()->for($company)->for($user)->create(['role' => $role]);
+
+                return [$role->value => $user];
+            });
+
+        foreach ([$owner, $users['admin'], $users['cashier']] as $user) {
+            $this->actingInContext($user, $company, $branch)
+                ->post(route('orders.reprint.ticket', $order->ulid))->assertRedirect();
+            $this->actingInContext($user, $company, $branch)
+                ->post(route('orders.reprint.kitchen', $order->ulid))->assertRedirect();
+        }
+        foreach ([$users['waiter'], $users['kitchen']] as $user) {
+            $this->actingInContext($user, $company, $branch)
+                ->post(route('orders.reprint.ticket', $order->ulid))->assertForbidden();
+            $this->actingInContext($user, $company, $branch)
+                ->post(route('orders.reprint.kitchen', $order->ulid))->assertRedirect();
+        }
+
+        $this->actingInContext($owner, $company, $branch)->get(route('orders.index'))
+            ->assertOk()->assertSee('Pedidos pagados')->assertSee('Reimprimir cocina')
+            ->assertSee('Reimprimir ticket cliente');
+        $this->actingInContext($owner, $company, $branch)->get(route('orders.show', $order->ulid))
+            ->assertOk()->assertSee('Reimprimir cocina')->assertSee('Reimprimir ticket cliente');
+        $this->actingInContext($users['waiter'], $company, $branch)->get(route('orders.index'))
+            ->assertOk()->assertSee('Reimprimir cocina')->assertDontSee('Reimprimir ticket cliente');
+        $this->actingInContext($users['kitchen'], $company, $branch)->get(route('orders.index'))
+            ->assertForbidden();
+    }
+
+    public function test_old_paid_takeaway_without_dispatch_uses_a_print_only_kitchen_fallback(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen);
+        $order = $this->ticketOrder($company, $branch, $owner, '50.00');
+        $order->forceFill(['status' => OrderStatus::Paid, 'closed_at' => now()])->save();
+        $before = [
+            Order::query()->count(), Payment::query()->count(), CashMovement::query()->count(),
+            KitchenDispatch::query()->count(), InventoryMovement::query()->count(),
+            InventoryReservation::query()->count(),
+        ];
+
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.kitchen', $order->ulid))
+            ->assertRedirect()
+            ->assertSessionHas('warning', 'Ticket en cola. Se imprimirá cuando el agente vuelva a conectarse.');
+
+        $attempt = PrintAttempt::query()->sole();
+        $this->assertSame(PrinterPurpose::Kitchen, $attempt->purpose);
+        $this->assertSame($order->id, $attempt->order_id);
+        $this->assertNull($attempt->kitchen_dispatch_id);
+        $this->assertTrue($attempt->is_reprint);
+        $this->assertSame(PrintAttemptStatus::Pending, $attempt->status);
+        $this->assertSame($before, [
+            Order::query()->count(), Payment::query()->count(), CashMovement::query()->count(),
+            KitchenDispatch::query()->count(), InventoryMovement::query()->count(),
+            InventoryReservation::query()->count(),
+        ]);
+        $text = $this->decode((string) base64_decode($attempt->document_payload, true));
+        $this->assertStringContainsString('PARA LLEVAR', $text);
+        $this->assertStringContainsString('REIMPRESION HISTORICA', $text);
+    }
+
+    public function test_paid_kitchen_reprint_reuses_historical_dispatch_and_never_creates_new_production(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen);
+        PrintAgent::query()->create([
+            'company_id' => $company->id, 'branch_id' => $branch->id,
+            'name' => 'Agente local', 'token_hash' => hash('sha256', 'reprint-agent'),
+            'is_active' => true, 'last_seen_at' => now(),
+        ]);
+        $table = RestaurantTable::factory()->for($branch)->create([
+            'company_id' => $company->id, 'name' => 'MESA 1',
+        ]);
+        $order = $this->order($company, $branch, $owner, $table);
+        $this->simpleItem($order, $owner, 'Pizza historica', 'Familiar', '87.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $order->forceFill([
+            'status' => OrderStatus::Paid,
+            'active_restaurant_table_id' => null,
+            'subtotal' => '87.00',
+            'total' => '87.00',
+            'closed_at' => now(),
+        ])->save();
+        $before = [
+            Order::query()->count(), Payment::query()->count(), CashMovement::query()->count(),
+            KitchenDispatch::query()->count(), InventoryMovement::query()->count(),
+            InventoryReservation::query()->count(), $order->status,
+        ];
+
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.kitchen', $order->ulid))
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Ticket enviado nuevamente a impresión.');
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.kitchen', $order->ulid))
+            ->assertRedirect();
+
+        $attempts = PrintAttempt::query()->where('order_id', $order->id)
+            ->where('purpose', PrinterPurpose::Kitchen->value)->get();
+        $this->assertCount(2, $attempts);
+        $this->assertCount(2, $attempts->pluck('idempotency_key')->unique());
+        $this->assertTrue($attempts->every(fn (PrintAttempt $attempt): bool => $attempt->is_reprint));
+        $this->assertTrue($attempts->every(fn (PrintAttempt $attempt): bool => $attempt->kitchen_dispatch_id === $dispatch->id));
+        $this->assertSame($before, [
+            Order::query()->count(), Payment::query()->count(), CashMovement::query()->count(),
+            KitchenDispatch::query()->count(), InventoryMovement::query()->count(),
+            InventoryReservation::query()->count(), $order->refresh()->status,
+        ]);
+        $text = $this->decode((string) base64_decode($attempts->last()->document_payload, true));
+        $this->assertStringContainsString('MESA 1', $text);
+        $this->assertStringContainsString('REIMPRESION', $text);
+        $this->assertStringNotContainsString('NUEVA COMANDA', $text);
+    }
+
+    public function test_paid_customer_ticket_reprints_are_new_audited_attempts_without_sales_cash_or_inventory_mutations(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::CustomerTicket);
+        $register = CashRegister::query()->create([
+            'company_id' => $company->id, 'branch_id' => $branch->id,
+            'name' => 'Caja', 'is_active' => true,
+        ]);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $table = RestaurantTable::factory()->for($branch)->create([
+            'company_id' => $company->id, 'name' => 'MESA HISTORICA',
+        ]);
+        $order = $this->ticketOrder($company, $branch, $owner, '100.00');
+        $this->payment($order, $session->id, $owner, PaymentMethod::Qr, '100.00');
+        $order->forceFill([
+            'restaurant_table_id' => $table->id,
+            'active_restaurant_table_id' => null,
+            'type' => OrderType::DineIn,
+            'status' => OrderStatus::Paid,
+            'closed_at' => now(),
+        ])->save();
+        $stock = InventoryStock::factory()->create([
+            'company_id' => $company->id, 'branch_id' => $branch->id, 'quantity' => '25.000',
+        ]);
+        $before = [
+            'orders' => Order::query()->count(),
+            'payments' => Payment::query()->count(),
+            'cash_movements' => CashMovement::query()->count(),
+            'inventory_movements' => InventoryMovement::query()->count(),
+            'reservations' => InventoryReservation::query()->count(),
+            'paid_sales' => Order::query()->where('status', OrderStatus::Paid->value)->pluck('total', 'id')->all(),
+            'stock' => $stock->quantity,
+        ];
+
+        $response = $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.ticket', $order->ulid));
+        $response->assertRedirect()->assertSessionHas(
+            'warning',
+            'Ticket en cola. Se imprimirá cuando el agente vuelva a conectarse.',
+        );
+        $this->actingInContext($owner, $company, $branch)
+            ->post(route('orders.reprint.ticket', $order->ulid))
+            ->assertRedirect();
+
+        $attempts = PrintAttempt::query()->where('order_id', $order->id)
+            ->where('purpose', PrinterPurpose::CustomerTicket->value)->get();
+        $this->assertCount(2, $attempts);
+        $this->assertCount(2, $attempts->pluck('idempotency_key')->unique());
+        $this->assertTrue($attempts->every(fn (PrintAttempt $attempt): bool => $attempt->is_reprint));
+        $this->assertTrue($attempts->every(fn (PrintAttempt $attempt): bool => $attempt->status === PrintAttemptStatus::Pending));
+        $this->assertTrue($attempts->every(fn (PrintAttempt $attempt): bool => $attempt->requested_by === $owner->id));
+
+        $this->assertSame($before, [
+            'orders' => Order::query()->count(),
+            'payments' => Payment::query()->count(),
+            'cash_movements' => CashMovement::query()->count(),
+            'inventory_movements' => InventoryMovement::query()->count(),
+            'reservations' => InventoryReservation::query()->count(),
+            'paid_sales' => Order::query()->where('status', OrderStatus::Paid->value)->pluck('total', 'id')->all(),
+            'stock' => $stock->refresh()->quantity,
+        ]);
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+        $this->assertSame($table->id, $order->restaurant_table_id);
     }
 
     public function test_owner_and_admin_configure_branch_printers_while_waiter_cannot_and_test_uses_selected_printer_and_copies(): void

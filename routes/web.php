@@ -15,6 +15,7 @@ use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MembershipController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\OrderReprintController;
 use App\Http\Controllers\PreparationController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\PromotionController;
@@ -73,6 +74,8 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/request-payment', [CheckoutController::class, 'requestPayment'])->name('orders.request-payment');
             Route::post('/orders/{order}/payments', [CheckoutController::class, 'store'])->name('orders.payments.store');
             Route::post('/orders/{order}/ticket/print', [CheckoutController::class, 'printTicket'])->name('orders.ticket.print');
+            Route::post('/orders/{order}/reprint/kitchen', [OrderReprintController::class, 'kitchen'])->name('orders.reprint.kitchen');
+            Route::post('/orders/{order}/reprint/ticket', [OrderReprintController::class, 'ticket'])->name('orders.reprint.ticket');
             Route::post('/payments/{payment}/reverse', [CheckoutController::class, 'reverse'])->name('payments.reverse');
 
             Route::get('/cash', [CashController::class, 'index'])->name('cash.index');

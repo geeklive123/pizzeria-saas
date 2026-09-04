@@ -36,6 +36,17 @@ class OrderPolicy
         return $user->canForCompany(Permission::CancelOrders, $order->company_id);
     }
 
+    public function reprintKitchen(User $user, Order $order): bool
+    {
+        return $user->canForCompany(Permission::ManageOrders, $order->company_id)
+            || $user->canForCompany(Permission::ManageKitchen, $order->company_id);
+    }
+
+    public function reprintCustomerTicket(User $user, Order $order): bool
+    {
+        return $user->canForCompany(Permission::CreatePayments, $order->company_id);
+    }
+
     public function delete(User $user, Order $order): bool
     {
         return false;

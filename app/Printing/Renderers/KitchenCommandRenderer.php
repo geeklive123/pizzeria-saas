@@ -3,9 +3,12 @@
 namespace App\Printing\Renderers;
 
 use App\Enums\ModifierOptionType;
+use App\Enums\OrderItemStatus;
 use App\Enums\OrderType;
 use App\Models\KitchenDispatch;
+use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\User;
 use App\Printing\EscPosDocumentBuilder;
 use App\Printing\ThermalDocument;
 use App\Support\UiFormatter;
@@ -13,7 +16,7 @@ use DateTimeZone;
 
 class KitchenCommandRenderer
 {
-    public function render(KitchenDispatch $dispatch): ThermalDocument
+    public function render(KitchenDispatch $dispatch, bool $reprint = false): ThermalDocument
     {
         $dispatch->loadMissing([
             'order.restaurantTable', 'dispatchedBy',
@@ -58,7 +61,60 @@ class KitchenCommandRenderer
             }
         }
 
-        return $builder->line(str_repeat('-', 48))->alignCenter()->bold()->line('NUEVA COMANDA · TANDA #'.$dispatch->sequence_number)->bold(false)->finish();
+        $footer = $reprint
+            ? 'REIMPRESION · TANDA #'.$dispatch->sequence_number
+            : 'NUEVA COMANDA · TANDA #'.$dispatch->sequence_number;
+
+        return $builder->line(str_repeat('-', 48))->alignCenter()->bold()->line($footer)->bold(false)->finish();
+    }
+
+    public function renderOrder(Order $order, User $requestedBy): ThermalDocument
+    {
+        $order->loadMissing([
+            'restaurantTable',
+            'items.productVariant.product',
+            'items.sections',
+            'items.modifiers',
+        ]);
+        $date = ($order->closed_at ?? $order->opened_at ?? now())
+            ->setTimezone(new DateTimeZone('America/La_Paz'));
+        $builder = (new EscPosDocumentBuilder)
+            ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
+            ->bold()->doubleSize()->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->doubleSize(false)
+            ->line('PEDIDO '.$order->formattedNumber())->bold(false)->line()
+            ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
+            ->line('Usuario: '.$requestedBy->name);
+
+        if ($order->customer_name) {
+            $builder->line('Cliente: '.$order->customer_name);
+        }
+        if ($order->customer_phone) {
+            $builder->line('Tel: '.$order->customer_phone);
+        }
+        if ($order->notes) {
+            $builder->line('OBS PEDIDO:')->line(mb_strtoupper($order->notes));
+        }
+
+        foreach ($order->items->where('status', '!=', OrderItemStatus::Cancelled) as $item) {
+            $builder->line(str_repeat('-', 48))->bold()->line($this->itemTitle($item))->bold(false);
+
+            if ($item->sections->isNotEmpty()) {
+                foreach ($item->sections as $section) {
+                    $fraction = $item->sections->count() > 1 ? $section->fractionLabel().' ' : '';
+                    $builder->line('    '.$fraction.mb_strtoupper($section->product_name_snapshot));
+                }
+            }
+
+            $builder->line()->bold()->line($item->fulfillment_type === OrderType::Takeaway ? '    PARA LLEVAR' : '    COMER AQUÍ')->bold(false);
+            $this->modifiers($builder, $item, ModifierOptionType::Add, 'EXTRAS:', '+ ');
+            $this->modifiers($builder, $item, ModifierOptionType::Remove, 'QUITAR:', '- ');
+            if ($item->notes) {
+                $builder->line()->bold()->line('OBS:')->bold(false)->line(mb_strtoupper($item->notes));
+            }
+        }
+
+        return $builder->line(str_repeat('-', 48))->alignCenter()->bold()
+            ->line('REIMPRESION HISTORICA · PEDIDO COMPLETO')->bold(false)->finish();
     }
 
     private function itemTitle(OrderItem $item): string

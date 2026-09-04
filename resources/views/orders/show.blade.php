@@ -5,6 +5,16 @@
 @section('main-class', '!max-w-none')
 
 @section('content')
+@if($order->status === \App\Enums\OrderStatus::Paid)
+    <div class='mb-4 flex flex-wrap justify-end gap-2'>
+        @can('reprintKitchen', $order)
+            <form method='POST' action='{{ route('orders.reprint.kitchen', $order->ulid) }}'>@csrf<button class='btn-secondary'>Reimprimir cocina</button></form>
+        @endcan
+        @can('reprintCustomerTicket', $order)
+            <form method='POST' action='{{ route('orders.reprint.ticket', $order->ulid) }}'>@csrf<button class='btn-secondary'>Reimprimir ticket cliente</button></form>
+        @endcan
+    </div>
+@endif
 @php($hasDraft = $order->items->contains('status', \App\Enums\OrderItemStatus::Draft))
 @php($isPerBatch = $order->charge_mode === \App\Enums\TableChargeMode::PerBatch)
 @php($isAtEndCheckout = ! $isPerBatch && $order->type === \App\Enums\OrderType::DineIn && $order->status === \App\Enums\OrderStatus::ReadyForPayment)

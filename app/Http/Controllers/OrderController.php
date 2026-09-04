@@ -53,8 +53,12 @@ class OrderController extends Controller
         $orders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Open, OrderStatus::ReadyForPayment])
             ->with(['restaurantTable', 'createdBy'])->latest('opened_at')->get();
+        $paidOrders = Order::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('status', OrderStatus::Paid)
+            ->with(['restaurantTable', 'createdBy'])->latest('closed_at')
+            ->paginate(50, ['*'], 'paid_page');
 
-        return view('orders.index', compact('orders'));
+        return view('orders.index', compact('orders', 'paidOrders'));
     }
 
     public function createTakeaway(): View

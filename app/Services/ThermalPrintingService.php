@@ -26,16 +26,33 @@ class ThermalPrintingService
 
     public function kitchen(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
     {
+        $dispatch->loadMissing('order');
         $setting = $this->setting($dispatch->company_id, $dispatch->branch_id, PrinterPurpose::Kitchen);
 
         return $this->enqueue(
             $setting,
-            $this->kitchenRenderer->render($dispatch),
+            $this->kitchenRenderer->render($dispatch, $reprint),
             $user,
             $reprint,
             $dispatch,
-            null,
+            $dispatch->order,
             $reprint ? 'kitchen_dispatch:'.$dispatch->ulid.':reprint:'.Str::ulid() : 'kitchen_dispatch:'.$dispatch->ulid.':original',
+        );
+    }
+
+    public function kitchenOrder(Order $order, User $user): PrintAttempt
+    {
+        $setting = $this->setting($order->company_id, $order->branch_id, PrinterPurpose::Kitchen);
+
+        return $this->enqueue(
+            $setting,
+            $this->kitchenRenderer->renderOrder($order, $user),
+            $user,
+            true,
+            null,
+            $order,
+            'kitchen_order:'.$order->ulid.':reprint:'.Str::ulid(),
+            PrinterPurpose::Kitchen,
         );
     }
 
@@ -122,8 +139,9 @@ class ThermalPrintingService
         ?KitchenDispatch $dispatch,
         ?Order $order,
         string $idempotencyKey,
+        ?PrinterPurpose $fallbackPurpose = null,
     ): PrintAttempt {
-        return DB::transaction(function () use ($setting, $document, $user, $reprint, $dispatch, $order, $idempotencyKey): PrintAttempt {
+        return DB::transaction(function () use ($setting, $document, $user, $reprint, $dispatch, $order, $idempotencyKey, $fallbackPurpose): PrintAttempt {
             if ($dispatch) {
                 KitchenDispatch::query()->whereKey($dispatch->getKey())->lockForUpdate()->firstOrFail();
             }
@@ -136,7 +154,7 @@ class ThermalPrintingService
                 return $existing;
             }
 
-            $purpose = $setting?->purpose ?? ($dispatch ? PrinterPurpose::Kitchen : PrinterPurpose::CustomerTicket);
+            $purpose = $setting?->purpose ?? $fallbackPurpose ?? ($dispatch ? PrinterPurpose::Kitchen : PrinterPurpose::CustomerTicket);
             $enabled = $setting?->is_active === true;
 
             return PrintAttempt::query()->create([
