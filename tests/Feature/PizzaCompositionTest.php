@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\OpenTableOrderAction;
@@ -21,7 +22,9 @@ use App\Exceptions\InsufficientStockException;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Ingredient;
+use App\Models\InventoryBatch;
 use App\Models\InventoryItem;
+use App\Models\InventoryMovement;
 use App\Models\InventoryReservation;
 use App\Models\Membership;
 use App\Models\ModifierOption;
@@ -345,6 +348,166 @@ class PizzaCompositionTest extends TestCase
         $this->add($f, [[$f['a'], 1, 2], [$other['a'], 1, 2]], OrderType::DineIn);
     }
 
+    public function test_dulce_fuego_and_la_chura_allow_different_sauces_and_consolidate_shared_ingredients(): void
+    {
+        $f = $this->differentBaseFixture(doughQuantities: ['a' => '320.000', 'b' => '305.000']);
+        $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn);
+
+        $this->assertSame(['DULCE FUEGO', 'LA CHURA'], $item->sections->pluck('product_name_snapshot')->all());
+        $this->assertSame(['1/2', '1/2'], $item->sections->map->fractionLabel()->all());
+        $this->assertReservation($item, $f['base_item'], '320.000');
+        $this->assertSame(1, $item->reservations()->where('inventory_item_id', $f['base_item']->id)->count());
+        $this->assertReservation($item, $f['cheese_item'], '180.000');
+        $this->assertReservation($item, $f['tomato_item'], '50.000');
+        $this->assertReservation($item, $f['white_sauce_item'], '50.000');
+        $this->assertReservation($item, $f['a_item'], '60.000');
+        $this->assertReservation($item, $f['b_item'], '60.000');
+        $this->assertSame('76.00', $item->unit_price);
+    }
+
+    public function test_four_different_quarters_prorate_each_flavor_without_duplicating_dough(): void
+    {
+        $f = $this->differentBaseFixture(doughQuantities: [
+            'a' => '305.000',
+            'b' => '310.000',
+            'c' => '315.000',
+            'd' => '340.000',
+        ]);
+        $item = $this->add($f, [
+            [$f['a'], 1, 4],
+            [$f['b'], 1, 4],
+            [$f['c'], 1, 4],
+            [$f['d'], 1, 4],
+        ], OrderType::DineIn);
+
+        $this->assertReservation($item, $f['base_item'], '340.000');
+        $this->assertSame(1, $item->reservations()->where('inventory_item_id', $f['base_item']->id)->count());
+        $this->assertReservation($item, $f['cheese_item'], '180.000');
+        $this->assertReservation($item, $f['tomato_item'], '25.000');
+        $this->assertReservation($item, $f['white_sauce_item'], '25.000');
+        $this->assertReservation($item, $f['a_item'], '30.000');
+        $this->assertReservation($item, $f['b_item'], '30.000');
+        $this->assertReservation($item, $f['c_item'], '30.000');
+        $this->assertReservation($item, $f['d_item'], '30.000');
+        $this->assertSame('85.00', $item->unit_price);
+    }
+
+    public function test_equal_highest_prices_use_the_first_selected_flavor_deterministically_without_duplicate_dough(): void
+    {
+        $f = $this->differentBaseFixture(doughQuantities: ['a' => '305.000', 'b' => '325.000']);
+        $f['b']->update(['price' => '76.00']);
+        $item = $this->add($f, [[$f['b'], 1, 2], [$f['a'], 1, 2]], OrderType::DineIn);
+
+        $this->assertSame('76.00', $item->unit_price);
+        $this->assertSame($f['b']->id, $item->product_variant_id);
+        $this->assertReservation($item, $f['base_item'], '325.000');
+        $this->assertSame(1, $item->reservations()->where('inventory_item_id', $f['base_item']->id)->count());
+        $this->assertReservation($item, $f['tomato_item'], '50.000');
+        $this->assertReservation($item, $f['white_sauce_item'], '50.000');
+    }
+
+    public function test_insufficient_stock_in_one_fractional_flavor_blocks_the_whole_fused_pizza(): void
+    {
+        $f = $this->differentBaseFixture('49.999');
+
+        try {
+            $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn);
+            $this->fail('The fused pizza must fail when one flavor lacks stock.');
+        } catch (InsufficientStockException $exception) {
+            $this->assertStringContainsString('Salsa de tomate', $exception->getMessage());
+            $this->assertDatabaseCount('order_items', 0);
+            $this->assertDatabaseCount('inventory_reservations', 0);
+        }
+    }
+
+    public function test_single_flavor_keeps_its_full_recipe_with_structural_dough_once(): void
+    {
+        $f = $this->differentBaseFixture();
+        $item = $this->add($f, [[$f['a'], 1, 1]], OrderType::DineIn);
+
+        $this->assertReservation($item, $f['base_item'], '310.000');
+        $this->assertReservation($item, $f['cheese_item'], '180.000');
+        $this->assertReservation($item, $f['tomato_item'], '100.000');
+        $this->assertReservation($item, $f['a_item'], '120.000');
+        $this->assertSame('76.00', $item->unit_price);
+    }
+
+    public function test_fused_pizza_consumption_uses_combined_requirements_and_keeps_fefo(): void
+    {
+        $f = $this->differentBaseFixture(null);
+        app(ApplyInventoryMovementAction::class)->execute(
+            $f['company'],
+            $f['branch'],
+            $f['tomato_item'],
+            InventoryMovementType::AdjustmentIn,
+            '25.000',
+            '1.000000',
+            $f['owner'],
+            reason: 'Lote próximo',
+            batch: ['expires_at' => today()->addDay()],
+        );
+        app(ApplyInventoryMovementAction::class)->execute(
+            $f['company'],
+            $f['branch'],
+            $f['tomato_item'],
+            InventoryMovementType::AdjustmentIn,
+            '40.000',
+            '1.000000',
+            $f['owner'],
+            reason: 'Lote posterior',
+            batch: ['expires_at' => today()->addDays(10)],
+        );
+        $table = RestaurantTable::factory()->for($f['branch'])->create(['company_id' => $f['company']->id]);
+        $f['order'] = app(OpenTableOrderAction::class)->execute(
+            $f['company'],
+            $f['branch'],
+            $table,
+            $f['owner'],
+            null,
+            TableChargeMode::AtEnd,
+        );
+        $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn);
+
+        app(DispatchOrderToKitchenAction::class)->execute($item->order, $f['owner']);
+
+        $batches = InventoryBatch::query()->where('inventory_item_id', $f['tomato_item']->id)
+            ->orderBy('expires_at')->get();
+        $this->assertSame('0.000', $batches[0]->quantity_remaining);
+        $this->assertSame('15.000', $batches[1]->quantity_remaining);
+        $movement = InventoryMovement::query()
+            ->where('inventory_item_id', $f['tomato_item']->id)
+            ->where('type', InventoryMovementType::OrderConsumption)
+            ->sole();
+        $this->assertSame('50.000', $movement->quantity);
+        $this->assertSame($batches[0]->id, $movement->metadata['batch_allocations'][0]['batch_id']);
+        $this->assertDatabaseHas('inventory_movements', [
+            'inventory_item_id' => $f['base_item']->id,
+            'type' => InventoryMovementType::OrderConsumption->value,
+            'quantity' => 310,
+        ]);
+        $this->assertDatabaseHas('inventory_movements', [
+            'inventory_item_id' => $f['white_sauce_item']->id,
+            'type' => InventoryMovementType::OrderConsumption->value,
+            'quantity' => 50,
+        ]);
+    }
+
+    public function test_cancelling_a_draft_fused_pizza_releases_its_combined_reservations_without_consumption(): void
+    {
+        $f = $this->differentBaseFixture();
+        $item = $this->add($f, [[$f['a'], 1, 2], [$f['b'], 1, 2]], OrderType::DineIn);
+
+        app(CancelOrderItemAction::class)->execute($item, $f['owner']);
+
+        $this->assertSame(0, $item->reservations()->where('status', 'reserved')->count());
+        $this->assertGreaterThan(0, $item->reservations()->where('status', 'released')->count());
+        $this->assertDatabaseMissing('inventory_movements', [
+            'reference_type' => $item::class,
+            'reference_id' => $item->id,
+            'type' => InventoryMovementType::OrderConsumption->value,
+        ]);
+    }
+
     /** @return array<string,mixed> */
     private function fixture(string $stock = '5000.000', bool $sharedTopping = false): array
     {
@@ -380,6 +543,76 @@ class PizzaCompositionTest extends TestCase
             'c_item' => $cItem,
             'd_item' => $dItem,
             'box_item' => $boxItem,
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    private function differentBaseFixture(?string $tomatoStock = '5000.000', array $doughQuantities = []): array
+    {
+        $f = $this->fixture();
+        $doughQuantities = array_replace([
+            'a' => '310.000',
+            'b' => '310.000',
+            'c' => '310.000',
+            'd' => '310.000',
+        ], $doughQuantities);
+        $f['a']->product()->update(['name' => 'DULCE FUEGO']);
+        $f['b']->product()->update(['name' => 'LA CHURA']);
+        $f['a']->update(['price' => '76.00']);
+        $f['b']->update(['price' => '71.00']);
+        [$tomato, $tomatoItem] = $this->ingredient($f['company'], $f['grams'], 'Salsa de tomate');
+        [$whiteSauce, $whiteSauceItem] = $this->ingredient($f['company'], $f['grams'], 'Salsa blanca');
+
+        if ($tomatoStock !== null) {
+            app(ApplyInventoryMovementAction::class)->execute(
+                $f['company'],
+                $f['branch'],
+                $tomatoItem,
+                InventoryMovementType::AdjustmentIn,
+                $tomatoStock,
+                '1.000000',
+                $f['owner'],
+                reason: 'Stock prueba',
+            );
+        }
+        app(ApplyInventoryMovementAction::class)->execute(
+            $f['company'],
+            $f['branch'],
+            $whiteSauceItem,
+            InventoryMovementType::AdjustmentIn,
+            '5000.000',
+            '1.000000',
+            $f['owner'],
+            reason: 'Stock prueba',
+        );
+
+        $cheese = ['ingredient_id' => $f['cheese_item']->ingredient_id, 'component_type' => 'base', 'quantity' => '180.000'];
+        $recipes = [
+            'a' => [$tomato, $f['a_item']],
+            'b' => [$whiteSauce, $f['b_item']],
+        ];
+        foreach ($recipes as $key => [$sauce, $toppingItem]) {
+            $variant = $f[$key];
+            app(UpdateRecipeAction::class)->execute($f['company'], $variant, [
+                ['ingredient_id' => $f['base_item']->ingredient_id, 'component_type' => 'base', 'quantity' => $doughQuantities[$key]],
+                ['ingredient_id' => $sauce->id, 'component_type' => 'base', 'quantity' => '100.000'],
+                $cheese,
+                ['ingredient_id' => $toppingItem->ingredient_id, 'component_type' => 'topping', 'quantity' => '120.000'],
+            ], 'Receta '.$variant->product->name);
+        }
+        foreach (['c', 'd'] as $key) {
+            $variant = $f[$key];
+            $toppingItem = $f[$key.'_item'];
+            app(UpdateRecipeAction::class)->execute($f['company'], $variant, [
+                ['ingredient_id' => $f['base_item']->ingredient_id, 'component_type' => 'base', 'quantity' => $doughQuantities[$key]],
+                $cheese,
+                ['ingredient_id' => $toppingItem->ingredient_id, 'component_type' => 'topping', 'quantity' => '120.000'],
+            ], 'Receta '.$variant->product->name);
+        }
+
+        return $f + [
+            'tomato_item' => $tomatoItem,
+            'white_sauce_item' => $whiteSauceItem,
         ];
     }
 

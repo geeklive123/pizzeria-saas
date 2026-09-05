@@ -6,7 +6,6 @@ use App\Enums\ModifierOptionType;
 use App\Enums\OrderType;
 use App\Enums\ProductModifierPurpose;
 use App\Enums\ProductType;
-use App\Enums\RecipeComponentType;
 use App\Models\Company;
 use App\Models\InventoryItem;
 use App\Models\ModifierOption;
@@ -79,35 +78,30 @@ class PizzaCompositionService
         if ($recipePending && $modifierData !== []) {
             throw new DomainException('No se pueden aplicar extras o removidos hasta configurar las cantidades de receta.');
         }
-        if (! $recipePending) {
-            $this->validateBaseCompatibility($sections);
-        }
+        $pricingSection = $this->highestPricedSection($sections);
 
         /** @var array<int, BigRational> $recipeTotals */
         $recipeTotals = [];
         /** @var array<int, array<int, BigRational>> $recipeBySection */
         $recipeBySection = [];
         $inventoryItems = [];
-        $firstRecipe = $sections[0]['variant']->recipe;
-        $hasStructuredBase = $firstRecipe?->items->contains(fn ($item): bool => $item->component_type === RecipeComponentType::Base) ?? false;
+        $pricingRecipe = $pricingSection['variant']->recipe;
+        $structuralBaseItems = $pricingRecipe?->items->filter(fn ($item): bool => $this->isStructuralBase($item)) ?? collect();
 
-        if ($hasStructuredBase) {
-            foreach ($firstRecipe->items->where('component_type', RecipeComponentType::Base) as $recipeItem) {
-                $inventoryItem = $this->inventoryItemForRecipe($recipeItem);
-                $inventoryItems[$inventoryItem->id] = $inventoryItem;
-                $quantity = BigRational::of($recipeItem->quantity);
-                $recipeTotals[$inventoryItem->id] = ($recipeTotals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
-                foreach ($sections as $section) {
-                    $recipeBySection[$section['position']][$inventoryItem->id] = ($recipeBySection[$section['position']][$inventoryItem->id] ?? BigRational::zero())
-                        ->plus($quantity->multipliedBy($section['fraction']));
-                }
+        foreach ($structuralBaseItems as $recipeItem) {
+            $inventoryItem = $this->inventoryItemForRecipe($recipeItem);
+            $inventoryItems[$inventoryItem->id] = $inventoryItem;
+            $quantity = BigRational::of($recipeItem->quantity);
+            $recipeTotals[$inventoryItem->id] = ($recipeTotals[$inventoryItem->id] ?? BigRational::zero())->plus($quantity);
+            foreach ($sections as $section) {
+                $recipeBySection[$section['position']][$inventoryItem->id] = ($recipeBySection[$section['position']][$inventoryItem->id] ?? BigRational::zero())
+                    ->plus($quantity->multipliedBy($section['fraction']));
             }
         }
 
         foreach ($recipePending ? [] : $sections as $section) {
-            $recipeItems = $hasStructuredBase
-                ? $section['variant']->recipe->items->where('component_type', RecipeComponentType::Topping)
-                : $section['variant']->recipe->items;
+            $recipeItems = $section['variant']->recipe->items
+                ->reject(fn ($item): bool => $this->isStructuralBase($item));
 
             foreach ($recipeItems as $recipeItem) {
                 $inventoryItem = $this->inventoryItemForRecipe($recipeItem);
@@ -119,11 +113,7 @@ class PizzaCompositionService
         }
 
         $totals = $recipeTotals;
-        $price = collect($sections)->reduce(function (?BigDecimal $highest, array $section): BigDecimal {
-            $candidate = BigDecimal::of($section['variant']->price);
-
-            return $highest === null || $candidate->isGreaterThan($highest) ? $candidate : $highest;
-        });
+        $price = BigDecimal::of($pricingSection['variant']->price);
         $modifierSnapshots = [];
         $removedScopes = [];
 
@@ -254,7 +244,7 @@ class PizzaCompositionService
             'product_name_snapshot' => $section['variant']->product->name,
             'variant_name_snapshot' => $section['variant']->name,
         ], $sections);
-        $primary = collect($sections)->sort(fn (array $a, array $b): int => BigDecimal::of($b['variant']->price)->compareTo($a['variant']->price))->first()['variant'];
+        $primary = $pricingSection['variant'];
 
         return [
             'unit_price' => (string) $price->toScale(2, RoundingMode::HalfUp),
@@ -358,19 +348,26 @@ class PizzaCompositionService
     }
 
     /** @param list<array<string,mixed>> $sections */
-    private function validateBaseCompatibility(array $sections): void
+    private function highestPricedSection(array $sections): array
     {
-        $signatures = collect($sections)->map(function (array $section): string {
-            return $section['variant']->recipe->items
-                ->where('component_type', RecipeComponentType::Base)
-                ->sortBy('ingredient_id')
-                ->map(fn ($item): string => $item->ingredient_id.':'.$item->quantity)
-                ->implode('|');
-        });
+        return collect($sections)->reduce(function (?array $highest, array $section): array {
+            if ($highest === null) {
+                return $section;
+            }
 
-        if ($signatures->filter()->isNotEmpty() && $signatures->unique()->count() !== 1) {
-            throw new DomainException('Los sabores seleccionados no comparten la misma receta base para ese tamaño.');
-        }
+            $comparison = BigDecimal::of($section['variant']->price)
+                ->compareTo(BigDecimal::of($highest['variant']->price));
+
+            return $comparison > 0
+                || ($comparison === 0 && $section['position'] < $highest['position'])
+                    ? $section
+                    : $highest;
+        });
+    }
+
+    private function isStructuralBase($recipeItem): bool
+    {
+        return mb_strtolower(trim($recipeItem->ingredient->name)) === 'masa';
     }
 
     private function inventoryItemForRecipe($recipeItem): InventoryItem
