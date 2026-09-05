@@ -29,6 +29,36 @@
         @endif
     </section>
 
+    @if ($canCreateExpense)
+        <section class='card mt-6 p-6'>
+            <h2 class='card-title'>Registrar egreso</h2>
+            <p class='card-subtitle'>Los gastos en efectivo reducen esta caja. Los pagos QR, transferencia u otro medio no modifican el efectivo físico.</p>
+            <form class='mt-5 space-y-4' method='POST' action='{{ route('cash.expenses.store') }}'>
+                @csrf
+                <div class='form-grid'>
+                    <div class='sm:col-span-2'>
+                        <label class='label' for='cash_expense_description'>Descripción</label>
+                        <input class='input' id='cash_expense_description' name='description' maxlength='500' value='{{ old('description') }}' required>
+                    </div>
+                    <div>
+                        <label class='label' for='cash_expense_amount'>Monto</label>
+                        <input class='input' id='cash_expense_amount' name='amount' inputmode='decimal' value='{{ old('amount') }}' required>
+                    </div>
+                    <div>
+                        <label class='label' for='cash_expense_payment_method'>Método de pago</label>
+                        <select class='input' id='cash_expense_payment_method' name='payment_method' required>
+                            <option value='cash' @selected(old('payment_method', 'cash') === 'cash')>Efectivo</option>
+                            <option value='qr' @selected(old('payment_method') === 'qr')>QR</option>
+                            <option value='transfer' @selected(old('payment_method') === 'transfer')>Transferencia</option>
+                            <option value='other' @selected(old('payment_method') === 'other')>Otro</option>
+                        </select>
+                    </div>
+                </div>
+                <button class='btn-primary w-full'>Registrar egreso</button>
+            </form>
+        </section>
+    @endif
+
     <div class='mt-6 grid gap-6 xl:grid-cols-2'>
         <section class='card p-6'>
             <h2 class='card-title'>Movimiento manual de efectivo</h2>

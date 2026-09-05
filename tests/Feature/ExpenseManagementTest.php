@@ -177,7 +177,7 @@ class ExpenseManagementTest extends TestCase
         $this->actingInContext($owner, $company, $branch)->get(route('expenses.index'))->assertOk();
         $this->actingInContext($admin, $company, $branch)->get(route('suppliers.index'))->assertOk();
         $this->actingInContext($admin, $company, $branch)->get(route('expense-categories.index'))->assertOk();
-        $this->actingInContext($cashier, $company, $branch)->get(route('expenses.create'))->assertForbidden();
+        $this->actingInContext($cashier, $company, $branch)->get(route('expenses.create'))->assertOk();
         $this->actingInContext($cashier, $company, $branch)->get(route('suppliers.index'))->assertForbidden();
         $this->actingInContext($waiter, $company, $branch)->get(route('expenses.index'))->assertForbidden();
         $this->actingInContext($kitchen, $company, $branch)->get(route('expenses.index'))->assertForbidden();

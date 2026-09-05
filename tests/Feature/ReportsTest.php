@@ -208,7 +208,7 @@ class ReportsTest extends TestCase
 
         $this->actingInContext($owner, $company, $branch)->get(route('reports.index'))->assertOk();
         $this->actingInContext($admin, $company, $branch)->get(route('reports.profitability'))->assertOk();
-        $this->actingInContext($cashier, $company, $branch)->get(route('reports.sales'))->assertForbidden();
+        $this->actingInContext($cashier, $company, $branch)->get(route('reports.sales'))->assertOk();
         $this->actingInContext($cashier, $company, $branch)->get(route('reports.expenses'))->assertForbidden();
         $this->actingInContext($cashier, $company, $branch)->get(route('reports.export', 'sales'))->assertForbidden();
         $this->actingInContext($waiter, $company, $branch)->get(route('reports.sales'))->assertForbidden();

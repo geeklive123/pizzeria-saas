@@ -43,7 +43,9 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::AuthorizeCashWithdrawals));
         $this->assertTrue(MembershipRole::Cashier->allows(Permission::ViewInventory));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::ManageInventory));
-        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewExpenses));
+        $this->assertTrue(MembershipRole::Cashier->allows(Permission::ViewExpenses));
+        $this->assertTrue(MembershipRole::Cashier->allows(Permission::CreateExpenses));
+        $this->assertFalse(MembershipRole::Cashier->allows(Permission::ReverseExpenses));
         $this->assertTrue(MembershipRole::Cashier->allows(Permission::ViewReports));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::ViewFinancialReports));
         $this->assertFalse(MembershipRole::Cashier->allows(Permission::ExportReports));
@@ -63,7 +65,9 @@ class UserPermissionsAndCashAdjustmentsTest extends TestCase
             $this->actingInContext($manager, $company, $branch)->get(route('cash.index'))
                 ->assertOk()->assertSee('Mesas');
         }
-        foreach (['memberships.index', 'settings.edit', 'recipes.index', 'purchases.index', 'expenses.index', 'suppliers.index', 'expense-categories.index'] as $routeName) {
+        $this->actingInContext($cashier, $company, $branch)->get(route('expenses.index'))->assertOk();
+        $this->actingInContext($cashier, $company, $branch)->get(route('expenses.create'))->assertOk();
+        foreach (['memberships.index', 'settings.edit', 'recipes.index', 'purchases.index', 'suppliers.index', 'expense-categories.index'] as $routeName) {
             $this->actingInContext($cashier, $company, $branch)->get(route($routeName))->assertForbidden();
         }
     }

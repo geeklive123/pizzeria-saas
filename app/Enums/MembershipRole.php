@@ -92,6 +92,8 @@ enum MembershipRole: string
                 Permission::CloseCash,
                 Permission::CreatePayments,
                 Permission::ApplyOrderDiscounts,
+                Permission::ViewExpenses,
+                Permission::CreateExpenses,
                 Permission::ViewReports,
             ],
             self::Waiter => [

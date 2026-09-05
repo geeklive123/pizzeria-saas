@@ -82,6 +82,7 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/cash/open', [CashController::class, 'openForm'])->name('cash.open.form');
             Route::post('/cash/open', [CashController::class, 'open'])->name('cash.open');
             Route::get('/cash/current', [CashController::class, 'index'])->name('cash.current');
+            Route::post('/cash/expense', [CashController::class, 'expense'])->name('cash.expenses.store');
             Route::post('/cash/current/movements', [CashController::class, 'movement'])->name('cash.movements.store');
             Route::post('/cash/sessions/{session}/withdrawals', [CashController::class, 'withdrawal'])->name('cash.withdrawals.store');
             Route::post('/cash/current/close', [CashController::class, 'close'])->name('cash.close');

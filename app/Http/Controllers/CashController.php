@@ -6,13 +6,18 @@ use App\Actions\CloseCashSessionAction;
 use App\Actions\ManualCashMovementAction;
 use App\Actions\OpenCashSessionAction;
 use App\Actions\OwnerCashWithdrawalAction;
+use App\Actions\RegisterExpenseAction;
+use App\Actions\ResolveOperationalExpenseCategoryAction;
 use App\Enums\CashMovementType;
+use App\Enums\ExpenseDocumentType;
+use App\Http\Requests\CashExpenseRequest;
 use App\Http\Requests\CashMovementRequest;
 use App\Http\Requests\CloseCashSessionRequest;
 use App\Http\Requests\OpenCashSessionRequest;
 use App\Http\Requests\OwnerCashWithdrawalRequest;
 use App\Models\CashRegister;
 use App\Models\CashSession;
+use App\Models\Expense;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
 use App\Support\UiFormatter;
@@ -41,8 +46,9 @@ class CashController extends Controller
         $formatter = UiFormatter::class;
         $cashRegisterClass = CashRegister::class;
         $withdrawalIdempotencyKeys = $activeSessions->mapWithKeys(fn (CashSession $item): array => [$item->id => (string) Str::ulid()]);
+        $canCreateExpense = $session !== null && Gate::allows('create', Expense::class);
 
-        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys'));
+        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys', 'canCreateExpense'));
     }
 
     public function openForm(): View
@@ -89,6 +95,33 @@ class CashController extends Controller
         return back()->with('success', 'Movimiento de caja registrado.');
     }
 
+    public function expense(
+        CashExpenseRequest $request,
+        ResolveOperationalExpenseCategoryAction $resolveCategory,
+        RegisterExpenseAction $action,
+    ): RedirectResponse {
+        Gate::authorize('create', Expense::class);
+        $session = $this->findOpenSession($request->user());
+        $category = $resolveCategory->execute($this->company());
+        $data = [
+            ...$request->validated(),
+            'expense_category_id' => $category->id,
+            'supplier_id' => null,
+            'expense_date' => today()->toDateString(),
+            'document_type' => ExpenseDocumentType::WithoutInvoice->value,
+            'document_number' => null,
+            'notes' => null,
+        ];
+
+        try {
+            $action->execute($this->company(), $this->branch(), $request->user(), $data, $session);
+        } catch (DomainException $exception) {
+            return back()->withInput()->withErrors(['expense' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('cash.current')->with('success', 'Egreso registrado correctamente.');
+    }
+
     public function withdrawal(OwnerCashWithdrawalRequest $request, string $session, OwnerCashWithdrawalAction $action): RedirectResponse
     {
         $session = CashSession::query()->forCompany($this->company())->forBranch($this->branch())
@@ -125,7 +158,12 @@ class CashController extends Controller
 
     private function openSession(User $user): CashSession
     {
+        return $this->findOpenSession($user) ?? abort(404);
+    }
+
+    private function findOpenSession(User $user): ?CashSession
+    {
         return CashSession::query()->forCompany($this->company())->forBranch($this->branch())
-            ->whereNotNull('active_cash_register_id')->where('opened_by', $user->id)->firstOrFail();
+            ->whereNotNull('active_cash_register_id')->where('opened_by', $user->id)->first();
     }
 }
