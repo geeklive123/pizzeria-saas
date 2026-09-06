@@ -40,6 +40,7 @@ use App\Policies\ExpensePolicy;
 use App\Policies\InventoryPolicy;
 use App\Policies\KitchenDispatchPolicy;
 use App\Policies\MembershipPolicy;
+use App\Policies\MenuAvailabilityPolicy;
 use App\Policies\OrderPolicy;
 use App\Policies\PaymentPolicy;
 use App\Policies\PreparationPolicy;
@@ -114,6 +115,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::define('reports.view', [ReportPolicy::class, 'view']);
         Gate::define('reports.financial', [ReportPolicy::class, 'financial']);
         Gate::define('reports.export', [ReportPolicy::class, 'export']);
+        Gate::define('menu-availability.view', [MenuAvailabilityPolicy::class, 'view']);
 
         View::composer('layouts.app', function (ViewContract $view): void {
             $company = request()->attributes->get('company');

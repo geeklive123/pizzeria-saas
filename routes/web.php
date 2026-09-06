@@ -15,6 +15,7 @@ use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MembershipController;
+use App\Http\Controllers\MenuAvailabilityController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\OrderReprintController;
 use App\Http\Controllers\PreparationController;
@@ -58,6 +59,7 @@ Route::middleware('auth')->group(function (): void {
             Route::put('/tables/{table}', [RestaurantTableController::class, 'update'])->name('tables.update');
             Route::post('/tables/{table}/open', [RestaurantTableController::class, 'open'])->name('tables.open');
             Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+            Route::get('/menu-availability', [MenuAvailabilityController::class, 'index'])->name('menu-availability.index');
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');
             Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');

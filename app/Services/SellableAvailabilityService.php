@@ -34,7 +34,11 @@ class SellableAvailabilityService
                 ->where('status', InventoryReservationStatus::Reserved->value),
         ]);
 
-        if ($variant->recipe?->is_active && $variant->recipe->items()->exists()) {
+        $hasRecipeItems = $variant->recipe?->relationLoaded('items')
+            ? $variant->recipe->items->isNotEmpty()
+            : $variant->recipe?->items()->exists();
+
+        if ($variant->recipe?->is_active && $hasRecipeItems) {
             $availability = $this->recipes->calculate($variant, $branch);
 
             return new SellableAvailabilityResult(

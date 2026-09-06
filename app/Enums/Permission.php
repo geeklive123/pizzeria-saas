@@ -12,6 +12,7 @@ enum Permission: string
     case ManageMemberships = 'memberships.manage';
     case ViewCatalog = 'catalog.view';
     case ManageCatalog = 'catalog.manage';
+    case ViewMenuAvailability = 'menu_availability.view';
     case ViewRecipes = 'recipes.view';
     case ManageRecipes = 'recipes.manage';
     case ViewInventory = 'inventory.view';
@@ -53,7 +54,8 @@ enum Permission: string
             self::ViewKitchen, self::ManageKitchen => PermissionModule::Kitchen,
             self::ViewCash, self::OpenCash, self::CloseCash, self::ManageCash, self::RegisterManualCashMovements,
             self::AuthorizeCashWithdrawals, self::TransferCashSessionOperations => PermissionModule::Cash,
-            self::ViewCatalog, self::ManageCatalog, self::ViewRecipes, self::ManageRecipes => PermissionModule::CatalogAndRecipes,
+            self::ViewCatalog, self::ManageCatalog, self::ViewMenuAvailability, self::ViewRecipes,
+            self::ManageRecipes => PermissionModule::CatalogAndRecipes,
             self::ViewInventory, self::ManageInventory => PermissionModule::Inventory,
             self::ViewPurchases, self::ManagePurchases => PermissionModule::Purchases,
             self::ViewExpenses, self::CreateExpenses, self::ReverseExpenses, self::ManageExpenseCategories,
@@ -68,6 +70,7 @@ enum Permission: string
     {
         return match ($this) {
             self::ViewCompany, self::ViewBranches, self::ViewMemberships, self::ViewCatalog,
+            self::ViewMenuAvailability,
             self::ViewRecipes, self::ViewInventory, self::ViewPurchases, self::ViewOrders,
             self::ViewTables, self::ViewKitchen, self::ViewCash, self::ViewExpenses,
             self::ViewSuppliers, self::ViewReports, self::ViewFinancialReports => true,
@@ -86,6 +89,7 @@ enum Permission: string
             self::ManageMemberships => 'Crear y editar usuarios; administrar roles y permisos',
             self::ViewCatalog => 'Ver catálogo',
             self::ManageCatalog => 'Administrar productos y categorías',
+            self::ViewMenuAvailability => 'Consultar menú y disponibilidad',
             self::ViewRecipes => 'Ver recetas',
             self::ManageRecipes => 'Administrar recetas',
             self::ViewInventory => 'Ver inventario',

@@ -11,6 +11,7 @@
             ['route' => 'sales.create', 'label' => 'Nueva venta', 'icon' => '＋', 'pattern' => 'sales.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('create', \App\Models\Order::class)],
             ['route' => 'orders.index', 'label' => 'Pedidos', 'icon' => '☷', 'pattern' => 'orders.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Order::class)],
             ['route' => 'tables.index', 'label' => 'Mesas', 'icon' => '▦', 'pattern' => 'tables.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\RestaurantTable::class)],
+            ['route' => 'menu-availability.index', 'label' => 'Menú y disponibilidad', 'icon' => '◒', 'pattern' => 'menu-availability.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('menu-availability.view')],
             ['route' => 'cash.index', 'label' => 'Caja', 'icon' => 'Bs', 'pattern' => 'cash.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\CashSession::class)],
         ]],
         ['key' => 'operations', 'label' => 'Operación', 'items' => [
