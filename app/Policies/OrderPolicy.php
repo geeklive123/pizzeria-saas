@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Enums\MembershipRole;
 use App\Enums\Permission;
 use App\Models\Order;
 use App\Models\User;
@@ -45,6 +46,15 @@ class OrderPolicy
     public function reprintCustomerTicket(User $user, Order $order): bool
     {
         return $user->canForCompany(Permission::CreatePayments, $order->company_id);
+    }
+
+    public function transferPayments(User $user, Order $order): bool
+    {
+        $membership = $user->membershipFor($order->company_id);
+
+        return $membership !== null
+            && in_array($membership->role, [MembershipRole::Owner, MembershipRole::Admin], true)
+            && $membership->allows(Permission::TransferCashSessionOperations);
     }
 
     public function delete(User $user, Order $order): bool

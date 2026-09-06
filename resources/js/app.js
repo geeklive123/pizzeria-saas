@@ -1,12 +1,67 @@
 const sidebar = document.querySelector('#sidebar');
 const backdrop = document.querySelector('#sidebar-backdrop');
-const toggleSidebar = () => {
-    sidebar?.classList.toggle('-translate-x-full');
-    backdrop?.classList.toggle('hidden');
+const sidebarToggle = document.querySelector('#sidebar-toggle');
+const mobileSidebar = window.matchMedia('(max-width: 1023px)');
+const setSidebarOpen = (isOpen) => {
+    sidebar?.classList.toggle('-translate-x-full', !isOpen);
+    backdrop?.classList.toggle('hidden', !isOpen);
+    sidebarToggle?.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    if (sidebar) sidebar.inert = mobileSidebar.matches && !isOpen;
+    if (isOpen) sidebar?.focus({ preventScroll: true });
 };
 
-document.querySelector('#sidebar-toggle')?.addEventListener('click', toggleSidebar);
-backdrop?.addEventListener('click', toggleSidebar);
+sidebarToggle?.addEventListener('click', () => {
+    setSidebarOpen(sidebar?.classList.contains('-translate-x-full') ?? false);
+});
+backdrop?.addEventListener('click', () => setSidebarOpen(false));
+sidebar?.querySelectorAll('a').forEach((link) => {
+    link.addEventListener('click', () => {
+        if (mobileSidebar.matches) setSidebarOpen(false);
+    });
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !sidebar?.classList.contains('-translate-x-full')) {
+        setSidebarOpen(false);
+        sidebarToggle?.focus();
+    }
+});
+if (sidebar) sidebar.inert = mobileSidebar.matches;
+mobileSidebar.addEventListener('change', () => {
+    setSidebarOpen(false);
+});
+
+document.querySelectorAll('[data-nav-group]').forEach((group) => {
+    const button = group.querySelector('[data-nav-group-toggle]');
+    const panel = group.querySelector('[data-nav-group-panel]');
+    const navigation = group.closest('[data-sidebar-navigation]');
+    const storageKey = `pizzeria-sidebar:${navigation?.dataset.navigationScope}:${group.dataset.navKey}`;
+    const active = group.dataset.active === 'true';
+    let stored = null;
+    try {
+        stored = localStorage.getItem(storageKey);
+    } catch {
+        stored = null;
+    }
+
+    const setExpanded = (expanded, persist = false) => {
+        group.dataset.expanded = expanded ? 'true' : 'false';
+        button?.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        panel?.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+        if (panel) panel.inert = !expanded;
+        if (persist) {
+            try {
+                localStorage.setItem(storageKey, expanded ? 'open' : 'closed');
+            } catch {
+                // Storage can be unavailable in private or restricted browser contexts.
+            }
+        }
+    };
+
+    setExpanded(active || stored === 'open');
+    button?.addEventListener('click', () => {
+        setExpanded(group.dataset.expanded !== 'true', true);
+    });
+});
 
 const orderHistoryModal = document.querySelector('[data-order-history-modal]');
 document.querySelector('[data-order-history-open]')?.addEventListener('click', () => {

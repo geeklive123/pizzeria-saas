@@ -78,6 +78,11 @@ class Order extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function cashSessionTransfers(): HasMany
+    {
+        return $this->hasMany(CashSessionTransfer::class);
+    }
+
     public function printAttempts(): HasMany
     {
         return $this->hasMany(PrintAttempt::class);

@@ -12,12 +12,14 @@ enum CashMovementType: string
     case ExpenseReversal = 'expense_reversal';
     case OwnerWithdrawal = 'owner_withdrawal';
     case Reversal = 'reversal';
+    case AdministrativeTransferIn = 'admin_transfer_in';
+    case AdministrativeTransferOut = 'admin_transfer_out';
 
     public function direction(): int
     {
         return match ($this) {
-            self::Opening, self::SaleCash, self::ManualIn, self::ExpenseReversal => 1,
-            self::ManualOut, self::ExpenseOut, self::OwnerWithdrawal, self::Reversal => -1,
+            self::Opening, self::SaleCash, self::ManualIn, self::ExpenseReversal, self::AdministrativeTransferIn => 1,
+            self::ManualOut, self::ExpenseOut, self::OwnerWithdrawal, self::Reversal, self::AdministrativeTransferOut => -1,
         };
     }
 }

@@ -68,6 +68,7 @@ enum MembershipRole: string
                 Permission::CreatePayments,
                 Permission::ApplyOrderDiscounts,
                 Permission::ReversePayments,
+                Permission::TransferCashSessionOperations,
                 Permission::ViewExpenses,
                 Permission::CreateExpenses,
                 Permission::ReverseExpenses,

@@ -15,76 +15,13 @@
 @endphp
 <div class="min-h-screen lg:flex">
     <div id="sidebar-backdrop" class="fixed inset-0 z-30 hidden bg-stone-950/40 lg:hidden"></div>
-    <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 flex w-64 -translate-x-full flex-col bg-[#141b2a] text-stone-100 shadow-2xl shadow-slate-950/20 transition-transform lg:static lg:translate-x-0">
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 flex w-64 max-w-[calc(100vw-2rem)] -translate-x-full flex-col bg-[#141b2a] text-stone-100 shadow-2xl shadow-slate-950/20 transition-transform lg:static lg:translate-x-0" tabindex="-1" aria-label="Menú principal">
         <div class="flex h-20 items-center gap-3 border-b border-white/10 px-6">
             <div class="grid size-10 place-items-center rounded-2xl bg-orange-500 text-xl shadow-lg shadow-orange-950/30">🍕</div>
             <div><p class="font-semibold leading-tight">{{ $activeCompany->name }}</p><p class="mt-1 text-xs text-stone-400">Gestión de pizzería</p></div>
         </div>
-        <nav class="flex-1 space-y-1 overflow-y-auto p-4 text-sm">
-            @if($membership->role !== \App\Enums\MembershipRole::Cashier)
-                @include('partials.nav-link', ['route' => 'dashboard', 'label' => 'Inicio', 'icon' => '⌂', 'pattern' => 'dashboard'])
-            @endif
-            @can('create', \App\Models\Order::class)
-                @include('partials.nav-link', ['route' => 'sales.create', 'label' => 'Venta', 'icon' => '＋', 'pattern' => 'sales.*'])
-            @endcan
-            @can('viewAny', \App\Models\Order::class)
-                @include('partials.nav-link', ['route' => 'orders.index', 'label' => 'Pedidos', 'icon' => '☷', 'pattern' => 'orders.*'])
-            @endcan
-            @can('viewAny', \App\Models\RestaurantTable::class)
-                @if($membership->role !== \App\Enums\MembershipRole::Cashier)
-                    @include('partials.nav-link', ['route' => 'tables.index', 'label' => 'Mesas', 'icon' => '▦', 'pattern' => 'tables.*'])
-                @endif
-            @endcan
-            @can('viewAny', \App\Models\KitchenDispatch::class)
-                @include('partials.nav-link', ['route' => 'kitchen.index', 'label' => 'Cocina', 'icon' => '♨', 'pattern' => 'kitchen.*'])
-            @endcan
-            @can('viewAny', \App\Models\CashSession::class)
-                @include('partials.nav-link', ['route' => 'cash.index', 'label' => 'Caja', 'icon' => 'Bs', 'pattern' => 'cash.*'])
-            @endcan
-            @if($membership->role !== \App\Enums\MembershipRole::Cashier)
-            @can('viewAny', \App\Models\Product::class)
-                @include('partials.nav-link', ['route' => 'categories.index', 'label' => 'Categorías', 'icon' => '≡', 'pattern' => 'categories.*'])
-                @include('partials.nav-link', ['route' => 'units.index', 'label' => 'Unidades', 'icon' => 'u', 'pattern' => 'units.*'])
-                @include('partials.nav-link', ['route' => 'products.index', 'label' => 'Productos', 'icon' => '◫', 'pattern' => 'products.*'])
-                @include('partials.nav-link', ['route' => 'promotions.index', 'label' => 'Promociones', 'icon' => '%', 'pattern' => 'promotions.*'])
-                @include('partials.nav-link', ['route' => 'ingredients.index', 'label' => 'Ingredientes', 'icon' => '◇', 'pattern' => 'ingredients.*'])
-            @endcan
-            @can('viewAny', \App\Models\Recipe::class)
-                @include('partials.nav-link', ['route' => 'recipes.index', 'label' => 'Recetas', 'icon' => '≡', 'pattern' => 'recipes.*'])
-            @endcan
-            @endif
-            @can('viewAny', \App\Models\InventoryItem::class)
-                @include('partials.nav-link', ['route' => 'inventory.index', 'label' => 'Inventario', 'icon' => '▦', 'pattern' => 'inventory.*'])
-            @endcan
-            @can('viewAny', \App\Models\Preparation::class)
-                @include('partials.nav-link', ['route' => 'preparations.index', 'label' => 'Preparaciones', 'icon' => 'P', 'pattern' => 'preparations.*'])
-            @endcan
-            @if($membership->role !== \App\Enums\MembershipRole::Cashier)
-            @can('viewAny', \App\Models\Purchase::class)
-                @include('partials.nav-link', ['route' => 'purchases.index', 'label' => 'Compras', 'icon' => '↓', 'pattern' => 'purchases.*'])
-            @endcan
-            @can('viewAny', \App\Models\Expense::class)
-                @include('partials.nav-link', ['route' => 'expenses.index', 'label' => 'Gastos', 'icon' => '−', 'pattern' => 'expenses.*'])
-            @endcan
-            @can('viewAny', \App\Models\Supplier::class)
-                @include('partials.nav-link', ['route' => 'suppliers.index', 'label' => 'Proveedores', 'icon' => '◇', 'pattern' => 'suppliers.*'])
-            @endcan
-            @can('viewAny', \App\Models\ExpenseCategory::class)
-                @include('partials.nav-link', ['route' => 'expense-categories.index', 'label' => 'Categorías de gasto', 'icon' => '≡', 'pattern' => 'expense-categories.*'])
-            @endcan
-            @can('viewAny', \App\Models\Membership::class)
-                @include('partials.nav-link', ['route' => 'memberships.index', 'label' => 'Usuarios', 'icon' => '◎', 'pattern' => 'memberships.*'])
-            @endcan
-            @can('update', $activeCompany)
-                @include('partials.nav-link', ['route' => 'settings.edit', 'label' => 'Configuración', 'icon' => '⚙', 'pattern' => 'settings.*'])
-            @endcan
-            @endif
-            @can('reports.financial')
-                @include('partials.nav-link', ['route' => 'reports.index', 'label' => 'Reportes', 'icon' => '▥', 'pattern' => 'reports.*'])
-            @elsecan('reports.view')
-                @include('partials.nav-link', ['route' => 'reports.sales', 'label' => 'Reportes', 'icon' => '▥', 'pattern' => 'reports.*'])
-            @endcan
-            <div class="my-4 border-t border-white/10"></div>
+        <nav class="flex-1 overflow-x-hidden overflow-y-auto px-3 py-4 text-sm" aria-label="Navegación principal">
+            @include('partials.sidebar-navigation')
         </nav>
         <div class="space-y-2 border-t border-white/10 p-4 text-xs text-stone-400">
             <div class="flex items-center gap-2" data-print-agent-status>
@@ -99,7 +36,7 @@
     <div class="min-w-0 flex-1">
         <header class="sticky top-0 z-20 flex min-h-20 items-center justify-between border-b border-stone-200 bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-8">
             <div class="flex min-w-0 items-center gap-3">
-                <button id="sidebar-toggle" type="button" class="btn-secondary px-3 lg:hidden" aria-label="Abrir menú">☰</button>
+                <button id="sidebar-toggle" type="button" class="btn-secondary px-3 lg:hidden" aria-label="Abrir menú" aria-controls="sidebar" aria-expanded="false">☰</button>
                 <div class="min-w-0"><p class="truncate text-lg font-semibold tracking-tight">@yield('heading', 'Inicio')</p><p class="truncate text-xs text-slate-500">@yield('header-subtitle', ($activeBranch?->name ?? 'Sucursal por seleccionar').' · '.$activeCompany->name)</p></div>
             </div>
             <div class="flex items-center gap-3">

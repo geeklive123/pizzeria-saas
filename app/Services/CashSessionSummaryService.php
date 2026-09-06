@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\CashClosingBalanceStatus;
 use App\Enums\CashMovementType;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
@@ -10,9 +11,36 @@ use App\Models\CashSession;
 use App\Models\Order;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
+use Illuminate\Support\Facades\DB;
 
 class CashSessionSummaryService
 {
+    public function persistDerivedSnapshot(CashSession $session): CashSession
+    {
+        $session = $session->fresh();
+        $summary = $this->calculate($session);
+        $expected = BigDecimal::of($summary['expected_cash'])->toScale(2, RoundingMode::HalfUp);
+        $values = ['expected_cash_amount' => (string) $expected, 'updated_at' => now()];
+
+        if ($session->counted_cash_amount !== null) {
+            $difference = BigDecimal::of($session->counted_cash_amount)
+                ->minus($expected)
+                ->toScale(2, RoundingMode::HalfUp);
+            $values['difference_amount'] = (string) $difference;
+            $values['closing_balance_status'] = ($difference->isZero()
+                ? CashClosingBalanceStatus::Balanced
+                : ($difference->isNegative()
+                    ? CashClosingBalanceStatus::Short
+                    : CashClosingBalanceStatus::Over))->value;
+        }
+
+        // Closed sessions reject ordinary model updates. This narrow update changes only
+        // their derived closing snapshot after an audited historical reassignment.
+        DB::table('cash_sessions')->where('id', $session->id)->update($values);
+
+        return $session->fresh();
+    }
+
     /** @return array<int, string> */
     public function movementBalances(CashSession $session): array
     {

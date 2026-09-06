@@ -34,6 +34,7 @@ enum Permission: string
     case CreatePayments = 'payments.create';
     case ApplyOrderDiscounts = 'orders.discounts.apply';
     case ReversePayments = 'payments.reverse';
+    case TransferCashSessionOperations = 'cash.session_operations.transfer';
     case ViewExpenses = 'expenses.view';
     case CreateExpenses = 'expenses.create';
     case ReverseExpenses = 'expenses.reverse';
@@ -51,7 +52,7 @@ enum Permission: string
             self::ViewOrders, self::ManageOrders, self::CancelOrders, self::ViewTables, self::ManageTables => PermissionModule::TablesAndOrders,
             self::ViewKitchen, self::ManageKitchen => PermissionModule::Kitchen,
             self::ViewCash, self::OpenCash, self::CloseCash, self::ManageCash, self::RegisterManualCashMovements,
-            self::AuthorizeCashWithdrawals => PermissionModule::Cash,
+            self::AuthorizeCashWithdrawals, self::TransferCashSessionOperations => PermissionModule::Cash,
             self::ViewCatalog, self::ManageCatalog, self::ViewRecipes, self::ManageRecipes => PermissionModule::CatalogAndRecipes,
             self::ViewInventory, self::ManageInventory => PermissionModule::Inventory,
             self::ViewPurchases, self::ManagePurchases => PermissionModule::Purchases,
@@ -107,6 +108,7 @@ enum Permission: string
             self::CreatePayments => 'Registrar cobros',
             self::ApplyOrderDiscounts => 'Aplicar descuentos manuales a pizzas elegibles',
             self::ReversePayments => 'Revertir o corregir cobros',
+            self::TransferCashSessionOperations => 'Transferir cobros entre sesiones de caja',
             self::ViewExpenses => 'Ver gastos',
             self::CreateExpenses => 'Registrar gastos',
             self::ReverseExpenses => 'Revertir gastos',

@@ -47,9 +47,20 @@
     .operation-card { @apply flex flex-col gap-2 rounded-2xl border border-stone-200 bg-stone-50/70 p-4; }
     .operation-card h3 { @apply text-base font-semibold; }
     .operation-card > p { @apply mb-2 text-xs text-stone-500; }
+    .sidebar-group { @apply border-b border-white/[0.06] pb-2; }
+    .sidebar-group:last-child { @apply border-b-0; }
+    .sidebar-group-toggle { @apply flex min-h-10 w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 transition hover:bg-white/5 hover:text-slate-200 focus-visible:ring-offset-slate-900; }
+    .sidebar-group-chevron { @apply shrink-0 text-lg leading-none transition-transform duration-200; }
+    .sidebar-group-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms ease; }
+    .sidebar-group[data-expanded='true'] .sidebar-group-panel { grid-template-rows: 1fr; }
+    .sidebar-group[data-expanded='true'] .sidebar-group-chevron { transform: rotate(90deg); }
     .sale-kpi { @apply grid min-h-32 grid-cols-[auto_1fr] items-start gap-x-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm; }
     .sale-kpi-icon { @apply grid size-11 shrink-0 place-items-center rounded-full text-xs font-bold shadow-sm; }
     .sale-kpi-label { @apply text-xs font-semibold text-slate-600; }
     .sale-kpi-value { @apply mt-1 text-2xl font-bold tracking-tight text-slate-950; }
     .sale-table-card { @apply flex min-h-64 flex-col rounded-2xl border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar-group-panel, .sidebar-group-chevron { transition: none; }
 }

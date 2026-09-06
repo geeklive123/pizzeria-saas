@@ -3,6 +3,7 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CashController;
 use App\Http\Controllers\CashRegisterController;
+use App\Http\Controllers\CashSessionTransferController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\ContextController;
@@ -60,6 +61,8 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');
             Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+            Route::get('/orders/{order}/cash-session-transfer', [CashSessionTransferController::class, 'create'])->name('orders.cash-session-transfer.create');
+            Route::post('/orders/{order}/cash-session-transfer', [CashSessionTransferController::class, 'store'])->name('orders.cash-session-transfer.store');
             Route::put('/orders/{order}/customer', [OrderController::class, 'updateCustomer'])->name('orders.customer.update');
             Route::post('/orders/{order}/items', [OrderController::class, 'addItem'])->name('orders.items.store');
             Route::post('/orders/{order}/promotions', [OrderController::class, 'addPromotion'])->name('orders.promotions.store');

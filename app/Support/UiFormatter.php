@@ -128,6 +128,8 @@ class UiFormatter
             CashMovementType::ExpenseReversal => 'Reversión de gasto',
             CashMovementType::OwnerWithdrawal => 'Retiro del propietario',
             CashMovementType::Reversal => 'Reversión',
+            CashMovementType::AdministrativeTransferIn => 'Transferencia administrativa recibida',
+            CashMovementType::AdministrativeTransferOut => 'Transferencia administrativa enviada',
         };
     }
 

@@ -7,6 +7,9 @@
 @section('content')
 @if($order->status === \App\Enums\OrderStatus::Paid)
     <div class='mb-4 flex flex-wrap justify-end gap-2'>
+        @can('transferPayments', $order)
+            <a class='btn-secondary' href='{{ route('orders.cash-session-transfer.create', $order->ulid) }}'>Transferir a otra cajera</a>
+        @endcan
         @can('reprintKitchen', $order)
             <form method='POST' action='{{ route('orders.reprint.kitchen', $order->ulid) }}'>@csrf<button class='btn-secondary'>Reimprimir cocina</button></form>
         @endcan
