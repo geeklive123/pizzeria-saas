@@ -60,7 +60,7 @@
                         @else
                             @can('reprintKitchen', $order)<form class="min-w-0 flex-1 sm:flex-none" method="POST" action="{{ route('orders.reprint.kitchen', $order->ulid) }}">@csrf<button class="inline-flex min-h-9 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"><span aria-hidden="true">&#9636;</span>Reimprimir</button></form>@endcan
                         @endcan
-                        <details class="relative z-20 shrink-0">
+                        <details class="relative z-20 shrink-0" data-paid-order-menu>
                             <summary class="grid size-9 cursor-pointer list-none place-items-center rounded-lg border border-slate-200 bg-white text-lg font-bold leading-none text-slate-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500" aria-label="Más acciones" title="Más acciones"><span class="text-lg leading-none text-slate-700" aria-hidden="true">&hellip;</span></summary>
                             <div class="absolute right-0 top-full z-30 mt-1 w-60 max-w-[calc(100vw-2rem)] rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
                                 @can('reprintKitchen', $order)<form method="POST" action="{{ route('orders.reprint.kitchen', $order->ulid) }}">@csrf<button class="w-full whitespace-nowrap rounded-lg px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Reimprimir cocina</button></form>@endcan
@@ -77,3 +77,29 @@
     </div>
     @if ($paidOrders->hasPages())<div class="border-t border-slate-100 p-4">{{ $paidOrders->links() }}</div>@endif
 </section>
+
+<script>
+    (() => {
+        const menus = [...document.querySelectorAll('[data-paid-order-menu]')];
+        let openMenu = null;
+
+        menus.forEach((menu) => menu.addEventListener('toggle', () => {
+            if (! menu.open) {
+                if (openMenu === menu) openMenu = null;
+
+                return;
+            }
+
+            if (openMenu && openMenu !== menu) openMenu.open = false;
+            openMenu = menu;
+        }));
+
+        document.addEventListener('click', (event) => {
+            if (openMenu && ! openMenu.contains(event.target)) openMenu.open = false;
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && openMenu) openMenu.open = false;
+        });
+    })();
+</script>
