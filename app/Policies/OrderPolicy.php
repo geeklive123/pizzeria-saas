@@ -6,11 +6,15 @@ use App\Enums\MembershipRole;
 use App\Enums\Permission;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\PaidOrderHistoryService;
 use App\Support\CompanyContext;
 
 class OrderPolicy
 {
-    public function __construct(private readonly CompanyContext $context) {}
+    public function __construct(
+        private readonly CompanyContext $context,
+        private readonly PaidOrderHistoryService $paidHistory,
+    ) {}
 
     public function viewAny(User $user): bool
     {
@@ -19,7 +23,8 @@ class OrderPolicy
 
     public function view(User $user, Order $order): bool
     {
-        return $user->canForCompany(Permission::ViewOrders, $order->company_id);
+        return $user->canForCompany(Permission::ViewOrders, $order->company_id)
+            && $this->paidHistory->allows($user, $order);
     }
 
     public function create(User $user): bool
@@ -39,13 +44,15 @@ class OrderPolicy
 
     public function reprintKitchen(User $user, Order $order): bool
     {
-        return $user->canForCompany(Permission::ManageOrders, $order->company_id)
-            || $user->canForCompany(Permission::ManageKitchen, $order->company_id);
+        return ($user->canForCompany(Permission::ManageOrders, $order->company_id)
+            || $user->canForCompany(Permission::ManageKitchen, $order->company_id))
+            && $this->paidHistory->allows($user, $order);
     }
 
     public function reprintCustomerTicket(User $user, Order $order): bool
     {
-        return $user->canForCompany(Permission::CreatePayments, $order->company_id);
+        return $user->canForCompany(Permission::CreatePayments, $order->company_id)
+            && $this->paidHistory->allows($user, $order);
     }
 
     public function transferPayments(User $user, Order $order): bool

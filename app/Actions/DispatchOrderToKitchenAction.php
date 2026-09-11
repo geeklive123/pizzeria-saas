@@ -26,6 +26,7 @@ class DispatchOrderToKitchenAction
         private readonly CompanyAccessService $access,
         private readonly OrderFinancialService $financials,
         private readonly OrderTotalsService $totals,
+        private readonly NextOperationalOrderNumberAction $numbers,
     ) {}
 
     public function execute(Order $order, User $user, int|string|null $discountPercentage = null): ?KitchenDispatch
@@ -56,6 +57,12 @@ class DispatchOrderToKitchenAction
             }
             if (filled($discountPercentage) && BigDecimal::of($discountPercentage)->isGreaterThan(0)) {
                 $this->access->ensure($user, $order->company, Permission::ApplyOrderDiscounts);
+            }
+
+            if ($order->operational_number === null) {
+                $order->forceFill([
+                    'operational_number' => $this->numbers->execute($order->company, $order->branch),
+                ])->save();
             }
 
             $sequence = ((int) $order->kitchenDispatches()->max('sequence_number')) + 1;

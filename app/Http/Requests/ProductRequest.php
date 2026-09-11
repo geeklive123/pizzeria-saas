@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Support\CompanyContext;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class ProductRequest extends FormRequest
 {
@@ -20,6 +21,7 @@ class ProductRequest extends FormRequest
         $variants = collect($this->input('variants', []))->map(function ($variant): array {
             $variant['is_active'] = isset($variant['is_active']);
             $variant['requires_preparation'] = isset($variant['requires_preparation']);
+            $variant['track_stock'] = isset($variant['track_stock']);
 
             return $variant;
         })->all();
@@ -44,8 +46,42 @@ class ProductRequest extends FormRequest
             'variants.*.sku' => ['nullable', 'string', 'max:255'],
             'variants.*.price' => ['required', 'decimal:0,2', 'gte:0'],
             'variants.*.requires_preparation' => ['required', 'boolean'],
+            'variants.*.track_stock' => ['required', 'boolean'],
+            'variants.*.inventory_unit_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('units', 'id')->where('company_id', $company->getKey()),
+            ],
             'variants.*.is_active' => ['required', 'boolean'],
             'variants.*.sort_order' => ['required', 'integer', 'min:0'],
+        ];
+    }
+
+    /** @return array<int, callable> */
+    public function after(): array
+    {
+        return [
+            function (Validator $validator): void {
+                foreach ($this->input('variants', []) as $index => $variant) {
+                    if (! ($variant['track_stock'] ?? false)) {
+                        continue;
+                    }
+
+                    if ($variant['requires_preparation'] ?? false) {
+                        $validator->errors()->add(
+                            "variants.{$index}.track_stock",
+                            'El control de stock directo solo aplica a variantes que no van a cocina.',
+                        );
+                    }
+
+                    if (blank($variant['inventory_unit_id'] ?? null)) {
+                        $validator->errors()->add(
+                            "variants.{$index}.inventory_unit_id",
+                            'Selecciona la unidad usada para controlar el stock.',
+                        );
+                    }
+                }
+            },
         ];
     }
 

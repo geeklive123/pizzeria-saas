@@ -7,6 +7,7 @@ use App\Enums\ProductType;
 use App\Http\Requests\ProductRequest;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\Unit;
 use App\Services\SellableAvailabilityService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -18,7 +19,7 @@ class ProductController extends Controller
     {
         Gate::authorize('viewAny', Product::class);
         $products = Product::query()->forCompany($this->company())->whereDoesntHave('variants.promotion')
-            ->with(['category', 'variants.recipe'])->orderBy('name')->paginate(15);
+            ->with(['category', 'variants.recipe', 'variants.inventoryItem'])->orderBy('name')->paginate(15);
         $products->getCollection()->each(function (Product $product) use ($availability): void {
             $product->variants->each(fn ($variant) => $variant->setAttribute(
                 'sellable_availability',
@@ -54,7 +55,7 @@ class ProductController extends Controller
         $model = $this->find($product);
         Gate::authorize('update', $model);
 
-        return $this->form($model->load('variants'));
+        return $this->form($model->load('variants.inventoryItem'));
     }
 
     public function update(ProductRequest $request, string $product, SaveProductAction $action): RedirectResponse
@@ -70,8 +71,26 @@ class ProductController extends Controller
     {
         $categories = Category::query()->forCompany($this->company())->where('is_active', true)->orderBy('sort_order')->get();
         $types = ProductType::cases();
+        $units = Unit::query()->forCompany($this->company())->where('is_active', true)->orderBy('name')->get();
+        $variantRows = $product->exists
+            ? $product->variants->sortBy('sort_order')->map(fn ($variant): array => [
+                ...$variant->toArray(),
+                'track_stock' => $variant->inventoryItem !== null,
+                'inventory_unit_id' => $variant->inventoryItem?->unit_id,
+                'stock_control_locked' => $variant->inventoryItem !== null,
+            ])->values()->all()
+            : [[
+                'name' => '',
+                'sku' => '',
+                'price' => '0.00',
+                'requires_preparation' => true,
+                'track_stock' => false,
+                'inventory_unit_id' => null,
+                'is_active' => true,
+                'sort_order' => 0,
+            ]];
 
-        return view('products.form', compact('product', 'categories', 'types'));
+        return view('products.form', compact('product', 'categories', 'types', 'units', 'variantRows'));
     }
 
     private function find(string $ulid): Product

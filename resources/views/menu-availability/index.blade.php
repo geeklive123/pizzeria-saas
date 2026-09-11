@@ -1,11 +1,11 @@
 @extends('layouts.app')
-@section('title', 'Menú y disponibilidad')
-@section('heading', 'Menú y disponibilidad')
+@section('title', 'Menú')
+@section('heading', 'Menú')
 @section('content')
 <div class="mx-auto min-w-0 max-w-[1500px]" data-menu-browser>
     <div class="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-            <h1 class="text-3xl font-bold tracking-tight text-slate-950">Menú y disponibilidad</h1>
+            <h1 class="text-3xl font-bold tracking-tight text-slate-950">Menú</h1>
             <p class="mt-1 text-sm text-slate-600">Consulta qué productos están disponibles y qué falta para prepararlos.</p>
         </div>
         <label class="relative block w-full xl:max-w-sm" for="menu-search">

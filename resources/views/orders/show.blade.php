@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', $order->formattedNumber())
+@section('title', $order->formattedOperationalNumber())
 @section('heading', 'Venta')
 @section('main-class', '!max-w-none')
 
@@ -37,7 +37,7 @@
                 <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <h1 class="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
                         {{ str($order->restaurantTable?->name ?? 'Para llevar')->ucfirst() }}
-                        <span class="text-orange-600">· {{ $order->formattedNumber() }}</span>
+                        <span class="text-orange-600">· {{ $order->formattedOperationalNumber() }}</span>
                     </h1>
                     <span class="rounded-full px-3 py-1 text-xs font-bold tracking-wide {{ $accountStatusClasses }}">{{ $accountStatus }}</span>
                 </div>
@@ -352,7 +352,8 @@
                                     </button>
                                     @continue
                                 @endif
-                                @php($available = (int) $variant->sellable_availability->availableQuantity)
+                                @php($untracked = $variant->sellable_availability->mode === 'untracked')
+                                @php($available = $untracked || \Brick\Math\BigDecimal::of($variant->sellable_availability->availableQuantity)->isGreaterThan(0))
                                 <form method="POST" action="{{ route('orders.items.store', $order->ulid) }}" class="flex items-center justify-between gap-3 rounded-xl border border-stone-200 p-3">
                                     @csrf
                                     <input type="hidden" name="variant" value="{{ $variant->ulid }}">
@@ -360,9 +361,9 @@
                                     <div>
                                         <p class="font-medium">{{ $variant->name }}</p>
                                         <p class="text-sm text-orange-700">{{ \App\Support\UiFormatter::money($variant->price) }}</p>
-                                        <p class="text-xs {{ $available > 0 ? 'text-emerald-700' : 'text-red-700' }}">{{ $available > 0 ? 'Disponible: '.$available : 'AGOTADO' }}</p>
+                                        <p class="text-xs {{ $available ? 'text-emerald-700' : 'text-red-700' }}">{{ $untracked ? 'Sin control de stock' : ($available ? 'Disponible: '.\App\Support\UiFormatter::inputQuantity($variant->sellable_availability->availableQuantity) : 'AGOTADO') }}</p>
                                     </div>
-                                    <button class="btn-primary size-12 px-0 text-xl" @disabled($available <= 0)>+</button>
+                                    <button class="btn-primary size-12 px-0 text-xl" @disabled(! $available)>+</button>
                                 </form>
                             @endforeach
                         </div>

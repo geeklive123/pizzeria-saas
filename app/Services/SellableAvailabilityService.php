@@ -52,6 +52,10 @@ class SellableAvailabilityService
             return new SellableAvailabilityResult('0.000', 'recipe_pending');
         }
 
+        if (! $variant->requires_preparation && ! $variant->inventoryItem) {
+            return new SellableAvailabilityResult('0.000', 'untracked');
+        }
+
         $stock = $variant->inventoryItem?->inventoryStocks
             ->firstWhere('branch_id', $branch->getKey());
         $batches = $variant->inventoryItem?->inventoryBatches

@@ -48,7 +48,7 @@ class MenuAvailabilityTest extends TestCase
             $this->actingInContext($user, $company, $branch)
                 ->get(route('menu-availability.index'))
                 ->assertOk()
-                ->assertSee('Menú y disponibilidad')
+                ->assertSee('Menú')
                 ->assertSee('href="'.route('menu-availability.index').'"', false);
         }
 

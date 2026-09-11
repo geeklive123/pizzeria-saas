@@ -18,8 +18,8 @@
     <label class="sm:col-span-2 flex items-center gap-3 rounded-xl bg-stone-50 p-4"><input class="size-5" type="checkbox" name="is_active" value="1" @checked(old('is_active', $product->is_active ?? true))><span><strong class="block text-sm">Producto activo</strong><span class="text-xs text-stone-500">Disponible para la operación y el catálogo.</span></span></label>
 </div></section>
 <section class="card p-5 sm:p-7"><div class="flex items-center justify-between gap-4"><div><h2 class="card-title">Variantes y precios</h2><p class="card-subtitle">Tamaños o presentaciones del producto.</p></div><button class="btn-secondary" type="button" data-add-row="variants">+ Agregar variante</button></div>
-<div id="variants-rows" class="mt-5 space-y-3" data-rows="variants">@php($variantRows = old('variants', $product->exists ? $product->variants->sortBy('sort_order')->values()->toArray() : [['name'=>'','sku'=>'','price'=>'0.00','requires_preparation'=>true,'is_active'=>true,'sort_order'=>0]]))@foreach($variantRows as $index => $variant)@include('products.variant-row', ['index'=>$index,'variant'=>$variant])@endforeach</div>
+<div id="variants-rows" class="mt-5 space-y-3" data-rows="variants">@foreach(old('variants', $variantRows) as $index => $variant)@include('products.variant-row', ['index'=>$index,'variant'=>$variant])@endforeach</div>
 </section>
 <div class="flex justify-end gap-3"><a class="btn-secondary" href="{{ route('products.index') }}">Cancelar</a><button class="btn-primary" type="submit">Guardar producto</button></div></form>
-<template id="variants-template">@include('products.variant-row', ['index'=>'__INDEX__','variant'=>['name'=>'','sku'=>'','price'=>'0.00','requires_preparation'=>true,'is_active'=>true,'sort_order'=>'__INDEX__']])</template>
+<template id="variants-template">@include('products.variant-row', ['index'=>'__INDEX__','variant'=>['name'=>'','sku'=>'','price'=>'0.00','requires_preparation'=>true,'track_stock'=>false,'inventory_unit_id'=>null,'is_active'=>true,'sort_order'=>'__INDEX__']])</template>
 @endsection

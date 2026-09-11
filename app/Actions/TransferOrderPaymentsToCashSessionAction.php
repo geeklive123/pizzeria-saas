@@ -152,7 +152,7 @@ class TransferOrderPaymentsToCashSessionAction
                         $destinationCashier,
                         $reason,
                         $payment,
-                        observation: 'Transferencia administrativa de '.$order->formattedNumber(),
+                        observation: 'Transferencia administrativa de '.$order->formattedOperationalNumber(),
                         authorizedBy: $authorizedBy,
                         idempotencyKey: 'cash-transfer-out-'.$payment->ulid.'-'.(string) Str::ulid(),
                     );
@@ -163,7 +163,7 @@ class TransferOrderPaymentsToCashSessionAction
                         $destinationCashier,
                         $reason,
                         $payment,
-                        observation: 'Transferencia administrativa de '.$order->formattedNumber(),
+                        observation: 'Transferencia administrativa de '.$order->formattedOperationalNumber(),
                         authorizedBy: $authorizedBy,
                         idempotencyKey: 'cash-transfer-in-'.$payment->ulid.'-'.(string) Str::ulid(),
                     );

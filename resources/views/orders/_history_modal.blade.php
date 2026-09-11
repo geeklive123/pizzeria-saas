@@ -3,7 +3,7 @@
         <header class="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-stone-200 bg-white px-5 py-4 sm:px-6">
             <div>
                 <h2 class="text-lg font-bold tracking-tight" id="order-history-title">HISTORIAL DE LA CUENTA</h2>
-                <p class="mt-1 text-sm text-slate-500">{{ str($order->restaurantTable?->name ?? 'Para llevar')->ucfirst() }} · <span class="font-semibold text-orange-600">{{ $order->formattedNumber() }}</span></p>
+                <p class="mt-1 text-sm text-slate-500">{{ str($order->restaurantTable?->name ?? 'Para llevar')->ucfirst() }} · <span class="font-semibold text-orange-600">{{ $order->formattedOperationalNumber() }}</span></p>
             </div>
             <button class="grid size-10 shrink-0 place-items-center rounded-xl border border-stone-200 text-xl text-slate-500 hover:bg-stone-50 hover:text-slate-900" type="button" data-order-history-close aria-label="Cerrar historial">×</button>
         </header>

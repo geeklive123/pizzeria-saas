@@ -30,7 +30,7 @@ class ConsumeInventoryReservationAction
                 $reservation->quantity,
                 null,
                 $user,
-                reason: "Consumo de pedido {$item->order->formattedNumber()}",
+                reason: "Consumo de pedido {$item->order->formattedOperationalNumber()}",
                 referenceType: OrderItem::class,
                 referenceId: $item->getKey(),
                 metadata: ['inventory_reservation_id' => $reservation->getKey()],

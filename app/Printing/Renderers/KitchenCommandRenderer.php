@@ -28,7 +28,7 @@ class KitchenCommandRenderer
         $builder = (new EscPosDocumentBuilder)
             ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
             ->bold()->doubleSize()->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->doubleSize(false)
-            ->line('PEDIDO '.$order->formattedNumber())->bold(false)->line()
+            ->line('PEDIDO '.$order->formattedOperationalNumber())->bold(false)->line()
             ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
             ->line('Usuario: '.($dispatch->dispatchedBy?->name ?? '—'));
 
@@ -81,7 +81,7 @@ class KitchenCommandRenderer
         $builder = (new EscPosDocumentBuilder)
             ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
             ->bold()->doubleSize()->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->doubleSize(false)
-            ->line('PEDIDO '.$order->formattedNumber())->bold(false)->line()
+            ->line('PEDIDO '.$order->formattedOperationalNumber())->bold(false)->line()
             ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
             ->line('Usuario: '.$requestedBy->name);
 

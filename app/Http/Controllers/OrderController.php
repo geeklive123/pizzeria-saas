@@ -26,6 +26,7 @@ use App\Http\Requests\AddPromotionRequest;
 use App\Http\Requests\CancelOrderItemRequest;
 use App\Http\Requests\DispatchOrderRequest;
 use App\Http\Requests\OrderCustomerRequest;
+use App\Http\Requests\OrderHistoryFilterRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
@@ -39,6 +40,7 @@ use App\Services\OrderFinancialService;
 use App\Services\OrderHistoryService;
 use App\Services\OrderPaymentService;
 use App\Services\OrderPosCatalogService;
+use App\Services\PaidOrderHistoryService;
 use DomainException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Gate;
@@ -47,18 +49,22 @@ use Illuminate\View\View;
 
 class OrderController extends Controller
 {
-    public function index(): View
+    public function index(OrderHistoryFilterRequest $request, PaidOrderHistoryService $history): View
     {
         Gate::authorize('viewAny', Order::class);
+        $canFilterPaidOrders = $history->canFilter($request->user(), $this->company());
+        $paidOrderRange = $history->range($request->user(), $this->company(), $request->validated());
         $orders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Open, OrderStatus::ReadyForPayment])
             ->with(['restaurantTable', 'createdBy'])->latest('opened_at')->get();
         $paidOrders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->where('status', OrderStatus::Paid)
+            ->whereBetween('closed_at', [$paidOrderRange->fromUtc(), $paidOrderRange->toUtc()])
             ->with(['restaurantTable', 'createdBy'])->latest('closed_at')
-            ->paginate(50, ['*'], 'paid_page');
+            ->paginate(50, ['*'], 'paid_page')
+            ->appends($canFilterPaidOrders ? $paidOrderRange->query() : []);
 
-        return view('orders.index', compact('orders', 'paidOrders'));
+        return view('orders.index', compact('orders', 'paidOrders', 'paidOrderRange', 'canFilterPaidOrders'));
     }
 
     public function createTakeaway(): View
@@ -73,7 +79,7 @@ class OrderController extends Controller
         Gate::authorize('create', Order::class);
         $order = $action->execute($this->company(), $this->branch(), $request->user(), $request->validated());
 
-        return redirect()->route('orders.show', $order->ulid)->with('success', "Pedido {$order->formattedNumber()} creado.");
+        return redirect()->route('orders.show', $order->ulid)->with('success', 'Pedido creado.');
     }
 
     public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, OrderHistoryService $history): View

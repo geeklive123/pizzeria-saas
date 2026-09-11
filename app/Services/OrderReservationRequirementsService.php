@@ -62,6 +62,10 @@ class OrderReservationRequirementsService
 
         $inventoryItem = $variant->inventoryItem;
 
+        if (! $inventoryItem && ! $variant->requires_preparation) {
+            return collect();
+        }
+
         if (! $inventoryItem || ! $inventoryItem->is_active) {
             throw new DomainException('La variante no tiene una receta activa ni un artículo de venta directa disponible.');
         }

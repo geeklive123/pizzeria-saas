@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
@@ -18,6 +19,7 @@ use App\Enums\MembershipRole;
 use App\Enums\OrderItemStatus;
 use App\Enums\ProductType;
 use App\Enums\UnitType;
+use App\Exceptions\InsufficientStockException;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Ingredient;
@@ -25,11 +27,14 @@ use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\InventoryStock;
 use App\Models\Membership;
+use App\Models\Order;
+use App\Models\OrderSequence;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
+use App\Printing\Renderers\KitchenCommandRenderer;
 use App\Services\InventoryAvailabilityService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -63,6 +68,105 @@ class KitchenOperationsTest extends TestCase
         $this->assertDatabaseCount('kitchen_dispatches', 2);
         $this->assertSame(OrderItemStatus::Sent, $firstItem->refresh()->status);
         $this->assertSame(OrderItemStatus::Sent, $secondItem->refresh()->status);
+    }
+
+    public function test_operational_number_is_assigned_on_first_dispatch_and_reused_by_later_commands(): void
+    {
+        [$company, $branch, $owner, $unit] = $this->context();
+        [$variant] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza numerada');
+
+        $cancelled = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $cancelledInternalNumber = $cancelled->order_number;
+        app(CancelOrderAction::class)->execute($cancelled, $owner);
+
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
+        $internalNumber = $order->order_number;
+
+        $this->assertNull($cancelled->refresh()->operational_number);
+        $this->assertNull($order->operational_number);
+        $this->assertSame($cancelledInternalNumber + 1, $internalNumber);
+        $this->assertSame('Sin comanda', $cancelled->formattedNumber());
+        $this->assertSame('Sin comanda', $cancelled->formattedOperationalNumber());
+
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        $firstDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        $this->assertSame(1, $order->refresh()->operational_number);
+        $this->assertSame($internalNumber, $order->order_number);
+        $this->assertSame('#000001', $order->formattedNumber());
+        $this->assertSame('#000001', $order->formattedOperationalNumber());
+        $this->assertStringContainsString('PEDIDO #000001', app(KitchenCommandRenderer::class)->render($firstDispatch)->plainText);
+
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        $secondDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        $this->assertSame(2, $secondDispatch->sequence_number);
+        $this->assertSame(1, $order->refresh()->operational_number);
+        $this->assertStringContainsString('PEDIDO #000001', app(KitchenCommandRenderer::class)->render($secondDispatch)->plainText);
+        $this->assertStringContainsString('PEDIDO #000001', app(KitchenCommandRenderer::class)->render($secondDispatch, true)->plainText);
+
+        $nextOrder = $this->kitchenTableOrder($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($nextOrder, $variant, '1.000', $owner);
+        app(DispatchOrderToKitchenAction::class)->execute($nextOrder, $owner);
+
+        $this->assertSame(2, $nextOrder->refresh()->operational_number);
+        $this->assertSame(3, Order::query()->count());
+    }
+
+    public function test_failed_first_dispatch_does_not_consume_operational_number_or_leave_a_ghost_dispatch(): void
+    {
+        [$company, $branch, $owner, $unit] = $this->context();
+        [$variant, $dough] = $this->preparedVariant($company, $branch, $owner, $unit, 'Pizza con Masa');
+        $order = $this->kitchenTableOrder($company, $branch, $owner);
+
+        $sequence = OrderSequence::query()
+            ->where('company_id', $company->id)
+            ->where('branch_id', $branch->id)
+            ->firstOrFail();
+        $sequence->forceFill(['next_operational_number' => 99])->save();
+
+        $item = app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+
+        app(ApplyInventoryMovementAction::class)->execute(
+            $company,
+            $branch,
+            $dough,
+            InventoryMovementType::AdjustmentOut,
+            '10.000',
+            null,
+            $owner,
+            reason: 'Provocar falta de Masa durante el despacho',
+        );
+
+        try {
+            app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+            $this->fail('El despacho debió fallar por falta de Masa.');
+        } catch (InsufficientStockException) {
+            $this->assertNull($order->refresh()->operational_number);
+        }
+
+        $this->assertSame(99, $sequence->refresh()->next_operational_number);
+        $this->assertSame(OrderItemStatus::Draft, $item->refresh()->status);
+        $this->assertSame(InventoryReservationStatus::Reserved, $item->reservations()->firstOrFail()->status);
+        $this->assertDatabaseCount('kitchen_dispatches', 0);
+        $this->assertDatabaseCount('kitchen_dispatch_items', 0);
+
+        $this->stock($company, $branch, $dough, $owner, '2.000');
+
+        $firstDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        $this->assertSame(99, $order->refresh()->operational_number);
+        $this->assertSame(100, $sequence->refresh()->next_operational_number);
+        $this->assertSame(1, $firstDispatch->sequence_number);
+        $this->assertDatabaseCount('kitchen_dispatches', 1);
+        $this->assertDatabaseCount('kitchen_dispatch_items', 1);
+
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        $secondDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        $this->assertSame(2, $secondDispatch->sequence_number);
+        $this->assertSame(99, $order->refresh()->operational_number);
+        $this->assertSame(100, $sequence->refresh()->next_operational_number);
     }
 
     public function test_prepared_item_consumes_reserved_inventory_once_when_preparation_starts(): void

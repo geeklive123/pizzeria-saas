@@ -377,6 +377,7 @@ class ThermalPrintingTest extends TestCase
         ]);
         $text = $this->decode((string) base64_decode($attempt->document_payload, true));
         $this->assertStringContainsString('PARA LLEVAR', $text);
+        $this->assertStringContainsString('PEDIDO Histórico · ref. interna ', $text);
         $this->assertStringContainsString('REIMPRESION HISTORICA', $text);
     }
 
@@ -496,6 +497,8 @@ class ThermalPrintingTest extends TestCase
         ]);
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertSame($table->id, $order->restaurant_table_id);
+        $text = $this->decode((string) base64_decode($attempts->last()->document_payload, true));
+        $this->assertStringContainsString('PEDIDO Histórico · ref. interna ', $text);
     }
 
     public function test_owner_and_admin_configure_branch_printers_while_waiter_cannot_and_test_uses_selected_printer_and_copies(): void

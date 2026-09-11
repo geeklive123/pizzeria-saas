@@ -53,7 +53,7 @@ class ReportExportService
             $orders = $orders->filter(fn ($order) => $order->payments->isNotEmpty());
         }
 
-        return [['Pedido', 'Fecha', 'Tipo', 'Total', 'Métodos'], $orders->map(fn ($order) => [$order->formattedNumber(), $order->closed_at->setTimezone($range->timezone)->format('Y-m-d H:i'), $order->type->value, $order->total, $order->payments->map(fn ($payment) => $payment->method->value)->unique()->join(' + ')])];
+        return [['Pedido', 'Fecha', 'Tipo', 'Total', 'Métodos'], $orders->map(fn ($order) => [$order->formattedOperationalNumber(), $order->closed_at->setTimezone($range->timezone)->format('Y-m-d H:i'), $order->type->value, $order->total, $order->payments->map(fn ($payment) => $payment->method->value)->unique()->join(' + ')])];
     }
 
     private function expenseRows(Company $company, Branch $branch, ReportDateRange $range, array $filters): array

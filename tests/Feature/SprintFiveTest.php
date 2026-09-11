@@ -83,7 +83,9 @@ class SprintFiveTest extends TestCase
         $this->assertNull($first->restaurant_table_id);
         $this->assertSame(OrderType::Takeaway, $first->type);
         $this->assertSame($first->order_number + 1, $second->order_number);
-        $this->assertSame('#000001', $first->formattedNumber());
+        $this->assertNull($first->operational_number);
+        $this->assertSame('Sin comanda', $first->formattedNumber());
+        $this->assertSame('Sin comanda', $first->formattedOperationalNumber());
     }
 
     public function test_direct_product_reserves_inventory_without_changing_physical_stock_and_snapshots_price(): void

@@ -115,7 +115,7 @@ class MenuAvailabilityService
     {
         $result = $this->availability->calculate($variant, $branch);
 
-        if ($result->mode === 'recipe_pending' || ($result->mode === 'direct' && ! $variant->inventoryItem)) {
+        if (in_array($result->mode, ['recipe_pending', 'untracked'], true)) {
             return new MenuAvailabilityVariantData(
                 $variant->name,
                 $variant->price,

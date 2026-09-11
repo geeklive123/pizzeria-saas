@@ -79,7 +79,7 @@ class RestaurantTableController extends Controller
             return back()->withErrors(['table' => $exception->getMessage()]);
         }
 
-        return redirect()->route('orders.show', $order->ulid)->with('success', "Cuenta {$order->formattedNumber()} abierta.");
+        return redirect()->route('orders.show', $order->ulid)->with('success', 'Cuenta abierta.');
     }
 
     private function table(string $ulid): RestaurantTable

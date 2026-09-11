@@ -31,7 +31,7 @@ class CustomerTicketRenderer
         $date = ($completedPayments->last()?->paid_at ?? now())->setTimezone(new DateTimeZone('America/La_Paz'));
         $builder = (new EscPosDocumentBuilder)
             ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
-            ->bold()->line('PEDIDO '.$order->formattedNumber())->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
+            ->bold()->line('PEDIDO '.$order->formattedOperationalNumber())->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
             ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
             ->line('Cajera: '.$cashier);
 
@@ -81,7 +81,7 @@ class CustomerTicketRenderer
         $date = ($payments->last()?->paid_at ?? $dispatch->settled_at ?? now())->setTimezone(new DateTimeZone('America/La_Paz'));
         $builder = (new EscPosDocumentBuilder)
             ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
-            ->bold()->line('PEDIDO '.$order->formattedNumber().' · TANDA #'.$dispatch->sequence_number)
+            ->bold()->line('PEDIDO '.$order->formattedOperationalNumber().' · TANDA #'.$dispatch->sequence_number)
             ->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
             ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
             ->line('Cajera: '.($payments->last()?->receivedBy?->name ?? $requestedBy->name));

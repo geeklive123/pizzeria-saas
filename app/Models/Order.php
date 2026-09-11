@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['company_id', 'branch_id', 'restaurant_table_id', 'active_restaurant_table_id', 'order_number', 'type', 'charge_mode', 'status', 'customer_name', 'customer_phone', 'notes', 'subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'opened_at', 'closed_at', 'created_by'])]
+#[Fillable(['company_id', 'branch_id', 'restaurant_table_id', 'active_restaurant_table_id', 'order_number', 'operational_number', 'type', 'charge_mode', 'status', 'customer_name', 'customer_phone', 'notes', 'subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'opened_at', 'closed_at', 'created_by'])]
 class Order extends Model
 {
     use BelongsToCompany, HasFactory, HasUlids;
@@ -95,6 +95,28 @@ class Order extends Model
 
     public function formattedNumber(): string
     {
-        return '#'.str_pad((string) $this->order_number, 6, '0', STR_PAD_LEFT);
+        if ($this->operational_number === null) {
+            return 'Sin comanda';
+        }
+
+        return $this->formatNumber($this->operational_number);
+    }
+
+    public function formattedOperationalNumber(): string
+    {
+        if ($this->operational_number !== null) {
+            return $this->formattedNumber();
+        }
+
+        if ($this->status === OrderStatus::Paid) {
+            return 'Histórico · ref. interna '.$this->formatNumber($this->order_number);
+        }
+
+        return $this->formattedNumber();
+    }
+
+    private function formatNumber(int|string $number): string
+    {
+        return '#'.str_pad((string) $number, 6, '0', STR_PAD_LEFT);
     }
 }
