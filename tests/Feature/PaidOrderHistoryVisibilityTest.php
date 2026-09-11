@@ -34,8 +34,9 @@ class PaidOrderHistoryVisibilityTest extends TestCase
         $this->actingInContext($cashier, $company, $branch)
             ->get(route('orders.index', ['preset' => 'yesterday', 'date_from' => '2020-01-01', 'date_to' => '2030-01-01']))
             ->assertOk()
-            ->assertSee($today->formattedOperationalNumber())
-            ->assertDontSee($yesterday->formattedOperationalNumber())
+            ->assertSee($this->historicalNumber($today))
+            ->assertDontSee($this->historicalNumber($yesterday))
+            ->assertSee('Venta anterior')
             ->assertSee('Mostrando pedidos pagados de hoy')
             ->assertDontSee('Rango personalizado');
 
@@ -54,8 +55,9 @@ class PaidOrderHistoryVisibilityTest extends TestCase
         $this->actingInContext($waiter, $company, $branch)
             ->get(route('orders.index', ['preset' => 'month']))
             ->assertOk()
-            ->assertSee($today->formattedOperationalNumber())
-            ->assertDontSee($yesterday->formattedOperationalNumber())
+            ->assertSee($this->historicalNumber($today))
+            ->assertDontSee($this->historicalNumber($yesterday))
+            ->assertSee('Venta anterior')
             ->assertSee('Puedes consultar y reimprimir los pedidos pagados del día actual.');
     }
 
@@ -69,12 +71,12 @@ class PaidOrderHistoryVisibilityTest extends TestCase
         $older = $this->paidOrder($company, $branch, $owner, 'Anterior owner', '2026-08-30 10:00:00');
 
         $this->actingInContext($owner, $company, $branch)->get(route('orders.index', ['preset' => 'today']))
-            ->assertOk()->assertSee($today->formattedOperationalNumber())->assertDontSee($yesterday->formattedOperationalNumber());
+            ->assertOk()->assertSee($this->historicalNumber($today))->assertDontSee($this->historicalNumber($yesterday))->assertSee('Venta anterior');
         $this->actingInContext($owner, $company, $branch)->get(route('orders.index', ['preset' => 'yesterday']))
-            ->assertOk()->assertSee($yesterday->formattedOperationalNumber())->assertDontSee($today->formattedOperationalNumber());
+            ->assertOk()->assertSee($this->historicalNumber($yesterday))->assertDontSee($this->historicalNumber($today))->assertSee('Venta anterior');
         $this->actingInContext($owner, $company, $branch)->get(route('orders.index', ['preset' => 'week']))
-            ->assertOk()->assertSee($today->formattedOperationalNumber())->assertSee($yesterday->formattedOperationalNumber())
-            ->assertSee($week->formattedOperationalNumber())->assertDontSee($older->formattedOperationalNumber())
+            ->assertOk()->assertSee($this->historicalNumber($today))->assertSee($this->historicalNumber($yesterday))
+            ->assertSee($this->historicalNumber($week))->assertDontSee($this->historicalNumber($older))->assertSee('Venta anterior')
             ->assertSee('Rango personalizado')->assertSee('Creado por');
     }
 
@@ -87,7 +89,7 @@ class PaidOrderHistoryVisibilityTest extends TestCase
 
         $this->actingInContext($admin, $company, $branch)->get(route('orders.index', [
             'preset' => 'custom', 'date_from' => '2026-08-10', 'date_to' => '2026-08-16',
-        ]))->assertOk()->assertSee($included->formattedOperationalNumber())->assertDontSee($excluded->formattedOperationalNumber());
+        ]))->assertOk()->assertSee($this->historicalNumber($included))->assertDontSee($this->historicalNumber($excluded))->assertSee('Venta anterior');
 
         $this->actingInContext($admin, $company, $branch)->get(route('orders.index', [
             'preset' => 'custom', 'date_from' => '2026-08-20', 'date_to' => '2026-08-10',
@@ -157,6 +159,11 @@ class PaidOrderHistoryVisibilityTest extends TestCase
             'closed_at' => CarbonImmutable::parse($closedAt, 'America/La_Paz')->utc(),
             'created_by' => $user->id,
         ]);
+    }
+
+    private function historicalNumber(Order $order): string
+    {
+        return '#'.str_pad((string) $order->order_number, 6, '0', STR_PAD_LEFT);
     }
 
     private function actingInContext(User $user, Company $company, Branch $branch): static
