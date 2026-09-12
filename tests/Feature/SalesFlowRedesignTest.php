@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\FinalizePerBatchTableAction;
@@ -280,6 +281,48 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('9.000', $this->stock($branch, $inventory));
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertSame('Daniela', $order->customer_name);
+    }
+
+    public function test_takeaway_closes_when_a_later_draft_item_is_cancelled_after_the_dispatch_was_fully_paid(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $variant->forceFill(['price' => '112.00'])->save();
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner, ['customer_name' => 'Produccion']);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        $variant->forceFill(['price' => '13.00'])->save();
+        $cancelledItem = app(AddOrderItemAction::class)->execute($order->refresh(), $variant, '1.000', $owner);
+
+        $this->assertSame('125.00', $order->refresh()->total);
+        app(RegisterPaymentAction::class)->execute(
+            $order,
+            $session,
+            PaymentMethod::Qr,
+            '112.00',
+            $owner,
+            'paid-before-later-cancellation',
+            dispatch: $dispatch,
+        );
+
+        $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
+        $this->assertSame(OrderStatus::Open, $order->refresh()->status);
+
+        app(CancelOrderItemAction::class)->execute($cancelledItem->refresh(), $owner);
+
+        $this->assertSame('112.00', $order->refresh()->total);
+        $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order));
+        $this->assertSame(OrderStatus::Paid, $order->status);
+        $this->assertNotNull($order->closed_at);
+
+        $response = $this->actingAs($owner)
+            ->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
+            ->get(route('orders.index'))
+            ->assertOk();
+        $this->assertFalse($response->viewData('orders')->contains('id', $order->id));
     }
 
     public function test_discount_uses_only_pizza_base_and_server_ignores_client_totals(): void
