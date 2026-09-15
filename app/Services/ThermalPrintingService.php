@@ -71,6 +71,21 @@ class ThermalPrintingService
         );
     }
 
+    public function provisionalAccount(Order $order, User $user): PrintAttempt
+    {
+        $setting = $this->setting($order->company_id, $order->branch_id, PrinterPurpose::CustomerTicket);
+
+        return $this->enqueue(
+            $setting,
+            $this->ticketRenderer->renderProvisional($order, $user),
+            $user,
+            false,
+            null,
+            $order,
+            'provisional_account:'.$order->ulid.':'.Str::ulid(),
+        );
+    }
+
     public function dispatchTicket(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
     {
         $setting = $this->setting($dispatch->company_id, $dispatch->branch_id, PrinterPurpose::CustomerTicket);

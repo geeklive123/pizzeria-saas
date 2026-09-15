@@ -22,6 +22,13 @@ use DateTimeInterface;
 
 class UiFormatter
 {
+    public static function variantName(?string $name, ?string $sizeKey = null): string
+    {
+        return $sizeKey === 'familiar' || mb_strtolower(trim((string) $name)) === 'familiar'
+            ? 'Grande'
+            : (string) $name;
+    }
+
     public static function money(int|string|null $value): string
     {
         return 'Bs '.self::decimal($value ?? '0', 2);

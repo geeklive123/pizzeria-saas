@@ -37,7 +37,7 @@
                         <article class="rounded-2xl border border-stone-200 p-5">
                             <div class="flex items-start justify-between gap-3">
                                 <div>
-                                    <p class="font-semibold">{{ $variant->name }}</p>
+                                    <p class="font-semibold">{{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }}</p>
                                     <p class="mt-1 text-lg font-semibold text-orange-600">{{ \App\Support\UiFormatter::money($variant->price) }}</p>
                                     @if ($variant->recipe)
                                         <p class="mt-2 text-sm font-medium">Disponibilidad estimada: {{ \App\Support\UiFormatter::quantity($variant->sellable_availability->availableQuantity) }}</p>
@@ -90,7 +90,7 @@
     <div class="card grid gap-4 p-5 lg:grid-cols-2 xl:grid-cols-3">
         @forelse ($directVariants as $variant)
             <article class="rounded-2xl border border-stone-200 p-5">
-                <p class="font-semibold">{{ $variant->product->name }} · {{ $variant->name }}</p>
+                <p class="font-semibold">{{ $variant->product->name }} · {{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }}</p>
                 <p class="mt-1 text-lg font-semibold text-orange-600">{{ \App\Support\UiFormatter::money($variant->price) }}</p>
                 <p class="mt-2 text-sm font-medium">Disponibilidad: {{ \App\Support\UiFormatter::quantity($variant->sellable_availability->availableQuantity) }}</p>
                 <p class="mt-3 rounded-xl bg-stone-50 p-3 text-sm font-medium text-stone-600">Venta directa — no requiere receta</p>

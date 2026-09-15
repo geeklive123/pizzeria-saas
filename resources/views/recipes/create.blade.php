@@ -18,7 +18,7 @@
             <article class="rounded-2xl border border-stone-200 p-5">
                 <p class="text-xs font-medium uppercase tracking-wide text-stone-500">{{ $variant->product->category?->name ?: 'Producto preparado' }}</p>
                 <h2 class="mt-1 text-lg font-semibold">{{ $variant->product->name }}</h2>
-                <p class="text-sm text-stone-600">{{ $variant->name }} · {{ \App\Support\UiFormatter::money($variant->price) }}</p>
+                <p class="text-sm text-stone-600">{{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }} · {{ \App\Support\UiFormatter::money($variant->price) }}</p>
                 <a class="btn-primary mt-4 w-full" href="{{ route('recipes.edit', $variant->ulid) }}">Configurar receta</a>
             </article>
         @empty

@@ -121,21 +121,29 @@ class KitchenCommandRenderer
     {
         $quantity = UiFormatter::inputQuantity($item->quantity);
         if ($item->sections->isNotEmpty()) {
-            return $quantity.' x PIZZA '.mb_strtoupper($item->sections->first()->variant_name_snapshot);
+            return $quantity.' x PIZZA '.mb_strtoupper(UiFormatter::variantName($item->sections->first()->variant_name_snapshot, $item->configuration_snapshot['size_key'] ?? null));
         }
 
         if (($item->configuration_snapshot['type'] ?? null) === 'promotion') {
             return $quantity.' x '.mb_strtoupper($item->displayName());
         }
 
+        if (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
+            return $quantity.' x EXTRA '.mb_strtoupper($item->displayName());
+        }
+
         $product = mb_strtoupper($item->productVariant->product->name);
-        $variant = mb_strtoupper($item->productVariant->name);
+        $variant = mb_strtoupper(UiFormatter::variantName($item->productVariant->name, $item->productVariant->size_key));
 
         return $quantity.' x '.$product.($variant !== $product ? ' '.$variant : '');
     }
 
     private function modifiers(EscPosDocumentBuilder $builder, OrderItem $item, ModifierOptionType $type, string $heading, string $prefix): void
     {
+        if (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
+            return;
+        }
+
         $modifiers = $item->modifiers->where('type', $type);
         if ($modifiers->isEmpty()) {
             return;

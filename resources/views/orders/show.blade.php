@@ -48,6 +48,14 @@
                 @if($order->customer_name)<p class="mt-2 text-sm font-medium text-slate-600">Cliente: {{ $order->customer_name }}</p>@endif
             </div>
             <div class="flex flex-wrap gap-2 xl:justify-end">
+                @can('printAccount', $order)
+                    @if ($order->type === \App\Enums\OrderType::DineIn && in_array($order->status, [\App\Enums\OrderStatus::Open, \App\Enums\OrderStatus::ReadyForPayment], true) && $order->items->isNotEmpty())
+                        <form method="POST" action="{{ route('orders.account.print', $order->ulid) }}">
+                            @csrf
+                            <button class="btn-secondary border-orange-200 text-orange-700 max-sm:w-full">IMPRIMIR CUENTA</button>
+                        </form>
+                    @endif
+                @endcan
                 <button class="btn-secondary border-orange-200 text-orange-700 max-sm:w-full" type="button" data-order-history-open>
                     <svg class="mr-2 size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>
                     HISTORIAL
@@ -132,6 +140,9 @@
                     @if ($promotions->isNotEmpty())
                         <button class="btn-secondary" type="button" data-pos-category="promotions">Promociones</button>
                     @endif
+                    @if ($toppingOptions->isNotEmpty())
+                        <button class="btn-secondary" type="button" data-pos-category="extras">Extras</button>
+                    @endif
                     @foreach ($products->pluck('category')->filter()->unique('id') as $category)
                         <button class="btn-secondary" type="button" data-pos-category="{{ $category->id }}">{{ $category->name }}</button>
                     @endforeach
@@ -145,7 +156,7 @@
                     <div class="flex items-start justify-between gap-4">
                         <div>
                         <h2 class="text-lg font-semibold">Agregar pizza</h2>
-                        <p class="text-sm text-stone-500">La venta normal inicia como pizza completa de un solo sabor. Combinar es opcional en Mediana y Familiar.</p>
+                        <p class="text-sm text-stone-500">La venta normal inicia como pizza completa de un solo sabor. Combinar es opcional en Mediana y Grande.</p>
                         @if ($pizzaVariants->flatten(1)->contains(fn ($variant) => $variant->sellable_availability->mode === 'recipe_pending'))
                             <p class="mt-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
                                 Recetas pendientes de cantidades: estas pizzas pueden registrarse y enviarse a cocina, pero no reservarán ni descontarán ingredientes hasta configurar sus gramajes.
@@ -172,7 +183,7 @@
                                             @checked($loop->first)
                                         >
                                         <span class="flex min-h-16 flex-col justify-center rounded-xl border border-stone-200 bg-white px-3 py-2 text-left transition hover:border-orange-300 peer-checked:border-orange-500 peer-checked:bg-orange-50 peer-checked:text-orange-900 peer-checked:ring-2 peer-checked:ring-orange-200 peer-focus-visible:ring-2 peer-focus-visible:ring-orange-500">
-                                            <strong class="text-sm">{{ $variants->first()->name }}</strong>
+                                            <strong class="text-sm">{{ \App\Support\UiFormatter::variantName($variants->first()->name, $sizeKey) }}</strong>
                                             <span class="text-xs text-stone-500">{{ $variants->count() }} {{ $variants->count() === 1 ? 'sabor' : 'sabores' }}</span>
                                         </span>
                                     </label>
@@ -329,6 +340,23 @@
                         </form>
                     </article>
                 @endforeach
+                @foreach ($toppingOptions as $option)
+                    @php($extraUntracked = $option->standalone_availability === null)
+                    @php($extraAvailable = $extraUntracked || \Brick\Math\BigDecimal::of($option->standalone_availability)->isGreaterThan(0))
+                    <article class="card border-emerald-200 bg-emerald-50/30 p-5" data-pos-product data-name="{{ str($option->name)->lower() }}" data-category="extras" data-product-kind="standalone-extra">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Extra independiente</p>
+                        <h2 class="mt-1 text-lg font-semibold">{{ $option->name }}</h2>
+                        @if($option->description)<p class="mt-1 text-sm text-stone-600">{{ $option->description }}</p>@endif
+                        <p class="mt-2 text-xl font-bold text-orange-700">{{ \App\Support\UiFormatter::money($option->price_delta) }}</p>
+                        <p class="mt-2 text-xs {{ $extraAvailable ? 'text-emerald-700' : 'text-red-700' }}">{{ $extraUntracked ? 'Sin control de stock' : ($extraAvailable ? 'Disponibles: '.\App\Support\UiFormatter::inputQuantity($option->standalone_availability) : 'AGOTADO') }}</p>
+                        <form method="POST" action="{{ route('orders.items.store', $order->ulid) }}" class="mt-4">
+                            @csrf
+                            <input type="hidden" name="standalone_extra" value="{{ $option->ulid }}">
+                            <input type="hidden" name="quantity" value="1">
+                            <button class="btn-primary w-full" @disabled(! $extraAvailable)>Agregar extra</button>
+                        </form>
+                    </article>
+                @endforeach
                 @foreach ($products as $product)
                     <article class="card p-5" data-pos-product data-name="{{ str($product->name)->lower() }}" data-category="{{ $product->category_id }}" data-product-kind="{{ $product->type->value }}">
                         <h2 class="text-lg font-semibold">{{ $product->name }}</h2>
@@ -347,7 +375,7 @@
                                          data-pizza-variant="{{ $variant->ulid }}"
                                          data-pizza-product-id="{{ $variant->product_id }}"
                                     >
-                                        <span>{{ $variant->name }}</span>
+                                        <span>{{ \App\Support\UiFormatter::variantName($variant->name, $variant->compatibility_size_key) }}</span>
                                         <strong class="text-orange-700">{{ \App\Support\UiFormatter::money($variant->price) }}</strong>
                                     </button>
                                     @continue
@@ -359,7 +387,7 @@
                                     <input type="hidden" name="variant" value="{{ $variant->ulid }}">
                                     <input type="hidden" name="quantity" value="1">
                                     <div>
-                                        <p class="font-medium">{{ $variant->name }}</p>
+                                        <p class="font-medium">{{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }}</p>
                                         <p class="text-sm text-orange-700">{{ \App\Support\UiFormatter::money($variant->price) }}</p>
                                         <p class="text-xs {{ $available ? 'text-emerald-700' : 'text-red-700' }}">{{ $untracked ? 'Sin control de stock' : ($available ? 'Disponible: '.\App\Support\UiFormatter::inputQuantity($variant->sellable_availability->availableQuantity) : 'AGOTADO') }}</p>
                                     </div>

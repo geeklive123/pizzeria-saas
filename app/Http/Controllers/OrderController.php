@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\AddOrderItemAction;
 use App\Actions\AddPromotionToOrderAction;
+use App\Actions\AddStandaloneExtraAction;
 use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
@@ -12,6 +13,7 @@ use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\FinalizePerBatchTableAction;
 use App\Actions\MarkOrderItemServedAction;
 use App\Actions\PrintKitchenDispatchAction;
+use App\Actions\PrintProvisionalAccountAction;
 use App\Actions\UpdateConfiguredPizzaAction;
 use App\Actions\UpdateOrderCustomerAction;
 use App\Actions\UpdateOrderItemQuantityAction;
@@ -30,6 +32,7 @@ use App\Http\Requests\OrderHistoryFilterRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
+use App\Models\ModifierOption;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
@@ -142,12 +145,22 @@ class OrderController extends Controller
         return back()->with('success', 'Promoción agregada a la cuenta.');
     }
 
-    public function addItem(AddOrderItemRequest $request, string $order, AddOrderItemAction $action, AddConfiguredPizzaAction $configuredPizza): RedirectResponse
+    public function addItem(AddOrderItemRequest $request, string $order, AddOrderItemAction $action, AddConfiguredPizzaAction $configuredPizza, AddStandaloneExtraAction $standaloneExtra): RedirectResponse
     {
         $order = $this->order($order);
         Gate::authorize('update', $order);
         try {
-            if ($request->filled('sections')) {
+            if ($request->filled('standalone_extra')) {
+                $extra = ModifierOption::query()->forCompany($this->company())
+                    ->where('ulid', $request->validated('standalone_extra'))->firstOrFail();
+                $standaloneExtra->execute(
+                    $order,
+                    $extra,
+                    $request->validated('quantity'),
+                    $request->user(),
+                    $request->enum('fulfillment_type', OrderType::class),
+                );
+            } elseif ($request->filled('sections')) {
                 $modifiers = collect($request->validated('modifiers', []))->filter(fn (array $modifier): bool => filled($modifier['option'] ?? null))->values()->all();
                 $configuredPizza->execute($order, $request->validated('sections'), $request->validated('quantity'), $request->user(), $request->enum('fulfillment_type', OrderType::class), $modifiers, $request->validated('notes'), $request->validated('toppings', []));
             } else {
@@ -237,6 +250,22 @@ class OrderController extends Controller
         return $attempt->status === PrintAttemptStatus::Failed
             ? back()->with('warning', 'No se pudo poner la comanda en cola. Revisa la configuración e inténtalo nuevamente.')
             : back()->with('success', 'Comanda pendiente de impresión.');
+    }
+
+    public function printAccount(string $order, PrintProvisionalAccountAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('printAccount', $order);
+
+        try {
+            $attempt = $action->execute($order, request()->user());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['printing' => $exception->getMessage()]);
+        }
+
+        return $attempt->status === PrintAttemptStatus::Failed
+            ? back()->with('warning', 'No se pudo poner la cuenta en cola. Revisa la configuración de impresión.')
+            : back()->with('success', 'Cuenta provisional enviada a impresión.');
     }
 
     public function serveItem(string $order, string $item, MarkOrderItemServedAction $action): RedirectResponse

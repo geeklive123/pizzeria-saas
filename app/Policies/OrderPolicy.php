@@ -55,6 +55,11 @@ class OrderPolicy
             && $this->paidHistory->allows($user, $order);
     }
 
+    public function printAccount(User $user, Order $order): bool
+    {
+        return $user->canForCompany(Permission::ManageOrders, $order->company_id);
+    }
+
     public function transferPayments(User $user, Order $order): bool
     {
         $membership = $user->membershipFor($order->company_id);

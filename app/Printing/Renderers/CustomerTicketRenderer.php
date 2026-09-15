@@ -22,8 +22,18 @@ class CustomerTicketRenderer
 
     public function render(Order $order, User $requestedBy): ThermalDocument
     {
+        return $this->renderDocument($order, $requestedBy, false);
+    }
+
+    public function renderProvisional(Order $order, User $requestedBy): ThermalDocument
+    {
+        return $this->renderDocument($order, $requestedBy, true);
+    }
+
+    private function renderDocument(Order $order, User $requestedBy, bool $provisional): ThermalDocument
+    {
         $order->loadMissing([
-            'restaurantTable', 'items.productVariant.product', 'items.sections',
+            'restaurantTable', 'items.productVariant.product', 'items.sections', 'items.modifiers',
             'payments.receivedBy',
         ]);
         $completedPayments = $order->payments->where('status', PaymentStatus::Completed)->sortBy('paid_at')->values();
@@ -31,7 +41,11 @@ class CustomerTicketRenderer
         $date = ($completedPayments->last()?->paid_at ?? now())->setTimezone(new DateTimeZone('America/La_Paz'));
         $builder = (new EscPosDocumentBuilder)
             ->alignCenter()->bold()->doubleSize()->line('MASA & MAÑA')->doubleSize(false)->bold(false)->line()
-            ->bold()->line('PEDIDO '.$order->formattedOperationalNumber())->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
+            ->bold()->line($provisional ? 'CUENTA PROVISIONAL' : 'PEDIDO '.$order->formattedOperationalNumber());
+        if ($provisional) {
+            $builder->line('PEDIDO '.$order->formattedOperationalNumber());
+        }
+        $builder->line($order->restaurantTable?->name ?? 'PARA LLEVAR')->bold(false)->line()
             ->alignLeft()->line($date->format('d/m/Y').'                    '.$date->format('H:i'))
             ->line('Cajera: '.$cashier);
 
@@ -70,7 +84,7 @@ class CustomerTicketRenderer
         return $builder
             ->bold()->line($this->amountLine('PAGADO', $this->payments->paid($order)))
             ->line($this->amountLine('SALDO', $this->payments->balance($order)))->bold(false)
-            ->line()->alignCenter()->line('Gracias por su preferencia')->finish();
+            ->line()->alignCenter()->line($provisional ? 'CUENTA PROVISIONAL - NO ES PAGO' : 'Gracias por su preferencia')->finish();
     }
 
     public function renderDispatch(KitchenDispatch $dispatch, User $requestedBy): ThermalDocument
@@ -109,6 +123,10 @@ class CustomerTicketRenderer
 
     private function extras(EscPosDocumentBuilder $builder, OrderItem $item): void
     {
+        if (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
+            return;
+        }
+
         foreach ($item->modifiers->where('type', ModifierOptionType::Add) as $modifier) {
             $builder->line('  + '.mb_strtoupper($modifier->name_snapshot).'  Bs '.UiFormatter::decimal($modifier->price_delta_snapshot, 2));
         }
@@ -119,13 +137,15 @@ class CustomerTicketRenderer
         $quantity = UiFormatter::inputQuantity($item->quantity);
         if ($item->sections->isNotEmpty()) {
             $flavors = $item->sections->pluck('product_name_snapshot')->join('/');
-            $name = $flavors.' '.$item->sections->first()->variant_name_snapshot;
+            $name = $flavors.' '.UiFormatter::variantName($item->sections->first()->variant_name_snapshot, $item->configuration_snapshot['size_key'] ?? null);
+        } elseif (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
+            $name = $item->displayName();
         } else {
             if (($item->configuration_snapshot['type'] ?? null) === 'promotion') {
                 $name = $item->displayName();
             } else {
                 $product = $item->productVariant->product->name;
-                $variant = $item->productVariant->name;
+                $variant = UiFormatter::variantName($item->productVariant->name, $item->productVariant->size_key);
                 $name = $product.($variant !== $product ? ' '.$variant : '');
             }
         }

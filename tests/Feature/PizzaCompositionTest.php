@@ -158,6 +158,8 @@ class PizzaCompositionTest extends TestCase
 
         $this->assertCount(2, $item->sections);
         $this->assertSame('familiar', $item->configuration_snapshot['size_key']);
+        $this->assertSame('Pizza Grande', $item->displayName());
+        $this->assertSame('familiar', $item->sections->first()->productVariant->size_key);
     }
 
     public function test_price_is_the_highest_flavor_price(): void

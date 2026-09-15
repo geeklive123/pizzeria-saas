@@ -144,7 +144,7 @@ class OrderHistoryService
             'quantity' => $item->quantity,
             'total' => $total,
             'flavors' => $item->sections->pluck('product_name_snapshot')->filter()->values()->all(),
-            'extras' => $item->modifiers
+            'extras' => ($item->configuration_snapshot['type'] ?? null) === 'standalone_extra' ? [] : $item->modifiers
                 ->where('type', ModifierOptionType::Add)
                 ->pluck('name_snapshot')
                 ->filter()

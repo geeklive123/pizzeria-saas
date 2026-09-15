@@ -64,7 +64,7 @@ class PizzaCompositionService
             throw new DomainException('Todos los sabores deben usar variantes del mismo tamaño compatible.');
         }
         if ($sectionCount > 1 && ! in_array($sizeKey, ['mediana', 'familiar'], true)) {
-            throw new DomainException('La pizza Personal no permite combinar sabores. Solo Mediana y Familiar admiten de 2 a 4 sabores.');
+            throw new DomainException('La pizza Personal no permite combinar sabores. Solo Mediana y Grande admiten de 2 a 4 sabores.');
         }
 
         $configuredRecipes = collect($sections)->map(

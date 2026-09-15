@@ -141,7 +141,7 @@ class MenuAvailabilityTest extends TestCase
             ->assertSee('Hawaiana')
             ->assertSeeInOrder(['Personal', 'Bs 38,00', '10 disponibles'])
             ->assertSeeInOrder(['Mediana', 'Bs 70,00', '2 disponibles'])
-            ->assertSeeInOrder(['Familiar', 'Bs 92,00', '0 disponibles'])
+            ->assertSeeInOrder(['Grande', 'Bs 92,00', '0 disponibles'])
             ->assertSee('Sin stock')
             ->assertSee('Piña')
             ->assertSee('Coca-Cola 500 ml')

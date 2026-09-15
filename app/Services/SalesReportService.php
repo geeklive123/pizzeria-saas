@@ -16,6 +16,7 @@ use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
+use App\Support\UiFormatter;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Builder;
@@ -104,15 +105,21 @@ class SalesReportService
     {
         return $items->groupBy(function (OrderItem $item) use ($variant): string|int {
             $promotionUlid = $item->configuration_snapshot['promotion']['ulid'] ?? null;
+            $extraUlid = $item->configuration_snapshot['extra']['ulid'] ?? null;
 
-            return $promotionUlid ? 'promotion:'.$promotionUlid : ($variant ? $item->product_variant_id : $item->productVariant->product_id);
+            return $promotionUlid ? 'promotion:'.$promotionUlid
+                : ($extraUlid ? 'extra:'.$extraUlid : ($variant ? $item->product_variant_id : $item->productVariant->product_id));
         })
             ->map(function (Collection $group) use ($variant): array {
                 $first = $group->first();
-                $promotionName = $first->configuration_snapshot['promotion']['name'] ?? null;
+                $snapshotName = $first->configuration_snapshot['promotion']['name']
+                    ?? $first->configuration_snapshot['extra']['name']
+                    ?? null;
 
                 return [
-                    'name' => $promotionName ?: ($variant ? $first->productVariant->product->name.' · '.$first->productVariant->name : $first->productVariant->product->name),
+                    'name' => $snapshotName ?: ($variant
+                        ? $first->productVariant->product->name.' · '.UiFormatter::variantName($first->productVariant->name, $first->productVariant->size_key)
+                        : $first->productVariant->product->name),
                     'quantity' => $this->sumQuantity($group, 'quantity'),
                     'revenue' => $this->sumRevenue($group),
                 ];
@@ -121,9 +128,11 @@ class SalesReportService
 
     private function categoryRanking(Collection $items): Collection
     {
-        return $items->groupBy(fn (OrderItem $item) => ($item->configuration_snapshot['type'] ?? null) === 'promotion'
-            ? 'Promociones'
-            : ($item->productVariant->product->category?->name ?? 'Sin categoría'))
+        return $items->groupBy(fn (OrderItem $item) => match ($item->configuration_snapshot['type'] ?? null) {
+            'promotion' => 'Promociones',
+            'standalone_extra' => 'Extras',
+            default => $item->productVariant->product->category?->name ?? 'Sin categoría',
+        })
             ->map(fn (Collection $group, string $name) => ['name' => $name, 'count' => $this->sumQuantity($group, 'quantity'), 'amount' => $this->sumRevenue($group)])
             ->sort(fn (array $left, array $right) => BigDecimal::of($right['amount'])->compareTo($left['amount']))->values();
     }
@@ -144,7 +153,10 @@ class SalesReportService
             }
             $names = [];
             foreach ($item->sections as $section) {
-                $name = $section->product_name_snapshot.' '.$section->variant_name_snapshot;
+                $name = $section->product_name_snapshot.' '.UiFormatter::variantName(
+                    $section->variant_name_snapshot,
+                    $item->configuration_snapshot['size_key'] ?? null,
+                );
                 $names[] = $name;
                 $share = $quantity->multipliedBy($section->fraction_numerator)->dividedBy($section->fraction_denominator, 6, RoundingMode::HalfUp);
                 $flavors[$name] = ($flavors[$name] ?? BigDecimal::zero())->plus($share);

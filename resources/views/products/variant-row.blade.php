@@ -1,7 +1,7 @@
 @php($stockControlLocked = (bool) ($variant['stock_control_locked'] ?? false))
 <div class="repeater-row grid gap-3 rounded-2xl border border-stone-200 p-4 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_.8fr_.5fr_1.2fr_auto]" data-row>
     @if(!empty($variant['ulid']))<input type="hidden" name="variants[{{ $index }}][ulid]" value="{{ $variant['ulid'] }}">@endif
-    <div><label class="label">Tamaño o presentación</label><input class="input" name="variants[{{ $index }}][name]" value="{{ $variant['name'] ?? '' }}" placeholder="Ej. Familiar" required><p class="mt-1 text-xs text-stone-500">Para pizzas, usa el mismo nombre de tamaño en todos los sabores.</p></div>
+    <div><label class="label">Tamaño o presentación</label><input class="input" name="variants[{{ $index }}][name]" value="{{ $variant['name'] ?? '' }}" placeholder="Ej. Grande" required><p class="mt-1 text-xs text-stone-500">Para pizzas, usa el mismo nombre de tamaño en todos los sabores.</p></div>
     <div><label class="label">SKU</label><input class="input" name="variants[{{ $index }}][sku]" value="{{ $variant['sku'] ?? '' }}" placeholder="Opcional"></div>
     <div><label class="label">Precio (Bs)</label><input class="input" name="variants[{{ $index }}][price]" value="{{ $variant['price'] ?? '0.00' }}" inputmode="decimal" required></div>
     <div><label class="label">Orden</label><input class="input" name="variants[{{ $index }}][sort_order]" type="number" min="0" value="{{ $variant['sort_order'] ?? $index }}" required></div>

@@ -10,11 +10,14 @@ use App\Models\Company;
 use App\Models\ModifierOption;
 use App\Models\Product;
 use App\Models\Promotion;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 
 class OrderPosCatalogService
 {
     public function __construct(
         private readonly SellableAvailabilityService $availability,
+        private readonly InventoryAvailabilityService $inventoryAvailability,
         private readonly VariantSizeKeyService $sizeKeys,
         private readonly PromotionAvailabilityService $promotionAvailability,
     ) {}
@@ -46,7 +49,34 @@ class OrderPosCatalogService
         $toppingOptions = ModifierOption::query()->forCompany($company)->where('is_active', true)
             ->whereHas('modifier', fn ($query) => $query->where('is_active', true)
                 ->where('purpose', ProductModifierPurpose::ToppingCatalog))
-            ->with(['modifier', 'sizeRules'])->orderBy('sort_order')->orderBy('name')->get();
+            ->with([
+                'modifier',
+                'sizeRules',
+                'inventoryItem.unit',
+                'inventoryItem.inventoryStocks' => fn ($query) => $query->where('branch_id', $branch->getKey()),
+                'inventoryItem.inventoryBatches' => fn ($query) => $query->where('branch_id', $branch->getKey()),
+                'inventoryItem.inventoryReservations' => fn ($query) => $query
+                    ->where('branch_id', $branch->getKey())
+                    ->where('status', InventoryReservationStatus::Reserved->value),
+            ])->orderBy('sort_order')->orderBy('name')->get();
+
+        foreach ($toppingOptions as $option) {
+            if (! $option->inventoryItem) {
+                $option->setAttribute('standalone_availability', null);
+
+                continue;
+            }
+            $stock = $option->inventoryItem->inventoryStocks->firstWhere('branch_id', $branch->getKey());
+            $available = $this->inventoryAvailability->forStock(
+                $stock,
+                $option->inventoryItem->inventoryBatches,
+                $this->inventoryAvailability->reservedQuantity($option->inventoryItem->inventoryReservations),
+            )->availableQuantity;
+            $sellable = $option->quantity
+                ? BigDecimal::of($available)->dividedBy($option->quantity, 0, RoundingMode::Down)->toScale(3)
+                : BigDecimal::zero()->toScale(3);
+            $option->setAttribute('standalone_availability', (string) $sellable);
+        }
 
         $promotions = Promotion::query()->forCompany($company)->currentlyActive()
             ->whereHas('productVariant', fn ($query) => $query->where('is_active', true)

@@ -101,7 +101,7 @@ class SalesUxAndMixedPaymentsTest extends TestCase
             ->assertSee('data-pizza-size-option', false)
             ->assertSee('Personal')
             ->assertSee('Mediana')
-            ->assertSee('Familiar')
+            ->assertSee('Grande')
             ->assertSee('data-pizza-size-key="personal"', false)
             ->assertSee('data-pizza-size-key="mediana"', false)
             ->assertSee('data-pizza-size-key="familiar"', false);

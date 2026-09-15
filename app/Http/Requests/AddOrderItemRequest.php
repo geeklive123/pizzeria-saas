@@ -17,14 +17,15 @@ class AddOrderItemRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'variant' => ['nullable', 'required_without:sections', 'string', Rule::exists('product_variants', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
-            'sections' => ['nullable', 'required_without:variant', 'array', 'min:1', 'max:4'],
+            'variant' => ['nullable', 'required_without_all:sections,standalone_extra', 'string', Rule::exists('product_variants', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
+            'sections' => ['nullable', 'required_without_all:variant,standalone_extra', 'array', 'min:1', 'max:4'],
             'sections.*.variant' => ['required', 'string', 'distinct', Rule::exists('product_variants', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
             'modifiers' => ['nullable', 'array'],
             'modifiers.*.option' => ['nullable', 'string', Rule::exists('modifier_options', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
             'modifiers.*.section_position' => ['nullable', 'integer', 'min:1', 'max:4'],
             'toppings' => ['nullable', 'array'],
             'toppings.*' => ['required', 'string', 'distinct', Rule::exists('modifier_options', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
+            'standalone_extra' => ['nullable', 'required_without_all:variant,sections', 'string', Rule::exists('modifier_options', 'ulid')->where('company_id', app(CompanyContext::class)->companyId())],
             'quantity' => ['required', 'decimal:0,3', 'gt:0'],
             'fulfillment_type' => ['nullable', Rule::enum(OrderType::class)],
             'notes' => ['nullable', 'string', 'max:500'],

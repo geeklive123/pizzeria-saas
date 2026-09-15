@@ -9,6 +9,7 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\InventoryMovement;
 use App\Models\OrderItem;
+use App\Support\UiFormatter;
 use Brick\Math\BigDecimal;
 use Illuminate\Support\Collection;
 
@@ -33,8 +34,10 @@ class ProfitabilityReportService
         $costsByItem = $movements->groupBy('reference_id')->map(fn (Collection $group) => $this->sum($group, 'total_cost'));
         $byVariant = $items->groupBy(function (OrderItem $item): string|int {
             $promotionUlid = $item->configuration_snapshot['promotion']['ulid'] ?? null;
+            $extraUlid = $item->configuration_snapshot['extra']['ulid'] ?? null;
 
-            return $promotionUlid ? 'promotion:'.$promotionUlid : $item->product_variant_id;
+            return $promotionUlid ? 'promotion:'.$promotionUlid
+                : ($extraUlid ? 'extra:'.$extraUlid : $item->product_variant_id);
         })->map(function (Collection $group) use ($costsByItem): array {
             $first = $group->first();
             $revenue = $this->sumNetRevenue($group);
@@ -46,7 +49,8 @@ class ProfitabilityReportService
 
             return [
                 'name' => $first->configuration_snapshot['promotion']['name']
-                    ?? $first->productVariant->product->name.' · '.$first->productVariant->name,
+                    ?? $first->configuration_snapshot['extra']['name']
+                    ?? $first->productVariant->product->name.' · '.UiFormatter::variantName($first->productVariant->name, $first->productVariant->size_key),
                 'revenue' => $revenue,
                 'estimated_cost' => $cost,
                 'estimated_margin' => $this->decimal->subtract($revenue, $cost),

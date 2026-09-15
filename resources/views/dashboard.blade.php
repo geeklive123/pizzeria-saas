@@ -40,7 +40,7 @@
         @foreach($recipeAttention as $variant)
             <div class="flex flex-col items-start gap-2 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <div class="min-w-0">
-                    <p class="font-medium">{{ $variant->product->name }} · {{ $variant->name }}</p>
+                    <p class="font-medium">{{ $variant->product->name }} · {{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }}</p>
                     <p class="text-xs text-amber-700">
                         @if($variant->sellable_availability->mode === 'recipe_pending')
                             Receta incompleta

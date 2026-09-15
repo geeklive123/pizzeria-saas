@@ -9,7 +9,7 @@
     <div>
         <a class="back-link" href="{{ route('recipes.index') }}">← Volver a recetas</a>
         <h1>{{ $recipe ? 'Editar receta' : 'Crear receta' }}</h1>
-        <p>{{ $variant->product->name }} · {{ $variant->name }} · {{ \App\Support\UiFormatter::money($variant->price) }}</p>
+        <p>{{ $variant->product->name }} · {{ \App\Support\UiFormatter::variantName($variant->name, $variant->size_key) }} · {{ \App\Support\UiFormatter::money($variant->price) }}</p>
     </div>
 </div>
 
@@ -20,7 +20,7 @@
         <div class="form-grid">
             <div class="sm:col-span-2">
                 <label class="label" for="name">Nombre de la receta</label>
-                <input class="input" id="name" name="name" value="{{ old('name', $recipe?->name ?? 'Receta '.$variant->product->name.' '.$variant->name) }}" required>
+                <input class="input" id="name" name="name" value="{{ old('name', $recipe?->name ?? 'Receta '.$variant->product->name.' '.\App\Support\UiFormatter::variantName($variant->name, $variant->size_key)) }}" required>
             </div>
             <label class="sm:col-span-2 flex items-center gap-3 rounded-xl bg-stone-50 p-4">
                 <input type="checkbox" name="is_active" value="1" @checked(old('is_active', $recipe?->is_active ?? true))>

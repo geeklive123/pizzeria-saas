@@ -11,6 +11,7 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Support\UiFormatter;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use DomainException;
@@ -117,7 +118,7 @@ class MenuAvailabilityService
 
         if (in_array($result->mode, ['recipe_pending', 'untracked'], true)) {
             return new MenuAvailabilityVariantData(
-                $variant->name,
+                UiFormatter::variantName($variant->name, $variant->size_key),
                 $variant->price,
                 null,
                 MenuAvailabilityStatus::Untracked,
@@ -136,7 +137,7 @@ class MenuAvailabilityService
         }
 
         return new MenuAvailabilityVariantData(
-            $variant->name,
+            UiFormatter::variantName($variant->name, $variant->size_key),
             $variant->price,
             $quantity,
             $status,

@@ -81,14 +81,14 @@ class ThermalPrintingTest extends TestCase
         $this->assertDatabaseCount('print_attempts', 1);
 
         $secondItem = $this->simpleItem($order, $owner, 'Coca-Cola', '500 ml', '10.00');
-        $thirdItem = $this->simpleItem($order, $owner, 'Pizza Familiar', 'Familiar', '87.00');
+        $thirdItem = $this->simpleItem($order, $owner, 'Pizza', 'Familiar', '87.00');
         $second = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner);
         $secondText = app(KitchenCommandRenderer::class)->render($second->dispatch)->plainText;
 
         $this->assertDatabaseCount('kitchen_dispatches', 2);
         $this->assertDatabaseCount('print_attempts', 2);
         $this->assertStringContainsString('COCA-COLA 500 ML', $secondText);
-        $this->assertStringContainsString('PIZZA FAMILIAR', $secondText);
+        $this->assertStringContainsString('PIZZA GRANDE', $secondText);
         $this->assertStringNotContainsString('PIZZA MEDIANA', $secondText);
         $this->assertSame([$secondItem->id, $thirdItem->id], $second->dispatch->items()->orderBy('id')->pluck('order_item_id')->all());
 

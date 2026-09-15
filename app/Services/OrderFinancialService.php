@@ -130,6 +130,9 @@ class OrderFinancialService
         if ($item->promotion_id || ($item->configuration_snapshot['type'] ?? null) === 'promotion') {
             return $this->lineValues('promotion', $gross, BigDecimal::zero(), BigDecimal::zero(), $gross);
         }
+        if (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
+            return $this->lineValues('extra', $gross, BigDecimal::zero(), $gross, BigDecimal::zero());
+        }
         $item->loadMissing('sections');
         if ($item->sections->isNotEmpty()) {
             $baseUnit = $item->sections->reduce(function (BigDecimal $highest, $section): BigDecimal {

@@ -22,7 +22,7 @@
                     <span class="text-sm text-stone-500">Solo cargo adicional</span>
                 @endif
             </td>
-            <td><div class="flex flex-wrap gap-1">@forelse($topping->sizeRules as $rule)<span class="badge">{{ $rule->size_key }}@if($rule->quantity) · {{ \App\Support\UiFormatter::quantity($rule->quantity, $topping->inventoryItem?->unit?->symbol) }}@endif @if($rule->price_delta !== null)· {{ \App\Support\UiFormatter::money($rule->price_delta) }}@endif</span>@empty<span class="text-sm text-stone-500">Sin reglas</span>@endforelse</div></td>
+            <td><div class="flex flex-wrap gap-1">@forelse($topping->sizeRules as $rule)<span class="badge">{{ \App\Support\UiFormatter::variantName($rule->size_key, $rule->size_key) }}@if($rule->quantity) · {{ \App\Support\UiFormatter::quantity($rule->quantity, $topping->inventoryItem?->unit?->symbol) }}@endif @if($rule->price_delta !== null)· {{ \App\Support\UiFormatter::money($rule->price_delta) }}@endif</span>@empty<span class="text-sm text-stone-500">Sin reglas</span>@endforelse</div></td>
             <td><span class="badge {{ $topping->is_active ? 'badge-success' : '' }}">{{ $topping->is_active ? 'Activo' : 'Inactivo' }}</span></td>
             <td class="text-right">@can('update', $topping)<div class="flex justify-end gap-2"><a class="link" href="{{ route('toppings.edit', $topping->ulid) }}">Editar</a><form method="POST" action="{{ route('toppings.toggle', $topping->ulid) }}">@csrf<button class="link">{{ $topping->is_active ? 'Desactivar' : 'Activar' }}</button></form></div>@endcan</td>
         </tr>

@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderType;
 use App\Models\Concerns\BelongsToCompany;
+use App\Support\UiFormatter;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -58,15 +59,25 @@ class OrderItem extends Model
 
     public function displayName(): string
     {
+        $standaloneExtraName = $this->configuration_snapshot['extra']['name'] ?? null;
+        if (($this->configuration_snapshot['type'] ?? null) === 'standalone_extra' && filled($standaloneExtraName)) {
+            return (string) $standaloneExtraName;
+        }
         $promotionName = $this->configuration_snapshot['promotion']['name'] ?? null;
         if (is_string($promotionName) && $promotionName !== '') {
             return $promotionName;
         }
         if ($this->sections->isNotEmpty()) {
-            return 'Pizza '.$this->sections->first()->variant_name_snapshot;
+            return 'Pizza '.UiFormatter::variantName(
+                $this->sections->first()->variant_name_snapshot,
+                $this->configuration_snapshot['size_key'] ?? null,
+            );
         }
 
-        return $this->productVariant->product->name.' · '.$this->productVariant->name;
+        return $this->productVariant->product->name.' · '.UiFormatter::variantName(
+            $this->productVariant->name,
+            $this->productVariant->size_key,
+        );
     }
 
     public function createdBy(): BelongsTo

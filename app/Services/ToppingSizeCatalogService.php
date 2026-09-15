@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\ProductType;
 use App\Models\Company;
 use App\Models\ProductVariant;
+use App\Support\UiFormatter;
 use Illuminate\Support\Collection;
 
 class ToppingSizeCatalogService
@@ -19,7 +20,7 @@ class ToppingSizeCatalogService
             ->orderBy('sort_order')->orderBy('name')->get()
             ->map(fn (ProductVariant $variant): array => [
                 'key' => $this->sizeKeys->fromVariant($variant),
-                'label' => $variant->name,
+                'label' => UiFormatter::variantName($variant->name, $this->sizeKeys->fromVariant($variant)),
             ])
             ->unique('key')->values();
     }

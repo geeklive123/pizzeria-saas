@@ -245,7 +245,7 @@ class ImportMasaYManaMenuAction
             if ($variants->pluck('variant_name')->sort()->values()->all() !== ['Familiar', 'Mediana', 'Personal']
                 || $variants->pluck('size_key')->sort()->values()->all() !== ['familiar', 'mediana', 'personal']
                 || $variants->contains(fn (array $row): bool => $row['recipe_status'] !== 'pending_quantities')) {
-                throw new RuntimeException('Cada pizza debe conservar Personal, Mediana y Familiar sin receta inventada.');
+                throw new RuntimeException('Cada pizza debe conservar Personal, Mediana y Grande sin receta inventada.');
             }
         }
 

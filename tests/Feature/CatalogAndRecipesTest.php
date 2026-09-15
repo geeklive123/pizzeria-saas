@@ -71,7 +71,8 @@ class CatalogAndRecipesTest extends TestCase
             ->get(route('recipes.create'))
             ->assertOk()
             ->assertSee('Pizza Hawaiana')
-            ->assertSee('Familiar')
+            ->assertSee('Grande')
+            ->assertDontSee('Familiar')
             ->assertDontSee('Gaseosa');
 
         $this->actingInContext($owner, $company, $branch)
