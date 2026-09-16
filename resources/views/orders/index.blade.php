@@ -59,6 +59,7 @@
     </section>
 
     @include('orders._paid_history')
+    @include('orders._cancel_modal')
 </div>
 
 <script>

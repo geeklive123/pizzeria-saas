@@ -23,8 +23,9 @@ class ReverseInventoryMovementAction
         User $user,
         string $reason,
         bool $allowGroupedProduction = false,
+        Permission $requiredPermission = Permission::ManageInventory,
     ): InventoryMovement {
-        $this->access->ensure($user, $movement->company, Permission::ManageInventory);
+        $this->access->ensure($user, $movement->company, $requiredPermission);
 
         if (blank($reason)) {
             throw new DomainException('A reversal reason is required.');

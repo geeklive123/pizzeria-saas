@@ -14,7 +14,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['company_id', 'branch_id', 'restaurant_table_id', 'active_restaurant_table_id', 'order_number', 'operational_number', 'type', 'charge_mode', 'status', 'customer_name', 'customer_phone', 'notes', 'subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'opened_at', 'closed_at', 'created_by'])]
+#[Fillable(['company_id', 'branch_id', 'restaurant_table_id', 'active_restaurant_table_id', 'order_number', 'operational_number', 'type', 'charge_mode', 'status', 'customer_name', 'customer_phone', 'notes', 'subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'opened_at', 'closed_at', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_by'])]
 class Order extends Model
 {
     use BelongsToCompany, HasFactory, HasUlids;
@@ -40,6 +40,7 @@ class Order extends Model
             'financial_snapshot' => 'array',
             'opened_at' => 'immutable_datetime',
             'closed_at' => 'immutable_datetime',
+            'cancelled_at' => 'immutable_datetime',
         ];
     }
 
@@ -56,6 +57,11 @@ class Order extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
     }
 
     public function items(): HasMany

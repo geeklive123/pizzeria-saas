@@ -26,6 +26,7 @@ use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
 use App\Http\Requests\AddPromotionRequest;
 use App\Http\Requests\CancelOrderItemRequest;
+use App\Http\Requests\CancelOrderRequest;
 use App\Http\Requests\DispatchOrderRequest;
 use App\Http\Requests\OrderCustomerRequest;
 use App\Http\Requests\OrderHistoryFilterRequest;
@@ -59,11 +60,13 @@ class OrderController extends Controller
         $paidOrderRange = $history->range($request->user(), $this->company(), $request->validated());
         $orders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Open, OrderStatus::ReadyForPayment])
-            ->with(['restaurantTable', 'createdBy'])->latest('opened_at')->get();
+            ->with(['restaurantTable', 'createdBy'])
+            ->withExists(['payments as has_completed_payments' => fn ($query) => $query->where('status', \App\Enums\PaymentStatus::Completed->value)])
+            ->latest('opened_at')->get();
         $paidOrders = Order::query()->forCompany($this->company())->forBranch($this->branch())
-            ->where('status', OrderStatus::Paid)
+            ->whereIn('status', [OrderStatus::Paid, OrderStatus::Cancelled])
             ->whereBetween('closed_at', [$paidOrderRange->fromUtc(), $paidOrderRange->toUtc()])
-            ->with(['restaurantTable', 'createdBy'])->latest('closed_at')
+            ->with(['restaurantTable', 'createdBy', 'cancelledBy'])->latest('closed_at')
             ->paginate(50, ['*'], 'paid_page')
             ->appends($canFilterPaidOrders ? $paidOrderRange->query() : []);
 
@@ -88,7 +91,7 @@ class OrderController extends Controller
     public function show(string $order, OrderPosCatalogService $catalog, OrderFinancialService $financials, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, OrderHistoryService $history): View
     {
         $order = $this->order($order)->load([
-            'restaurantTable',
+            'restaurantTable', 'cancelledBy',
             'items' => fn ($query) => $query->with(['productVariant.product', 'sections.productVariant.product', 'modifiers.section'])->orderBy('created_at'),
             'kitchenDispatches' => fn ($query) => $query->with('printAttempts')->latest('sequence_number'),
         ]);
@@ -110,8 +113,10 @@ class OrderController extends Controller
         $orderPaid = $payments->paid($order);
         $orderBalance = $payments->balance($order);
         $orderHistory = $history->forOrder($order);
+        $canCancelOrder = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
+            && ! $order->payments()->where('status', \App\Enums\PaymentStatus::Completed->value)->exists();
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
@@ -296,17 +301,17 @@ class OrderController extends Controller
         return back()->with('success', 'Ítem cancelado y reservas liberadas.');
     }
 
-    public function cancel(string $order, CancelOrderAction $action): RedirectResponse
+    public function cancel(CancelOrderRequest $request, string $order, CancelOrderAction $action): RedirectResponse
     {
         $order = $this->order($order);
         Gate::authorize('cancel', $order);
         try {
-            $action->execute($order, request()->user());
+            $action->execute($order, $request->user(), $request->validated('reason'));
         } catch (DomainException $exception) {
             return back()->withErrors(['order' => $exception->getMessage()]);
         }
 
-        return redirect()->route('orders.index')->with('success', 'Cuenta cancelada. El historial de cocina e inventario se conservó.');
+        return redirect()->route('orders.index')->with('success', 'Pedido anulado. Se conservaron los historiales de cocina, pagos e inventario.');
     }
 
     private function order(string $ulid): Order
