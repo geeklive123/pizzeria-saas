@@ -39,7 +39,17 @@ class OrderPolicy
 
     public function cancel(User $user, Order $order): bool
     {
-        return $user->canForCompany(Permission::CancelOrders, $order->company_id);
+        $membership = $user->membershipFor($order->company_id);
+
+        return $membership !== null
+            && in_array($membership->role, [MembershipRole::Owner, MembershipRole::Admin], true)
+            && $membership->allows(Permission::CancelOrders);
+    }
+
+    public function cancelPaid(User $user, Order $order): bool
+    {
+        return $this->cancel($user, $order)
+            && $user->canForCompany(Permission::ReversePayments, $order->company_id);
     }
 
     public function reprintKitchen(User $user, Order $order): bool

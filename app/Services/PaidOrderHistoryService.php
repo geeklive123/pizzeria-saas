@@ -28,7 +28,7 @@ class PaidOrderHistoryService
 
     public function allows(User $user, Order $order): bool
     {
-        if ($order->status !== OrderStatus::Paid) {
+        if (! in_array($order->status, [OrderStatus::Paid, OrderStatus::Cancelled], true)) {
             return true;
         }
 

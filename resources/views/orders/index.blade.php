@@ -50,7 +50,19 @@
                     <p class="whitespace-nowrap text-sm text-slate-600"><span class="mr-2" aria-hidden="true">◷</span>{{ \App\Support\UiFormatter::date($order->opened_at, true) }}</p>
                     <p class="hidden whitespace-nowrap text-lg font-bold text-slate-950 tabular-nums xl:block">{{ \App\Support\UiFormatter::money($order->total) }}</p>
                     <p class="text-sm text-slate-700"><span class="mr-2 text-slate-500" aria-hidden="true">●</span>{{ $order->createdBy?->name ?? 'Sistema' }}</p>
-                    <a class="btn-primary w-full sm:col-span-2 xl:col-span-1 xl:min-w-32" href="{{ route('orders.show', $order->ulid) }}">Continuar <span class="ml-2" aria-hidden="true">→</span></a>
+                    <div class="flex min-w-0 items-center gap-2 sm:col-span-2 sm:justify-end xl:col-span-1">
+                        <a class="btn-primary min-w-0 flex-1 sm:flex-none" href="{{ route('orders.show', $order->ulid) }}">Continuar <span class="ml-2" aria-hidden="true">→</span></a>
+                        @can('cancel', $order)
+                            @if (! $order->has_completed_payments)
+                                <details class="relative z-20 shrink-0" data-open-order-menu>
+                                    <summary class="grid size-11 cursor-pointer list-none place-items-center rounded-xl border border-slate-200 bg-white text-lg font-bold text-slate-700 shadow-sm" aria-label="Más acciones" title="Más acciones">&hellip;</summary>
+                                    <div class="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                                        <button class="w-full rounded-lg px-3 py-2 text-left text-sm font-bold text-red-700 hover:bg-red-50" type="button" data-cancel-order-open data-cancel-order-url="{{ route('orders.cancel', $order->ulid) }}" data-cancel-order-number="{{ $order->formattedOperationalNumber() }}">Anular</button>
+                                    </div>
+                                </details>
+                            @endif
+                        @endcan
+                    </div>
                 </article>
             @empty
                 <div class="empty-state">No hay pedidos abiertos.</div>
@@ -59,7 +71,11 @@
     </section>
 
     @include('orders._paid_history')
-    @include('orders._cancel_modal')
+    @if($orders->isNotEmpty())
+        @can('cancel', $orders->first())
+            @include('orders._cancel_modal')
+        @endcan
+    @endif
 </div>
 
 <script>

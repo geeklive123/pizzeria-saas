@@ -17,25 +17,31 @@ use App\Models\User;
 use App\Services\CompanyAccessService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 class ReversePaymentAction
 {
     public function __construct(private readonly RecordCashMovementAction $movements, private readonly CompanyAccessService $access) {}
 
-    public function execute(Payment $payment, string $reason, User $user): Payment
+    public function execute(Payment $payment, string $reason, User $user, bool $forPaidCancellation = false): Payment
     {
         $this->access->ensure($user, $payment->company, Permission::ReversePayments);
         if (blank($reason)) {
             throw new DomainException('Indica el motivo de la reversión.');
         }
 
-        return DB::transaction(function () use ($payment, $reason, $user): Payment {
+        return DB::transaction(function () use ($payment, $reason, $user, $forPaidCancellation): Payment {
             $session = CashSession::query()->lockForUpdate()->findOrFail($payment->cash_session_id);
             $payment = Payment::query()->with('order')->lockForUpdate()->findOrFail($payment->id);
             if ($session->status !== CashSessionStatus::Open) {
                 throw new DomainException('No se puede revertir el pago porque el turno de caja ya está cerrado.');
             }
-            if ($payment->order->status === OrderStatus::Paid) {
+            if ($forPaidCancellation) {
+                Gate::forUser($user)->authorize('cancelPaid', $payment->order);
+                if ($payment->order->status !== OrderStatus::Paid) {
+                    throw new DomainException('Solo se pueden anular y revertir pedidos pagados.');
+                }
+            } elseif ($payment->order->status === OrderStatus::Paid) {
                 throw new DomainException('Un pedido finalizado requiere el flujo de devolución correspondiente.');
             }
             if ($payment->status !== PaymentStatus::Completed || $payment->reversal_of_id !== null || $payment->reversals()->exists()) {
@@ -58,7 +64,7 @@ class ReversePaymentAction
                 'idempotency_key' => 'reverse-'.$payment->ulid,
             ]);
             $payment->forceFill(['status' => PaymentStatus::Reversed])->save();
-            if ($payment->kitchen_dispatch_id) {
+            if ($payment->kitchen_dispatch_id && ! $forPaidCancellation) {
                 KitchenDispatch::query()->whereKey($payment->kitchen_dispatch_id)->update([
                     'status' => KitchenDispatchStatus::Released->value,
                     'settled_at' => null,
@@ -70,7 +76,8 @@ class ReversePaymentAction
                     ->where('cash_session_id', $session->id)
                     ->where('reference_type', Payment::class)
                     ->where('reference_id', $payment->id)
-                    ->where('type', CashMovementType::SaleCash->value)
+                    ->whereIn('type', [CashMovementType::SaleCash->value, CashMovementType::AdministrativeTransferIn->value])
+                    ->latest('id')
                     ->firstOrFail();
                 $this->movements->execute($session, CashMovementType::Reversal, $payment->amount, $user, $reason, $reversal, $cashMovement);
             }

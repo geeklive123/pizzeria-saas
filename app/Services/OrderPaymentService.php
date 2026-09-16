@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Enums\KitchenDispatchStatus;
+use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
@@ -22,6 +24,10 @@ class OrderPaymentService
 
     public function balance(Order $order): string
     {
+        if ($order->status === OrderStatus::Cancelled) {
+            return '0.00';
+        }
+
         $balance = BigDecimal::of($order->total)->minus($this->paid($order));
 
         return (string) ($balance->isNegative() ? BigDecimal::zero() : $balance)->toScale(2, RoundingMode::HalfUp);
@@ -39,6 +45,10 @@ class OrderPaymentService
 
     public function dispatchBalance(KitchenDispatch $dispatch): string
     {
+        if ($dispatch->status === KitchenDispatchStatus::Cancelled) {
+            return '0.00';
+        }
+
         $balance = BigDecimal::of($dispatch->total)->minus($this->dispatchPaid($dispatch));
 
         return (string) ($balance->isNegative() ? BigDecimal::zero() : $balance)->toScale(2, RoundingMode::HalfUp);

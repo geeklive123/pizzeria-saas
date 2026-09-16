@@ -222,7 +222,7 @@ class CashAndPaymentsTest extends TestCase
         app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '20.00', $owner, 'partial-before-cancel');
 
         $this->expectException(DomainException::class);
-        app(CancelOrderAction::class)->execute($order, $owner);
+        app(CancelOrderAction::class)->execute($order, $owner, 'Pedido con pago');
     }
 
     public function test_paid_order_cannot_be_cancelled_without_a_financial_reversal_workflow(): void
@@ -233,7 +233,7 @@ class CashAndPaymentsTest extends TestCase
         app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'paid-before-cancel');
 
         $this->expectException(DomainException::class);
-        app(CancelOrderAction::class)->execute($order->refresh(), $owner);
+        app(CancelOrderAction::class)->execute($order->refresh(), $owner, 'Pedido pagado');
     }
 
     public function test_payment_rejects_a_cash_session_from_another_branch(): void

@@ -76,6 +76,7 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/items/{item}/served', [OrderController::class, 'serveItem'])->name('orders.items.served');
             Route::post('/orders/{order}/items/{item}/cancel', [OrderController::class, 'cancelItem'])->name('orders.items.cancel');
             Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
+            Route::post('/orders/{order}/cancel-paid', [OrderController::class, 'cancelPaid'])->name('orders.cancel-paid');
             Route::get('/orders/{order}/checkout', [CheckoutController::class, 'show'])->name('orders.checkout');
             Route::post('/orders/{order}/request-payment', [CheckoutController::class, 'requestPayment'])->name('orders.request-payment');
             Route::post('/orders/{order}/payments', [CheckoutController::class, 'store'])->name('orders.payments.store');

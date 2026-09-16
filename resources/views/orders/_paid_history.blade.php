@@ -52,8 +52,15 @@
                 <p class="whitespace-nowrap text-sm text-slate-600"><span class="mr-2" aria-hidden="true">◷</span>{{ \App\Support\UiFormatter::date($order->closed_at ?? $order->opened_at, true) }}</p>
                 <p class="hidden whitespace-nowrap text-right text-lg font-bold text-slate-950 tabular-nums xl:block">{{ \App\Support\UiFormatter::money($order->total) }}</p>
                 <p class="whitespace-nowrap text-sm text-slate-700"><span class="mr-2 text-slate-500" aria-hidden="true">●</span>{{ $order->createdBy?->name ?? 'Sistema' }}</p>
-                <div class="py-1 xl:text-center"><span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700"><span aria-hidden="true">✓</span>Pagado</span></div>
+                <div class="py-1 xl:text-center">
+                    @if ($order->status === \App\Enums\OrderStatus::Cancelled)
+                        <span class="font-bold text-red-700">ANULADO</span>
+                    @else
+                        <span class="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-semibold text-emerald-700"><span aria-hidden="true">✓</span>Pagado</span>
+                    @endif
+                </div>
                 <div class="flex min-w-0 items-center gap-2 sm:col-span-2 sm:justify-end xl:col-span-1">
+                    @if ($order->status === \App\Enums\OrderStatus::Paid)
                     @canany(['reprintKitchen', 'reprintCustomerTicket', 'transferPayments'], $order)
                         @can('reprintCustomerTicket', $order)
                             <form class="min-w-0 flex-1 sm:flex-none" method="POST" action="{{ route('orders.reprint.ticket', $order->ulid) }}">@csrf<button class="inline-flex min-h-9 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"><span aria-hidden="true">&#9636;</span>Reimprimir</button></form>
@@ -69,6 +76,11 @@
                             </div>
                         </details>
                     @endcanany
+                    @endif
+                </div>
+                <div class="sm:col-span-2 xl:col-span-8">
+                    @include('orders._cancel_paid_form')
+                    @include('orders._cancellation_audit')
                 </div>
             </article>
         @empty

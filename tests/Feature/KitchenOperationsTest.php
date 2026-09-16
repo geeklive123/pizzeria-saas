@@ -77,7 +77,7 @@ class KitchenOperationsTest extends TestCase
 
         $cancelled = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
         $cancelledInternalNumber = $cancelled->order_number;
-        app(CancelOrderAction::class)->execute($cancelled, $owner);
+        app(CancelOrderAction::class)->execute($cancelled, $owner, 'Pedido duplicado');
 
         $order = $this->kitchenTableOrder($company, $branch, $owner);
         $internalNumber = $order->order_number;

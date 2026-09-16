@@ -118,17 +118,17 @@
         @endcan
         @endif
         @can('cancel', $order)
-            @if ($order->status === \App\Enums\OrderStatus::Open)
-                <form method="POST" action="{{ route('orders.cancel', $order->ulid) }}" onsubmit="return confirm('¿Cancelar la cuenta?')">
-                    @csrf
-                    <button class="btn-danger max-sm:w-full">CANCELAR CUENTA</button>
-                </form>
+            @if ($canCancelOrder)
+                <button class="btn-danger max-sm:w-full" type="button" data-cancel-order-open data-cancel-order-url="{{ route('orders.cancel', $order->ulid) }}" data-cancel-order-number="{{ $order->formattedOperationalNumber() }}">ANULAR</button>
             @endif
         @endcan
             </div>
         </div>
     </div>
 </section>
+
+@include('orders._cancel_paid_form')
+@include('orders._cancellation_audit')
 
 <div class="grid min-w-0 items-start gap-6 min-[1180px]:grid-cols-[minmax(0,2.15fr)_minmax(20rem,1fr)]">
     <section class="min-w-0">
@@ -627,4 +627,7 @@
     </aside>
 </div>
 @include('orders._history_modal', ['history' => $orderHistory])
+@can('cancel', $order)
+    @include('orders._cancel_modal')
+@endcan
 @endsection

@@ -8,6 +8,7 @@ use App\Actions\AddPromotionToOrderAction;
 use App\Actions\AddStandaloneExtraAction;
 use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
+use App\Actions\CancelPaidOrderAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\FinalizePerBatchTableAction;
@@ -21,6 +22,7 @@ use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
+use App\Enums\PaymentStatus;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
@@ -61,7 +63,7 @@ class OrderController extends Controller
         $orders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Open, OrderStatus::ReadyForPayment])
             ->with(['restaurantTable', 'createdBy'])
-            ->withExists(['payments as has_completed_payments' => fn ($query) => $query->where('status', \App\Enums\PaymentStatus::Completed->value)])
+            ->withExists(['payments as has_completed_payments' => fn ($query) => $query->where('status', PaymentStatus::Completed->value)])
             ->latest('opened_at')->get();
         $paidOrders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Paid, OrderStatus::Cancelled])
@@ -114,7 +116,7 @@ class OrderController extends Controller
         $orderBalance = $payments->balance($order);
         $orderHistory = $history->forOrder($order);
         $canCancelOrder = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
-            && ! $order->payments()->where('status', \App\Enums\PaymentStatus::Completed->value)->exists();
+            && ! $order->payments()->where('status', PaymentStatus::Completed->value)->exists();
 
         return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder'));
     }
@@ -299,6 +301,20 @@ class OrderController extends Controller
         }
 
         return back()->with('success', 'Ítem cancelado y reservas liberadas.');
+    }
+
+    public function cancelPaid(CancelOrderRequest $request, string $order, CancelPaidOrderAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('cancelPaid', $order);
+
+        try {
+            $action->execute($order, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['order' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('orders.index')->with('success', 'Pedido anulado; pagos e inventario revertidos. El historial se conservó.');
     }
 
     public function cancel(CancelOrderRequest $request, string $order, CancelOrderAction $action): RedirectResponse

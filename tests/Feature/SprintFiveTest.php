@@ -200,7 +200,7 @@ class SprintFiveTest extends TestCase
 
         app(CancelOrderItemAction::class)->execute($first, $owner);
         $this->assertSame(InventoryReservationStatus::Released, $first->reservations()->firstOrFail()->status);
-        app(CancelOrderAction::class)->execute($order, $owner);
+        app(CancelOrderAction::class)->execute($order, $owner, 'Pedido duplicado');
 
         $this->assertSame(OrderStatus::Cancelled, $order->refresh()->status);
         $this->assertNull($order->active_restaurant_table_id);
