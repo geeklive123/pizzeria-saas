@@ -52,6 +52,24 @@ class OrderPolicy
             && $user->canForCompany(Permission::ReversePayments, $order->company_id);
     }
 
+    public function cancelItems(User $user, Order $order): bool
+    {
+        $membership = $user->membershipFor($order->company_id);
+
+        return $membership !== null
+            && in_array($membership->role, [MembershipRole::Owner, MembershipRole::Admin, MembershipRole::Cashier], true)
+            && $membership->allows(Permission::CancelOrders);
+    }
+
+    public function restoreCancellation(User $user, Order $order): bool
+    {
+        $membership = $user->membershipFor($order->company_id);
+
+        return $membership !== null
+            && in_array($membership->role, [MembershipRole::Owner, MembershipRole::Admin], true)
+            && $membership->allows(Permission::RestoreCancelledOrders);
+    }
+
     public function reprintKitchen(User $user, Order $order): bool
     {
         return ($user->canForCompany(Permission::ManageOrders, $order->company_id)

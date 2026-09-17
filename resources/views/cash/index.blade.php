@@ -108,6 +108,9 @@
                     </div>
                     <label class='block'><span class='label'>Observación del cierre</span><textarea class='input' name='closing_observation' placeholder='Observación del cierre…' rows='2' maxlength='1000' data-closing-observation></textarea><small class='text-stone-500'>Obligatoria si existe faltante o sobrante.</small></label>
                     <p class='text-xs text-stone-500'>La diferencia se audita; no se alteran ventas ni movimientos para cuadrarla.</p>
+                    @if (app(\App\Support\CompanyContext::class)->membership()->role === \App\Enums\MembershipRole::Cashier)
+                        <p class='rounded-lg bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900'>Al cerrar la caja también se cerrará tu sesión.</p>
+                    @endif
                     <button class='btn-danger min-h-11 w-full'>Cerrar caja</button>
                 </form>
             @endcan
@@ -166,7 +169,7 @@
             };
             input.addEventListener('input', refresh);
             form.addEventListener('submit', (event) => {
-                if (! window.confirm('¿Cerrar este turno de caja?')) event.preventDefault();
+                if (! window.confirm('¿Cerrar este turno de caja? Al cerrar la caja también se cerrará tu sesión.')) event.preventDefault();
             });
             refresh();
         })();

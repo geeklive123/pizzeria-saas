@@ -10,6 +10,8 @@ use App\Actions\RegisterExpenseAction;
 use App\Actions\ResolveOperationalExpenseCategoryAction;
 use App\Enums\CashMovementType;
 use App\Enums\ExpenseDocumentType;
+use App\Enums\LogoutReason;
+use App\Enums\MembershipRole;
 use App\Http\Requests\CashExpenseRequest;
 use App\Http\Requests\CashMovementRequest;
 use App\Http\Requests\CloseCashSessionRequest;
@@ -20,9 +22,12 @@ use App\Models\CashSession;
 use App\Models\Expense;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
+use App\Services\UserAccessLogService;
+use App\Support\CompanyContext;
 use App\Support\UiFormatter;
 use DomainException;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
@@ -143,14 +148,26 @@ class CashController extends Controller
         return back()->with('success', 'Retiro del propietario registrado con autorización y trazabilidad.');
     }
 
-    public function close(CloseCashSessionRequest $request, CloseCashSessionAction $action): RedirectResponse
-    {
+    public function close(
+        CloseCashSessionRequest $request,
+        CloseCashSessionAction $action,
+        UserAccessLogService $accessLogs,
+    ): RedirectResponse {
         $session = $this->openSession($request->user());
         Gate::authorize('close', $session);
         try {
             $action->execute($session, $request->validated('counted_cash_amount'), $request->user(), $request->validated('closing_observation'));
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['cash' => $exception->getMessage()]);
+        }
+
+        if (app(CompanyContext::class)->membership()->role === MembershipRole::Cashier) {
+            $accessLogs->finish($request, $request->user(), LogoutReason::CashClosed, $this->company()->getKey());
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            return redirect()->route('login');
         }
 
         return redirect()->route('cash.index')->with('success', 'Turno cerrado y diferencia guardada.');

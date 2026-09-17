@@ -6,6 +6,8 @@ use App\Actions\AddConfiguredPizzaAction;
 use App\Actions\AddOrderItemAction;
 use App\Actions\AddPromotionToOrderAction;
 use App\Actions\AddStandaloneExtraAction;
+use App\Actions\CancelKitchenDispatchAction;
+use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CancelPaidOrderAction;
@@ -15,6 +17,9 @@ use App\Actions\FinalizePerBatchTableAction;
 use App\Actions\MarkOrderItemServedAction;
 use App\Actions\PrintKitchenDispatchAction;
 use App\Actions\PrintProvisionalAccountAction;
+use App\Actions\RestoreCancelledKitchenDispatchAction;
+use App\Actions\RestoreCancelledKitchenDispatchItemAction;
+use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\UpdateConfiguredPizzaAction;
 use App\Actions\UpdateOrderCustomerAction;
 use App\Actions\UpdateOrderItemQuantityAction;
@@ -27,11 +32,13 @@ use App\Enums\PrintAttemptStatus;
 use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
 use App\Http\Requests\AddPromotionRequest;
+use App\Http\Requests\CancelKitchenDispatchRequest;
 use App\Http\Requests\CancelOrderItemRequest;
 use App\Http\Requests\CancelOrderRequest;
 use App\Http\Requests\DispatchOrderRequest;
 use App\Http\Requests\OrderCustomerRequest;
 use App\Http\Requests\OrderHistoryFilterRequest;
+use App\Http\Requests\RestoreCancellationRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
@@ -68,7 +75,7 @@ class OrderController extends Controller
         $paidOrders = Order::query()->forCompany($this->company())->forBranch($this->branch())
             ->whereIn('status', [OrderStatus::Paid, OrderStatus::Cancelled])
             ->whereBetween('closed_at', [$paidOrderRange->fromUtc(), $paidOrderRange->toUtc()])
-            ->with(['restaurantTable', 'createdBy', 'cancelledBy'])->latest('closed_at')
+            ->with(['restaurantTable', 'createdBy', 'cancelledBy', 'cancellationAudits.cancelledBy', 'cancellationAudits.restoredBy'])->latest('closed_at')
             ->paginate(50, ['*'], 'paid_page')
             ->appends($canFilterPaidOrders ? $paidOrderRange->query() : []);
 
@@ -117,8 +124,11 @@ class OrderController extends Controller
         $orderHistory = $history->forOrder($order);
         $canCancelOrder = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
             && ! $order->payments()->where('status', PaymentStatus::Completed->value)->exists();
+        $canCancelDispatchItems = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
+            && Gate::allows('cancelItems', $order);
+        $canRestoreCancellations = Gate::allows('restoreCancellation', $order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder', 'canCancelDispatchItems', 'canRestoreCancellations'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
@@ -315,6 +325,106 @@ class OrderController extends Controller
         }
 
         return redirect()->route('orders.index')->with('success', 'Pedido anulado; pagos e inventario revertidos. El historial se conservó.');
+    }
+
+    public function restorePaid(RestoreCancellationRequest $request, string $order, RestoreCancelledPaidOrderAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('restoreCancellation', $order);
+
+        try {
+            $action->execute($order, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['order' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('orders.index')->with('success', 'La anulación fue revertida y la venta pagada quedó restaurada.');
+    }
+
+    public function restoreDispatchItem(
+        RestoreCancellationRequest $request,
+        string $order,
+        string $dispatch,
+        string $item,
+        RestoreCancelledKitchenDispatchItemAction $action,
+    ): RedirectResponse {
+        $order = $this->order($order);
+        Gate::authorize('restoreCancellation', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+        $item = OrderItem::query()->forCompany($this->company())->where('branch_id', $this->branch()->getKey())
+            ->where('order_id', $order->getKey())->where('ulid', $item)
+            ->whereHas('kitchenDispatchItem', fn ($query) => $query->where('kitchen_dispatch_id', $dispatch->getKey()))
+            ->firstOrFail();
+
+        try {
+            $action->execute($item, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['item' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'La anulación del producto fue revertida.');
+    }
+
+    public function restoreDispatch(
+        RestoreCancellationRequest $request,
+        string $order,
+        string $dispatch,
+        RestoreCancelledKitchenDispatchAction $action,
+    ): RedirectResponse {
+        $order = $this->order($order);
+        Gate::authorize('restoreCancellation', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+
+        try {
+            $action->execute($dispatch, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['dispatch' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'La anulación de la tanda fue revertida.');
+    }
+
+    public function cancelDispatchItem(
+        CancelKitchenDispatchRequest $request,
+        string $order,
+        string $dispatch,
+        string $item,
+        CancelKitchenDispatchItemAction $action,
+    ): RedirectResponse {
+        $order = $this->order($order);
+        Gate::authorize('cancelItems', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+        $item = OrderItem::query()->forCompany($this->company())->where('branch_id', $this->branch()->getKey())
+            ->where('order_id', $order->getKey())->where('ulid', $item)
+            ->whereHas('kitchenDispatchItem', fn ($query) => $query->where('kitchen_dispatch_id', $dispatch->getKey()))
+            ->firstOrFail();
+
+        try {
+            $action->execute($item, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['item' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'Producto anulado. El resto de la tanda continúa activo.');
+    }
+
+    public function cancelDispatch(CancelKitchenDispatchRequest $request, string $order, string $dispatch, CancelKitchenDispatchAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('cancelItems', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+
+        try {
+            $action->execute($dispatch, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['dispatch' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'Tanda anulada. Las demás tandas permanecen activas.');
     }
 
     public function cancel(CancelOrderRequest $request, string $order, CancelOrderAction $action): RedirectResponse

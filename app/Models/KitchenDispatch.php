@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['company_id', 'branch_id', 'order_id', 'sequence_number', 'status', 'dispatched_at', 'dispatched_by', 'gross_subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'released_at', 'settled_at'])]
+#[Fillable(['company_id', 'branch_id', 'order_id', 'sequence_number', 'status', 'dispatched_at', 'dispatched_by', 'gross_subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'released_at', 'settled_at', 'cancelled_at', 'cancelled_by', 'cancellation_reason'])]
 class KitchenDispatch extends Model
 {
     use BelongsToCompany, HasUlids;
@@ -37,6 +37,7 @@ class KitchenDispatch extends Model
             'dispatched_at' => 'immutable_datetime',
             'released_at' => 'immutable_datetime',
             'settled_at' => 'immutable_datetime',
+            'cancelled_at' => 'immutable_datetime',
         ];
     }
 
@@ -60,6 +61,11 @@ class KitchenDispatch extends Model
         return $this->belongsTo(User::class, 'dispatched_by');
     }
 
+    public function cancelledBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'cancelled_by');
+    }
+
     public function printAttempts(): HasMany
     {
         return $this->hasMany(PrintAttempt::class);
@@ -68,5 +74,10 @@ class KitchenDispatch extends Model
     public function payments(): HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function cancellationAudits(): HasMany
+    {
+        return $this->hasMany(OrderCancellationAudit::class);
     }
 }

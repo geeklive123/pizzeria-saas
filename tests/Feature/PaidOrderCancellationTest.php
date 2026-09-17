@@ -11,6 +11,7 @@ use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\OpenCashSessionAction;
 use App\Actions\OpenTableOrderAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\ReverseInventoryMovementAction;
 use App\Actions\SaveToppingAction;
 use App\Actions\TransferOrderPaymentsToCashSessionAction;
@@ -18,6 +19,7 @@ use App\Enums\CashMovementType;
 use App\Enums\InventoryMovementType;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
+use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
@@ -32,6 +34,7 @@ use App\Models\InventoryBatch;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\Membership;
+use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\ProductVariant;
@@ -224,6 +227,176 @@ class PaidOrderCancellationTest extends TestCase
         $this->assertDatabaseHas('cash_movements', ['type' => 'reversal', 'cash_session_id' => $destination->id, 'reversal_of_id' => $entry->id]);
         $this->assertSame('0.00', app(CashSessionSummaryService::class)->calculate($destination)['expected_cash']);
         $this->assertSame('20.00', app(CashSessionSummaryService::class)->calculate($f['session'])['expected_cash']);
+    }
+
+    #[DataProvider('paymentCases')]
+    public function test_cancelled_paid_order_can_be_restored_atomically_with_compensating_payments(MembershipRole $role, array $amounts): void
+    {
+        $f = $this->fixture($role, $amounts);
+        $number = $f['order']->operational_number;
+        $total = $f['order']->total;
+        $closedAt = $f['order']->closed_at->toIso8601String();
+        $previousItemStatus = $f['item']->refresh()->status;
+        app(CancelPaidOrderAction::class)->execute($f['order'], $f['actor'], 'Comanda incorrecta');
+
+        app(RestoreCancelledPaidOrderAction::class)->execute($f['order']->refresh(), $f['actor'], 'Era la venta correcta');
+
+        $this->assertSame(OrderStatus::Paid, $f['order']->refresh()->status);
+        $this->assertSame($number, $f['order']->operational_number);
+        $this->assertSame($total, $f['order']->total);
+        $this->assertSame($closedAt, $f['order']->closed_at->toIso8601String());
+        $this->assertSame($previousItemStatus, $f['item']->refresh()->status);
+        $this->assertSame('80.000', $f['inventory']->inventoryStocks()->sole()->quantity);
+        $this->assertDatabaseCount('payments', count($amounts) * 3);
+        $this->assertSame(count($amounts), Payment::query()->where('status', PaymentStatus::Completed->value)->count());
+        foreach ($amounts as $method => $amount) {
+            $this->assertDatabaseHas('payments', [
+                'order_id' => $f['order']->id,
+                'method' => $method,
+                'amount' => $amount,
+                'status' => PaymentStatus::Completed->value,
+            ]);
+        }
+        $this->assertSame(2, InventoryMovement::query()->where('type', InventoryMovementType::OrderConsumption->value)->count());
+        $this->assertSame(1, InventoryMovement::query()->where('type', InventoryMovementType::Reversal->value)->count());
+        $this->assertSame(isset($amounts['cash']) ? 2 : 0, CashMovement::query()->where('type', CashMovementType::SaleCash->value)->count());
+        $this->assertSame(isset($amounts['cash']) ? 1 : 0, CashMovement::query()->where('type', CashMovementType::Reversal->value)->count());
+        $audit = $f['order']->cancellationAudits()->where('scope', 'paid_order')->sole();
+        $this->assertSame('Comanda incorrecta', $audit->cancellation_reason);
+        $this->assertSame('Era la venta correcta', $audit->restoration_reason);
+        $this->assertSame($f['actor']->id, $audit->restored_by);
+        $this->assertNotNull($audit->restored_at);
+
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($f['order']->refresh(), $f['actor'], 'Segundo intento');
+            $this->fail('La segunda restauración debía rechazarse.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('ya fue restaurado', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('payments', count($amounts) * 3);
+
+        $this->actingInContext($f)->get(route('orders.index'))
+            ->assertOk()
+            ->assertSee('ANULADO')
+            ->assertSee('ANULACIÓN REVERTIDA')
+            ->assertSee('Comanda incorrecta')
+            ->assertSee('Era la venta correcta');
+    }
+
+    public function test_paid_restore_does_not_restore_items_cancelled_before_the_full_cancellation(): void
+    {
+        $f = $this->fixture();
+        $previouslyCancelled = OrderItem::query()->create([
+            'company_id' => $f['company']->id,
+            'branch_id' => $f['branch']->id,
+            'order_id' => $f['order']->id,
+            'quantity' => '1.000',
+            'unit_price' => '3.00',
+            'line_total' => '3.00',
+            'fulfillment_type' => $f['order']->type,
+            'requires_preparation' => false,
+            'status' => 'cancelled',
+            'configuration_snapshot' => ['type' => 'standalone_extra', 'extra' => ['name' => 'Previamente anulado']],
+            'created_by' => $f['actor']->id,
+            'cancelled_at' => now()->subMinute(),
+            'cancelled_by' => $f['actor']->id,
+            'cancellation_reason' => 'Antes del pago',
+        ]);
+
+        app(CancelPaidOrderAction::class)->execute($f['order'], $f['actor'], 'Anulación total');
+        app(RestoreCancelledPaidOrderAction::class)->execute($f['order']->refresh(), $f['actor'], 'Restauración selectiva');
+
+        $this->assertSame(OrderStatus::Paid, $f['order']->refresh()->status);
+        $this->assertSame(OrderItemStatus::Cancelled, $previouslyCancelled->refresh()->status);
+        $this->assertSame(OrderItemStatus::Ready, $f['item']->refresh()->status);
+        $parent = $f['order']->cancellationAudits()->where('scope', 'paid_order')->sole();
+        $this->assertFalse($parent->children()->where('order_item_id', $previouslyCancelled->id)->exists());
+    }
+
+    public function test_closed_cash_session_and_insufficient_stock_each_abort_the_entire_restore(): void
+    {
+        $closed = $this->fixture();
+        app(CancelPaidOrderAction::class)->execute($closed['order'], $closed['actor'], 'Anulación');
+        $expected = app(CashSessionSummaryService::class)->calculate($closed['session'])['expected_cash'];
+        app(CloseCashSessionAction::class)->execute($closed['session'], $expected, $closed['actor']);
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($closed['order']->refresh(), $closed['actor'], 'Caja cerrada');
+            $this->fail('La caja cerrada debía bloquear la restauración.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('caja original está cerrada', $exception->getMessage());
+        }
+        $this->assertSame(OrderStatus::Cancelled, $closed['order']->refresh()->status);
+        $this->assertDatabaseCount('payments', 2);
+
+        $stock = $this->fixture(amounts: ['qr' => '10.00']);
+        app(CancelPaidOrderAction::class)->execute($stock['order'], $stock['actor'], 'Anulación');
+        app(ApplyInventoryMovementAction::class)->execute(
+            $stock['company'],
+            $stock['branch'],
+            $stock['inventory'],
+            InventoryMovementType::AdjustmentOut,
+            '95.000',
+            null,
+            $stock['actor'],
+            reason: 'Consumo posterior',
+        );
+        $paymentCount = Payment::query()->where('order_id', $stock['order']->id)->count();
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($stock['order']->refresh(), $stock['actor'], 'Sin stock');
+            $this->fail('El stock insuficiente debía abortar la restauración.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('Stock insuficiente', $exception->getMessage());
+        }
+        $this->assertSame(OrderStatus::Cancelled, $stock['order']->refresh()->status);
+        $this->assertSame($paymentCount, Payment::query()->where('order_id', $stock['order']->id)->count());
+        $this->assertSame('5.000', $stock['inventory']->inventoryStocks()->sole()->quantity);
+    }
+
+    public function test_legacy_cancellation_is_not_inferred_and_restore_http_is_strictly_authorized_and_tenant_scoped(): void
+    {
+        $legacy = $this->fixture();
+        $legacy['order']->forceFill(['status' => OrderStatus::Cancelled, 'cancelled_at' => now(), 'cancellation_reason' => 'Legacy'])->save();
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($legacy['order'], $legacy['actor'], 'No inferir');
+            $this->fail('Una anulación legacy no debía restaurarse.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('datos legacy', $exception->getMessage());
+        }
+
+        $f = $this->fixture();
+        app(CancelPaidOrderAction::class)->execute($f['order'], $f['actor'], 'Error');
+        $this->actingInContext($f)->post(route('orders.restore-paid', $f['order']->ulid), ['confirmed' => '1'])
+            ->assertSessionHasErrors('reason');
+
+        foreach ([MembershipRole::Cashier, MembershipRole::Kitchen] as $role) {
+            $user = User::factory()->create();
+            Membership::factory()->for($f['company'])->for($user)->create(['role' => $role]);
+            $this->actingInContext([...$f, 'actor' => $user])
+                ->post(route('orders.restore-paid', $f['order']->ulid), ['reason' => 'Sin permiso', 'confirmed' => '1'])
+                ->assertForbidden();
+        }
+
+        $otherCompany = Company::factory()->create();
+        $otherBranch = Branch::factory()->for($otherCompany)->create();
+        $otherOwner = User::factory()->create();
+        Membership::factory()->for($otherCompany)->for($otherOwner)->owner()->create();
+        $this->actingInContext(['actor' => $otherOwner, 'company' => $otherCompany, 'branch' => $otherBranch])
+            ->post(route('orders.restore-paid', $f['order']->ulid), ['reason' => 'Otra empresa', 'confirmed' => '1'])
+            ->assertNotFound();
+
+        $this->actingInContext($f)
+            ->post(route('orders.restore-paid', $f['order']->ulid), ['reason' => 'Corrección owner', 'confirmed' => '1'])
+            ->assertRedirect(route('orders.index'))
+            ->assertSessionHasNoErrors();
+
+        $adminCase = $this->fixture();
+        app(CancelPaidOrderAction::class)->execute($adminCase['order'], $adminCase['actor'], 'Error');
+        $admin = User::factory()->create();
+        Membership::factory()->for($adminCase['company'])->for($admin)->create(['role' => MembershipRole::Admin]);
+        $this->actingInContext([...$adminCase, 'actor' => $admin])
+            ->post(route('orders.restore-paid', $adminCase['order']->ulid), ['reason' => 'Corrección admin', 'confirmed' => '1'])
+            ->assertRedirect(route('orders.index'))
+            ->assertSessionHasNoErrors();
     }
 
     private function fixture(MembershipRole $role = MembershipRole::Owner, array $amounts = ['cash' => '10.00'], bool $standalone = true): array

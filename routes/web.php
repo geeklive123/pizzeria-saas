@@ -30,6 +30,7 @@ use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\ToppingController;
 use App\Http\Controllers\UnitController;
+use App\Http\Controllers\UserAccessLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => auth()->check() ? redirect()->route('dashboard') : view('auth.login'));
@@ -48,7 +49,7 @@ Route::middleware('auth')->group(function (): void {
         Route::get('/context/branches', [ContextController::class, 'branches'])->name('context.branch');
         Route::post('/context/branches', [ContextController::class, 'selectBranch'])->name('context.branch.select');
 
-        Route::middleware('branch.context')->group(function (): void {
+        Route::middleware(['branch.context', 'user.access'])->group(function (): void {
             Route::get('/dashboard', DashboardController::class)->name('dashboard');
 
             Route::get('/sales/create', [SaleController::class, 'create'])->name('sales.create');
@@ -75,8 +76,13 @@ Route::middleware('auth')->group(function (): void {
             Route::put('/orders/{order}/items/{item}', [OrderController::class, 'updateItem'])->name('orders.items.update');
             Route::post('/orders/{order}/items/{item}/served', [OrderController::class, 'serveItem'])->name('orders.items.served');
             Route::post('/orders/{order}/items/{item}/cancel', [OrderController::class, 'cancelItem'])->name('orders.items.cancel');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/items/{item}/cancel', [OrderController::class, 'cancelDispatchItem'])->name('orders.dispatches.items.cancel');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/cancel', [OrderController::class, 'cancelDispatch'])->name('orders.dispatches.cancel');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/items/{item}/restore', [OrderController::class, 'restoreDispatchItem'])->name('orders.dispatches.items.restore');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/restore', [OrderController::class, 'restoreDispatch'])->name('orders.dispatches.restore');
             Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');
             Route::post('/orders/{order}/cancel-paid', [OrderController::class, 'cancelPaid'])->name('orders.cancel-paid');
+            Route::post('/orders/{order}/restore-paid', [OrderController::class, 'restorePaid'])->name('orders.restore-paid');
             Route::get('/orders/{order}/checkout', [CheckoutController::class, 'show'])->name('orders.checkout');
             Route::post('/orders/{order}/request-payment', [CheckoutController::class, 'requestPayment'])->name('orders.request-payment');
             Route::post('/orders/{order}/payments', [CheckoutController::class, 'store'])->name('orders.payments.store');
@@ -153,6 +159,7 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/purchases/{purchase}/reverse', [PurchaseController::class, 'reverse'])->name('purchases.reverse');
 
             Route::get('/users', [MembershipController::class, 'index'])->name('memberships.index');
+            Route::get('/user-access-logs', UserAccessLogController::class)->name('user-access-logs.index');
             Route::get('/users/create', [MembershipController::class, 'create'])->name('memberships.create');
             Route::post('/users', [MembershipController::class, 'store'])->name('memberships.store');
             Route::get('/users/{membership}/edit', [MembershipController::class, 'edit'])->name('memberships.edit');

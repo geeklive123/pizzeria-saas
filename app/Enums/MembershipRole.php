@@ -56,6 +56,7 @@ enum MembershipRole: string
                 Permission::ViewOrders,
                 Permission::ManageOrders,
                 Permission::CancelOrders,
+                Permission::RestoreCancelledOrders,
                 Permission::ViewTables,
                 Permission::ManageTables,
                 Permission::ViewKitchen,

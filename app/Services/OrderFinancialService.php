@@ -124,6 +124,41 @@ class OrderFinancialService
         return $this->fillOrder($order, $snapshot, false);
     }
 
+    public function recalculateDispatchFromActiveItems(KitchenDispatch $dispatch): KitchenDispatch
+    {
+        $dispatch->load('items.orderItem');
+        $activeItems = $dispatch->items->filter(
+            fn ($dispatchItem): bool => $dispatchItem->orderItem->status->value !== 'cancelled',
+        );
+        $gross = $this->sum($activeItems, 'gross_total');
+        $pizzaBase = $this->sum($activeItems, 'pizza_base_total');
+        $extras = $this->sum($activeItems, 'extras_total');
+        $other = $this->sum($activeItems, 'other_total');
+        $discount = $this->sum($activeItems, 'discount_total');
+        $total = $this->sum($activeItems, 'net_total');
+
+        $dispatch->forceFill([
+            'gross_subtotal' => (string) $gross,
+            'pizza_base_subtotal' => (string) $pizzaBase,
+            'extras_subtotal' => (string) $extras,
+            'other_subtotal' => (string) $other,
+            'discount_total' => (string) $discount,
+            'total' => (string) $total,
+            'financial_snapshot' => [
+                'version' => 1,
+                'gross_subtotal' => (string) $gross,
+                'pizza_base_subtotal' => (string) $pizzaBase,
+                'extras_subtotal' => (string) $extras,
+                'other_subtotal' => (string) $other,
+                'discount_percentage' => $dispatch->discount_percentage,
+                'discount_total' => (string) $discount,
+                'total' => (string) $total,
+            ],
+        ])->save();
+
+        return $dispatch->refresh();
+    }
+
     private function line(OrderItem $item): array
     {
         $gross = BigDecimal::of($item->line_total)->toScale(2, RoundingMode::HalfUp);

@@ -4,9 +4,11 @@ namespace App\Services;
 
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\ModifierOptionType;
+use App\Enums\OrderCancellationScope;
 use App\Enums\OrderItemStatus;
 use App\Enums\PaymentStatus;
 use App\Models\Order;
+use App\Models\OrderCancellationAudit;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Support\UiFormatter;
@@ -30,22 +32,41 @@ class OrderHistoryService
             'kitchenDispatches.items.orderItem.productVariant.product',
             'kitchenDispatches.items.orderItem.sections.productVariant.product',
             'kitchenDispatches.items.orderItem.modifiers.section',
+            'kitchenDispatches.items.orderItem.cancelledBy',
+            'kitchenDispatches.cancelledBy',
+            'kitchenDispatches.dispatchedBy',
             'kitchenDispatches.payments',
+            'cancellationAudits.cancelledBy',
+            'cancellationAudits.restoredBy',
         ]);
 
+        $audits = $order->cancellationAudits->sortByDesc('id');
         $batches = $order->kitchenDispatches
             ->sortBy('sequence_number')
             ->map(fn ($dispatch): array => [
+                'ulid' => $dispatch->ulid,
                 'sequence' => $dispatch->sequence_number,
                 'time' => $dispatch->dispatched_at,
                 'total' => $dispatch->total,
                 'balance' => $this->payments->dispatchBalance($dispatch),
                 'status' => $this->status($dispatch->status),
                 'payment' => $this->paymentSummary($dispatch->payments),
+                'dispatched_by' => $dispatch->dispatchedBy?->name,
+                'cancelled_at' => $dispatch->cancelled_at,
+                'cancelled_by' => $dispatch->cancelledBy?->name,
+                'cancellation_reason' => $dispatch->cancellation_reason,
+                'cancellation_audit' => $this->audit($audits->first(
+                    fn (OrderCancellationAudit $audit): bool => $audit->scope === OrderCancellationScope::KitchenDispatch
+                        && (int) $audit->kitchen_dispatch_id === (int) $dispatch->getKey(),
+                )),
                 'items' => $dispatch->items->sortBy('id')->map(
                     fn ($dispatchItem): array => $this->item(
                         $dispatchItem->orderItem,
                         $dispatchItem->net_total,
+                        $audits->first(
+                            fn (OrderCancellationAudit $audit): bool => $audit->scope === OrderCancellationScope::KitchenDispatchItem
+                                && (int) $audit->order_item_id === (int) $dispatchItem->order_item_id,
+                        ),
                     ),
                 )->values()->all(),
                 'is_current' => false,
@@ -98,7 +119,7 @@ class OrderHistoryService
             ],
             KitchenDispatchStatus::Cancelled => [
                 'key' => 'cancelled',
-                'label' => 'CANCELADA',
+                'label' => 'ANULADA',
                 'classes' => 'bg-red-100 text-red-700',
             ],
             KitchenDispatchStatus::AwaitingPayment, KitchenDispatchStatus::Released => [
@@ -137,12 +158,20 @@ class OrderHistoryService
         ];
     }
 
-    private function item(OrderItem $item, int|string $total): array
+    private function item(OrderItem $item, int|string $total, ?OrderCancellationAudit $audit = null): array
     {
         return [
+            'ulid' => $item->ulid,
             'name' => $item->displayName(),
             'quantity' => $item->quantity,
+            'unit_price' => $item->unit_price,
+            'original_total' => $item->line_total,
             'total' => $total,
+            'status' => $item->status->value,
+            'cancelled_at' => $item->cancelled_at,
+            'cancelled_by' => $item->cancelledBy?->name,
+            'cancellation_reason' => $item->cancellation_reason,
+            'cancellation_audit' => $this->audit($audit),
             'flavors' => $item->sections->pluck('product_name_snapshot')->filter()->values()->all(),
             'extras' => ($item->configuration_snapshot['type'] ?? null) === 'standalone_extra' ? [] : $item->modifiers
                 ->where('type', ModifierOptionType::Add)
@@ -151,6 +180,24 @@ class OrderHistoryService
                 ->values()
                 ->all(),
             'notes' => $item->notes,
+        ];
+    }
+
+    private function audit(?OrderCancellationAudit $audit): ?array
+    {
+        if (! $audit) {
+            return null;
+        }
+
+        return [
+            'ulid' => $audit->ulid,
+            'parent_id' => $audit->parent_id,
+            'cancelled_at' => $audit->cancelled_at,
+            'cancelled_by' => $audit->cancelledBy?->name,
+            'cancellation_reason' => $audit->cancellation_reason,
+            'restored_at' => $audit->restored_at,
+            'restored_by' => $audit->restoredBy?->name,
+            'restoration_reason' => $audit->restoration_reason,
         ];
     }
 }

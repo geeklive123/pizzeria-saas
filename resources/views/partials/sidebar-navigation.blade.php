@@ -34,6 +34,7 @@
         ['key' => 'administration', 'label' => 'Administración', 'items' => [
             ['route' => 'expenses.index', 'label' => 'Gastos', 'icon' => '−', 'pattern' => 'expenses.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Expense::class)],
             ['route' => 'memberships.index', 'label' => 'Usuarios', 'icon' => '◎', 'pattern' => 'memberships.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Membership::class)],
+            ['route' => 'user-access-logs.index', 'label' => 'Registro de accesos', 'icon' => '◷', 'pattern' => 'user-access-logs.*', 'visible' => in_array($membership->role, [\App\Enums\MembershipRole::Owner, \App\Enums\MembershipRole::Admin], true)],
             ['route' => 'settings.edit', 'label' => 'Configuración', 'icon' => '⚙', 'pattern' => 'settings.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('update', $activeCompany)],
             ['route' => $reportRoute, 'label' => 'Reportes', 'icon' => '▥', 'pattern' => 'reports.*', 'visible' => $canViewReports],
         ]],

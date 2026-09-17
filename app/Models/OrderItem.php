@@ -109,4 +109,9 @@ class OrderItem extends Model
     {
         return $this->belongsTo(User::class, 'cancelled_by');
     }
+
+    public function cancellationAudits(): HasMany
+    {
+        return $this->hasMany(OrderCancellationAudit::class);
+    }
 }

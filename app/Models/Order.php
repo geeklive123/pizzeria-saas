@@ -84,6 +84,11 @@ class Order extends Model
         return $this->hasMany(Payment::class);
     }
 
+    public function cancellationAudits(): HasMany
+    {
+        return $this->hasMany(OrderCancellationAudit::class);
+    }
+
     public function cashSessionTransfers(): HasMany
     {
         return $this->hasMany(CashSessionTransfer::class);

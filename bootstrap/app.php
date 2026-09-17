@@ -3,6 +3,7 @@
 use App\Http\Middleware\AuthenticatePrintAgent;
 use App\Http\Middleware\ResolveBranchContext;
 use App\Http\Middleware\ResolveCompanyContext;
+use App\Http\Middleware\TrackUserAccess;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'company.context' => ResolveCompanyContext::class,
             'branch.context' => ResolveBranchContext::class,
             'print.agent' => AuthenticatePrintAgent::class,
+            'user.access' => TrackUserAccess::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

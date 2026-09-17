@@ -22,6 +22,7 @@ enum Permission: string
     case ViewOrders = 'orders.view';
     case ManageOrders = 'orders.manage';
     case CancelOrders = 'orders.cancel';
+    case RestoreCancelledOrders = 'orders.cancel.restore';
     case ViewTables = 'tables.view';
     case ManageTables = 'tables.manage';
     case ViewKitchen = 'kitchen.view';
@@ -50,7 +51,7 @@ enum Permission: string
     {
         return match ($this) {
             self::CreatePayments, self::ApplyOrderDiscounts, self::ReversePayments => PermissionModule::Sales,
-            self::ViewOrders, self::ManageOrders, self::CancelOrders, self::ViewTables, self::ManageTables => PermissionModule::TablesAndOrders,
+            self::ViewOrders, self::ManageOrders, self::CancelOrders, self::RestoreCancelledOrders, self::ViewTables, self::ManageTables => PermissionModule::TablesAndOrders,
             self::ViewKitchen, self::ManageKitchen => PermissionModule::Kitchen,
             self::ViewCash, self::OpenCash, self::CloseCash, self::ManageCash, self::RegisterManualCashMovements,
             self::AuthorizeCashWithdrawals, self::TransferCashSessionOperations => PermissionModule::Cash,
@@ -99,6 +100,7 @@ enum Permission: string
             self::ViewOrders => 'Ver pedidos',
             self::ManageOrders => 'Gestionar pedidos y enviar a cocina',
             self::CancelOrders => 'Cancelar pedidos',
+            self::RestoreCancelledOrders => 'Deshacer anulaciones de pedidos',
             self::ViewTables => 'Ver mesas',
             self::ManageTables => 'Administrar mesas',
             self::ViewKitchen => 'Ver cocina',
