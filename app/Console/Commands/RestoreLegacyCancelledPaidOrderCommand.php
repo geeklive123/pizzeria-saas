@@ -9,6 +9,7 @@ use App\Models\Membership;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\LegacyRestoreEnvironmentGuard;
+use App\Support\LegacyManifestTimestamp;
 use DomainException;
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
@@ -130,8 +131,9 @@ class RestoreLegacyCancelledPaidOrderCommand extends Command
             'order.operational_number' => 156,
             'order.status' => 'cancelled',
             'order.total' => '99.00',
-            'order.closed_at' => '2026-09-16 21:01:49',
-            'order.cancelled_at' => '2026-09-16 22:58:02',
+            'order.opened_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 20:32:17'),
+            'order.closed_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 21:01:49'),
+            'order.cancelled_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 22:58:02'),
             'order.cancelled_by' => 5,
             'order.cancellation_reason' => 'Repetido',
             'payments.0.original_payment_id' => 152,

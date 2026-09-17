@@ -40,8 +40,19 @@ class LegacyRestoreProductionCommandTest extends TestCase
         $fixture = $this->commandFixture('production');
         $report = $this->report($fixture['order']);
         $action = Mockery::mock(RestoreLegacyCancelledPaidOrderAction::class);
-        $action->shouldReceive('dryRun')->once()->withArgs(fn (Order $order, User $actor, array $expectations): bool => $order->is($fixture['order']) && $actor->is($fixture['actor']) && $expectations['order.id'] === 210
-        )->andReturn($report);
+        $action->shouldReceive('dryRun')->once()->withArgs(function (Order $order, User $actor, array $expectations) use ($fixture): bool {
+            $this->assertSame('2026-09-17 00:32:17', $expectations['order.opened_at_utc']);
+            $this->assertSame('2026-09-17 01:01:49', $expectations['order.closed_at_utc']);
+            $this->assertSame('2026-09-17 02:58:02', $expectations['order.cancelled_at_utc']);
+            $this->assertSame('99.00', $expectations['payments.0.amount']);
+            $this->assertSame(179, $expectations['dispatches.0.id']);
+            $this->assertSame(320, $expectations['items.0.id']);
+            $this->assertSame(1304, $expectations['items.0.inventory_pairs.0.original_movement_id']);
+
+            return $order->is($fixture['order'])
+                && $actor->is($fixture['actor'])
+                && $expectations['order.id'] === 210;
+        })->andReturn($report);
         $action->shouldNotReceive('execute');
         $this->app->instance(RestoreLegacyCancelledPaidOrderAction::class, $action);
 

@@ -38,6 +38,7 @@ use App\Models\User;
 use App\Services\ProfitabilityReportService;
 use App\Services\ReportDateRangeService;
 use App\Services\SalesReportService;
+use App\Support\LegacyManifestTimestamp;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -81,6 +82,42 @@ class LegacyCancelledPaidOrderRecoveryTest extends TestCase
             $this->assertStringContainsString('expected manifest', $exception->getMessage());
         }
         $this->assertSame($before, $this->databaseCounts());
+    }
+
+    public function test_production_utc_order_timestamps_match_the_bolivia_manifest_strictly(): void
+    {
+        $fixture = $this->fixture();
+        DB::table('orders')->where('id', $fixture['order']->id)->update([
+            'opened_at' => '2026-09-17 00:32:17',
+            'closed_at' => '2026-09-17 01:01:49',
+            'cancelled_at' => '2026-09-17 02:58:02',
+        ]);
+        DB::table('order_items')->where('id', $fixture['item']->id)->update([
+            'cancelled_at' => '2026-09-17 02:58:02',
+        ]);
+
+        $expectations = [
+            'order.opened_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 20:32:17'),
+            'order.closed_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 21:01:49'),
+            'order.cancelled_at_utc' => LegacyManifestTimestamp::historicalToUtc('2026-09-16 22:58:02'),
+        ];
+        $action = app(RestoreLegacyCancelledPaidOrderAction::class);
+        $report = $action->dryRun($fixture['order']->refresh(), $fixture['actor'], $expectations);
+
+        $this->assertSame('2026-09-17 00:32:17', $report['order']['opened_at_utc']);
+        $this->assertSame('2026-09-17 01:01:49', $report['order']['closed_at_utc']);
+        $this->assertSame('2026-09-17 02:58:02', $report['order']['cancelled_at_utc']);
+
+        foreach (['2026-09-17 01:01:50', '2026-09-17 01:01:48'] as $differentInstant) {
+            DB::table('orders')->where('id', $fixture['order']->id)->update(['closed_at' => $differentInstant]);
+
+            try {
+                $action->dryRun($fixture['order']->refresh(), $fixture['actor'], $expectations);
+                $this->fail('A one-second timestamp difference had to reject the manifest.');
+            } catch (DomainException $exception) {
+                $this->assertStringContainsString('order.closed_at_utc', $exception->getMessage());
+            }
+        }
     }
 
     public function test_qr_legacy_recovery_restores_state_with_compensating_ledgers_and_complete_audit(): void

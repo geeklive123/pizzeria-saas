@@ -25,6 +25,7 @@ use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\InventoryAvailabilityService;
+use App\Support\LegacyManifestTimestamp;
 use Brick\Math\BigDecimal;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -491,8 +492,12 @@ class RestoreLegacyCancelledPaidOrderAction
                 'operational_number' => $order->operational_number,
                 'status' => $order->status->value,
                 'total' => $order->total,
+                'opened_at' => $order->opened_at?->toDateTimeString(),
                 'closed_at' => $order->closed_at?->toDateTimeString(),
                 'cancelled_at' => $order->cancelled_at?->toDateTimeString(),
+                'opened_at_utc' => LegacyManifestTimestamp::databaseTimestampToUtc($order->getRawOriginal('opened_at')),
+                'closed_at_utc' => LegacyManifestTimestamp::databaseTimestampToUtc($order->getRawOriginal('closed_at')),
+                'cancelled_at_utc' => LegacyManifestTimestamp::databaseTimestampToUtc($order->getRawOriginal('cancelled_at')),
                 'cancelled_by' => $order->cancelled_by,
                 'cancellation_reason' => $order->cancellation_reason,
             ],
