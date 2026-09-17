@@ -43,34 +43,40 @@ class OrderHistoryService
         $audits = $order->cancellationAudits->sortByDesc('id');
         $batches = $order->kitchenDispatches
             ->sortBy('sequence_number')
-            ->map(fn ($dispatch): array => [
-                'ulid' => $dispatch->ulid,
-                'sequence' => $dispatch->sequence_number,
-                'time' => $dispatch->dispatched_at,
-                'total' => $dispatch->total,
-                'balance' => $this->payments->dispatchBalance($dispatch),
-                'status' => $this->status($dispatch->status),
-                'payment' => $this->paymentSummary($dispatch->payments),
-                'dispatched_by' => $dispatch->dispatchedBy?->name,
-                'cancelled_at' => $dispatch->cancelled_at,
-                'cancelled_by' => $dispatch->cancelledBy?->name,
-                'cancellation_reason' => $dispatch->cancellation_reason,
-                'cancellation_audit' => $this->audit($audits->first(
+            ->map(function ($dispatch) use ($audits): array {
+                $dispatchAudit = $audits->first(
                     fn (OrderCancellationAudit $audit): bool => $audit->scope === OrderCancellationScope::KitchenDispatch
                         && (int) $audit->kitchen_dispatch_id === (int) $dispatch->getKey(),
-                )),
-                'items' => $dispatch->items->sortBy('id')->map(
-                    fn ($dispatchItem): array => $this->item(
-                        $dispatchItem->orderItem,
-                        $dispatchItem->net_total,
-                        $audits->first(
-                            fn (OrderCancellationAudit $audit): bool => $audit->scope === OrderCancellationScope::KitchenDispatchItem
-                                && (int) $audit->order_item_id === (int) $dispatchItem->order_item_id,
+                );
+                $settledReversal = data_get($dispatchAudit?->snapshot, 'reversal_type') === 'settled_dispatch';
+
+                return [
+                    'ulid' => $dispatch->ulid,
+                    'sequence' => $dispatch->sequence_number,
+                    'time' => $dispatch->dispatched_at,
+                    'total' => $dispatch->total,
+                    'balance' => $this->payments->dispatchBalance($dispatch),
+                    'status' => $this->status($dispatch->status, $settledReversal),
+                    'payment' => $this->paymentSummary($dispatch->payments),
+                    'dispatched_by' => $dispatch->dispatchedBy?->name,
+                    'cancelled_at' => $dispatch->cancelled_at,
+                    'cancelled_by' => $dispatch->cancelledBy?->name,
+                    'cancellation_reason' => $dispatch->cancellation_reason,
+                    'cancellation_audit' => $this->audit($dispatchAudit),
+                    'items' => $dispatch->items->sortBy('id')->map(
+                        fn ($dispatchItem): array => $this->item(
+                            $dispatchItem->orderItem,
+                            $dispatchItem->net_total,
+                            $audits->first(
+                                fn (OrderCancellationAudit $audit): bool => $audit->scope === OrderCancellationScope::KitchenDispatchItem
+                                    && (int) $audit->order_item_id === (int) $dispatchItem->order_item_id,
+                            ),
                         ),
-                    ),
-                )->values()->all(),
-                'is_current' => false,
-            ])
+                    )->values()->all(),
+                    'is_current' => false,
+                    'is_settled_reversal' => $settledReversal,
+                ];
+            })
             ->values();
 
         $draftItems = $order->items->where('status', OrderItemStatus::Draft)->values();
@@ -99,18 +105,31 @@ class OrderHistoryService
             'summary' => [
                 'total_batches' => $batches->count(),
                 'paid_batches' => $order->kitchenDispatches->where('status', KitchenDispatchStatus::Settled)->count(),
+                'reverted_batches' => $batches->where('is_settled_reversal', true)->count(),
                 'pending_batches' => $order->kitchenDispatches
                     ->whereIn('status', [KitchenDispatchStatus::AwaitingPayment, KitchenDispatchStatus::Released])
                     ->count(),
                 'total' => $order->total,
                 'paid' => $this->payments->paid($order),
+                'reverted' => $batches->where('is_settled_reversal', true)->reduce(
+                    fn (BigDecimal $sum, array $batch): BigDecimal => $sum->plus($batch['total']),
+                    BigDecimal::zero(),
+                )->toScale(2, RoundingMode::HalfUp)->__toString(),
                 'balance' => $this->payments->balance($order),
             ],
         ];
     }
 
-    private function status(KitchenDispatchStatus $status): array
+    private function status(KitchenDispatchStatus $status, bool $settledReversal = false): array
     {
+        if ($status === KitchenDispatchStatus::Cancelled && $settledReversal) {
+            return [
+                'key' => 'reverted',
+                'label' => 'REVERTIDA',
+                'classes' => 'bg-red-100 text-red-700',
+            ];
+        }
+
         return match ($status) {
             KitchenDispatchStatus::Settled => [
                 'key' => 'paid',

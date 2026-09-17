@@ -11,6 +11,7 @@ use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\CancelOrderAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CancelPaidOrderAction;
+use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\FinalizePerBatchTableAction;
@@ -127,8 +128,10 @@ class OrderController extends Controller
         $canCancelDispatchItems = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
             && Gate::allows('cancelItems', $order);
         $canRestoreCancellations = Gate::allows('restoreCancellation', $order);
+        $canReverseSettledDispatches = $order->status === OrderStatus::Paid
+            && Gate::allows('cancelPaid', $order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder', 'canCancelDispatchItems', 'canRestoreCancellations'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder', 'canCancelDispatchItems', 'canRestoreCancellations', 'canReverseSettledDispatches'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
@@ -425,6 +428,26 @@ class OrderController extends Controller
         }
 
         return back()->with('success', 'Tanda anulada. Las demás tandas permanecen activas.');
+    }
+
+    public function cancelSettledDispatch(
+        CancelKitchenDispatchRequest $request,
+        string $order,
+        string $dispatch,
+        CancelSettledKitchenDispatchAction $action,
+    ): RedirectResponse {
+        $order = $this->order($order);
+        Gate::authorize('cancelPaid', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+
+        try {
+            $action->execute($dispatch, $request->user(), $request->validated('reason'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['dispatch' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'Tanda pagada revertida. Las demás tandas permanecen intactas.');
     }
 
     public function cancel(CancelOrderRequest $request, string $order, CancelOrderAction $action): RedirectResponse

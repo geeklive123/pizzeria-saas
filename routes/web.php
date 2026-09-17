@@ -78,6 +78,7 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/items/{item}/cancel', [OrderController::class, 'cancelItem'])->name('orders.items.cancel');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/items/{item}/cancel', [OrderController::class, 'cancelDispatchItem'])->name('orders.dispatches.items.cancel');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/cancel', [OrderController::class, 'cancelDispatch'])->name('orders.dispatches.cancel');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/cancel-settled', [OrderController::class, 'cancelSettledDispatch'])->name('orders.dispatches.cancel-settled');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/items/{item}/restore', [OrderController::class, 'restoreDispatchItem'])->name('orders.dispatches.items.restore');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/restore', [OrderController::class, 'restoreDispatch'])->name('orders.dispatches.restore');
             Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->name('orders.cancel');

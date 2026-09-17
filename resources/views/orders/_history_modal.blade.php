@@ -12,6 +12,7 @@
             <dl class="grid grid-cols-2 gap-3 rounded-2xl bg-slate-50 p-4 text-sm sm:grid-cols-3">
                 <div><dt class="text-xs text-slate-500">Tandas totales</dt><dd class="mt-1 font-bold">{{ $history['summary']['total_batches'] }}</dd></div>
                 <div><dt class="text-xs text-slate-500">Pagadas</dt><dd class="mt-1 font-bold text-emerald-700">{{ $history['summary']['paid_batches'] }}</dd></div>
+                <div><dt class="text-xs text-slate-500">Revertidas</dt><dd class="mt-1 font-bold text-red-700">{{ $history['summary']['reverted_batches'] }}</dd></div>
                 <div><dt class="text-xs text-slate-500">Pendientes</dt><dd class="mt-1 font-bold text-amber-700">{{ $history['summary']['pending_batches'] }}</dd></div>
                 <div><dt class="text-xs text-slate-500">Total consumido</dt><dd class="mt-1 font-bold">{{ \App\Support\UiFormatter::money($history['summary']['total']) }}</dd></div>
                 <div><dt class="text-xs text-slate-500">Total pagado</dt><dd class="mt-1 font-bold">{{ \App\Support\UiFormatter::money($history['summary']['paid']) }}</dd></div>
@@ -20,7 +21,7 @@
 
             <div class="mt-5 space-y-3">
                 @forelse($history['batches'] as $batch)
-                    <details class="group overflow-hidden rounded-2xl border {{ $batch['status']['key'] === 'cancelled' ? 'border-red-200 bg-red-50/40' : 'border-stone-200 bg-white' }}">
+                    <details class="group overflow-hidden rounded-2xl border {{ in_array($batch['status']['key'], ['cancelled', 'reverted'], true) ? 'border-red-200 bg-red-50/40' : 'border-stone-200 bg-white' }}">
                         <summary class="flex cursor-pointer list-none items-center justify-between gap-4 p-4">
                             <div class="min-w-0">
                                 <div class="flex flex-wrap items-center gap-2">
@@ -78,8 +79,11 @@
                                         </div>
                                         <div class="text-right">
                                             <strong class="text-sm">{{ \App\Support\UiFormatter::money($item['original_total']) }}</strong>
-                                            @if($canCancelDispatchItems && ! $batch['is_current'] && $item['status'] !== 'cancelled')
+                                            @if($canCancelDispatchItems && ! $batch['is_current'] && $batch['status']['key'] !== 'paid' && $item['status'] !== 'cancelled')
                                                 <button class="mt-2 block text-xs font-semibold text-red-700" type="button" data-partial-cancel-open data-cancel-kind="item" data-cancel-url="{{ route('orders.dispatches.items.cancel', [$order->ulid, $batch['ulid'], $item['ulid']]) }}">Anular ítem</button>
+                                            @endif
+                                            @if($batch['status']['key'] === 'paid' && $item['status'] !== 'cancelled')
+                                                <p class="mt-2 max-w-64 text-xs font-medium text-amber-700">Esta tanda ya fue pagada. Para anular productos debes revertir la tanda completa.</p>
                                             @endif
                                             @if($canRestoreCancellations && $item['status'] === 'cancelled' && ($item['cancellation_audit'] ?? null) && ! $item['cancellation_audit']['parent_id'] && ! $item['cancellation_audit']['restored_at'])
                                                 <details class="mt-2 text-left">
@@ -112,8 +116,11 @@
                             @if($batch['status']['key'] === 'pending')
                                 <p class="mt-3 text-xs font-semibold text-amber-700">Saldo de la tanda: {{ \App\Support\UiFormatter::money($batch['balance']) }}</p>
                             @endif
-                            @if($canCancelDispatchItems && ! $batch['is_current'] && $batch['status']['key'] !== 'cancelled')
+                            @if($canCancelDispatchItems && ! $batch['is_current'] && ! in_array($batch['status']['key'], ['cancelled', 'paid', 'reverted'], true))
                                 <button class="btn-danger mt-4 w-full" type="button" data-partial-cancel-open data-cancel-kind="dispatch" data-cancel-url="{{ route('orders.dispatches.cancel', [$order->ulid, $batch['ulid']]) }}">Anular tanda completa</button>
+                            @endif
+                            @if($canReverseSettledDispatches && $batch['status']['key'] === 'paid')
+                                <button class="btn-danger mt-4 w-full" type="button" data-settled-reversal-open data-reversal-sequence="{{ $batch['sequence'] }}" data-reversal-total="{{ \App\Support\UiFormatter::money($batch['total']) }}" data-reversal-url="{{ route('orders.dispatches.cancel-settled', [$order->ulid, $batch['ulid']]) }}">Revertir tanda pagada</button>
                             @endif
                             @if($canRestoreCancellations && $batch['status']['key'] === 'cancelled' && ($batch['cancellation_audit'] ?? null) && ! $batch['cancellation_audit']['restored_at'])
                                 <details class="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/50 p-3">
@@ -139,6 +146,55 @@
         </footer>
     </div>
 </dialog>
+
+@if($canReverseSettledDispatches && collect($history['batches'])->contains(fn ($batch) => $batch['status']['key'] === 'paid'))
+<dialog class="m-auto w-[min(34rem,calc(100%_-_2rem))] rounded-3xl bg-white p-0 shadow-2xl backdrop:bg-slate-950/45" data-settled-reversal-modal aria-labelledby="settled-reversal-title">
+    <form class="space-y-4 p-6" method="POST" data-settled-reversal-form>
+        @csrf
+        <div>
+            <h2 class="text-xl font-bold" id="settled-reversal-title">Revertir tanda pagada #<span data-settled-reversal-sequence></span></h2>
+            <p class="mt-2 text-sm text-slate-600">Importe de la tanda: <strong data-settled-reversal-total></strong></p>
+        </div>
+        <div class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+            Esta operación revierte los pagos asociados, compensa la caja cuando corresponda y devuelve al inventario únicamente los productos de esta tanda. Las demás tandas permanecerán intactas.
+        </div>
+        <label class="block">
+            <span class="label">Motivo obligatorio</span>
+            <textarea class="input" name="reason" rows="3" maxlength="500" required data-settled-reversal-reason></textarea>
+        </label>
+        <label class="flex items-start gap-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-950">
+            <input class="mt-1" type="checkbox" name="confirmed" value="1" required data-settled-reversal-confirmed>
+            <span>Confirmo que deseo revertir por completo esta tanda pagada.</span>
+        </label>
+        <div class="flex justify-end gap-2">
+            <button class="btn-secondary" type="button" data-settled-reversal-close>Volver</button>
+            <button class="btn-danger" type="submit">Confirmar reversión</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+    (() => {
+        const modal = document.querySelector('[data-settled-reversal-modal]');
+        if (! modal) return;
+        const form = modal.querySelector('[data-settled-reversal-form]');
+        const reason = modal.querySelector('[data-settled-reversal-reason]');
+        const confirmed = modal.querySelector('[data-settled-reversal-confirmed]');
+        const sequence = modal.querySelector('[data-settled-reversal-sequence]');
+        const total = modal.querySelector('[data-settled-reversal-total]');
+        document.querySelectorAll('[data-settled-reversal-open]').forEach((button) => button.addEventListener('click', () => {
+            form.action = button.dataset.reversalUrl;
+            sequence.textContent = button.dataset.reversalSequence;
+            total.textContent = button.dataset.reversalTotal;
+            reason.value = '';
+            confirmed.checked = false;
+            modal.showModal();
+            reason.focus();
+        }));
+        modal.querySelector('[data-settled-reversal-close]').addEventListener('click', () => modal.close());
+    })();
+</script>
+@endif
 
 @if($canCancelDispatchItems && collect($history['batches'])->contains(fn ($batch) => ! $batch['is_current'] && $batch['status']['key'] !== 'cancelled'))
 <dialog class="m-auto w-[min(32rem,calc(100%_-_2rem))] rounded-3xl bg-white p-0 shadow-2xl backdrop:bg-slate-950/45" data-partial-cancel-modal>

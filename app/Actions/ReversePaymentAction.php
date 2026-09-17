@@ -23,17 +23,34 @@ class ReversePaymentAction
 {
     public function __construct(private readonly RecordCashMovementAction $movements, private readonly CompanyAccessService $access) {}
 
-    public function execute(Payment $payment, string $reason, User $user, bool $forPaidCancellation = false): Payment
-    {
+    public function execute(
+        Payment $payment,
+        string $reason,
+        User $user,
+        bool $forPaidCancellation = false,
+        ?CashSession $reversalSession = null,
+    ): Payment {
         $this->access->ensure($user, $payment->company, Permission::ReversePayments);
         if (blank($reason)) {
             throw new DomainException('Indica el motivo de la reversión.');
         }
 
-        return DB::transaction(function () use ($payment, $reason, $user, $forPaidCancellation): Payment {
-            $session = CashSession::query()->lockForUpdate()->findOrFail($payment->cash_session_id);
+        return DB::transaction(function () use ($payment, $reason, $user, $forPaidCancellation, $reversalSession): Payment {
+            $sessionIds = collect([$payment->cash_session_id, $reversalSession?->getKey()])
+                ->filter()->unique()->sort()->values();
+            $sessions = CashSession::query()->whereIn('id', $sessionIds)
+                ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $payment = Payment::query()->with('order')->lockForUpdate()->findOrFail($payment->id);
-            if ($session->status !== CashSessionStatus::Open) {
+            $sourceSession = $sessions->get($payment->cash_session_id);
+            $session = $sessions->get($reversalSession?->getKey() ?? $payment->cash_session_id);
+            if (! $sourceSession || ! $session
+                || (int) $sourceSession->company_id !== (int) $payment->company_id
+                || (int) $sourceSession->branch_id !== (int) $payment->branch_id
+                || (int) $session->company_id !== (int) $payment->company_id
+                || (int) $session->branch_id !== (int) $payment->branch_id) {
+                throw new DomainException('La sesión usada para la reversión no corresponde al pago.');
+            }
+            if ($payment->method === PaymentMethod::Cash && $session->status !== CashSessionStatus::Open) {
                 throw new DomainException('No se puede revertir el pago porque el turno de caja ya está cerrado.');
             }
             if ($forPaidCancellation) {
@@ -53,7 +70,7 @@ class ReversePaymentAction
                 'branch_id' => $payment->branch_id,
                 'order_id' => $payment->order_id,
                 'kitchen_dispatch_id' => $payment->kitchen_dispatch_id,
-                'cash_session_id' => $payment->cash_session_id,
+                'cash_session_id' => $session->id,
                 'method' => $payment->method,
                 'amount' => $payment->amount,
                 'reference' => $reason,
@@ -73,11 +90,12 @@ class ReversePaymentAction
 
             if ($payment->method === PaymentMethod::Cash) {
                 $cashMovement = CashMovement::query()
-                    ->where('cash_session_id', $session->id)
+                    ->where('cash_session_id', $sourceSession->id)
                     ->where('reference_type', Payment::class)
                     ->where('reference_id', $payment->id)
                     ->whereIn('type', [CashMovementType::SaleCash->value, CashMovementType::AdministrativeTransferIn->value])
                     ->latest('id')
+                    ->lockForUpdate()
                     ->firstOrFail();
                 $this->movements->execute($session, CashMovementType::Reversal, $payment->amount, $user, $reason, $reversal, $cashMovement);
             }
