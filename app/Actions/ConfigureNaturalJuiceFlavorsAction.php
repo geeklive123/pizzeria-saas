@@ -14,11 +14,22 @@ use App\Models\ProductVariant;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use Brick\Math\BigDecimal;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
 class ConfigureNaturalJuiceFlavorsAction
 {
+    public const COMPANY_ID = 1;
+
+    public const BRANCH_ID = 1;
+
+    public const PRODUCT_ID = 29;
+
+    public const HISTORICAL_VARIANT_ID = 63;
+
+    public const EXPECTED_PRICE = '20.00';
+
     public const PRODUCT_NAME = 'JUGOS NATURALES CON FRUTA DE TEMPORADA(CONSULTAR OPCIONES DISPONIBLES) 1Lts. FINES DE SEMANA';
 
     public const HISTORICAL_VARIANT_NAME = 'Única';
@@ -141,6 +152,22 @@ class ConfigureNaturalJuiceFlavorsAction
                     if ($hasMovements) {
                         throw new DomainException($item->name.' ya tiene movimientos sin el marcador inicial.');
                     }
+                    $stock = $item->inventoryStocks()
+                        ->where('branch_id', $branch->getKey())
+                        ->lockForUpdate()
+                        ->first();
+                    $batch = $item->inventoryBatches()
+                        ->where('branch_id', $branch->getKey())
+                        ->lockForUpdate()
+                        ->first();
+                    $reservation = $item->inventoryReservations()
+                        ->where('branch_id', $branch->getKey())
+                        ->lockForUpdate()
+                        ->first();
+                    if (($stock && ! BigDecimal::of($stock->quantity)->isZero())
+                        || $batch || $reservation) {
+                        throw new DomainException($item->name.' ya tiene saldo, lotes o reservas sin el marcador inicial.');
+                    }
                     $this->applyMovement->execute(
                         $company,
                         $branch,
@@ -180,17 +207,23 @@ class ConfigureNaturalJuiceFlavorsAction
     /** @return array{Product, ProductVariant} */
     private function productAndHistoricalVariant(Company $company, bool $lock = false): array
     {
-        $products = Product::query()->forCompany($company)->where('name', self::PRODUCT_NAME);
+        $products = Product::query()->forCompany($company)
+            ->whereKey(self::PRODUCT_ID)
+            ->where('name', self::PRODUCT_NAME);
         $product = ($lock ? $products->lockForUpdate() : $products)->first();
         if (! $product || ! $product->is_active) {
-            throw new DomainException('No se encontró activo el producto actual de Jugos Naturales.');
+            throw new DomainException('El producto 29 no coincide exactamente con Jugos Naturales o no está activo.');
         }
         $variants = ProductVariant::query()->where('company_id', $company->getKey())
+            ->whereKey(self::HISTORICAL_VARIANT_ID)
             ->where('product_id', $product->getKey())
             ->where('name', self::HISTORICAL_VARIANT_NAME);
         $historical = ($lock ? $variants->lockForUpdate() : $variants)->first();
         if (! $historical) {
-            throw new DomainException('No se encontró la variante histórica Única de Jugos Naturales.');
+            throw new DomainException('La variante 63 no coincide exactamente con la variante histórica Única.');
+        }
+        if (! BigDecimal::of($historical->price)->isEqualTo(self::EXPECTED_PRICE)) {
+            throw new DomainException('La variante histórica Única ya no tiene el precio esperado de Bs 20.00.');
         }
 
         return [$product, $historical];
@@ -198,9 +231,11 @@ class ConfigureNaturalJuiceFlavorsAction
 
     private function validateBranch(Company $company, Branch $branch): void
     {
-        if (! $company->is_active || ! $branch->is_active
+        if ((int) $company->getKey() !== self::COMPANY_ID
+            || (int) $branch->getKey() !== self::BRANCH_ID
+            || ! $company->is_active || ! $branch->is_active
             || (int) $branch->company_id !== (int) $company->getKey()) {
-            throw new DomainException('La empresa y sucursal deben estar activas y relacionadas.');
+            throw new DomainException('Esta operación solo admite la empresa 1 y sucursal 1 activas y relacionadas.');
         }
     }
 

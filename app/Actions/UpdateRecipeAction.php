@@ -38,11 +38,17 @@ class UpdateRecipeAction
         $validatedItems = $this->validateItems($company, $items);
 
         return DB::transaction(function () use ($company, $variant, $validatedItems, $name, $isActive): Recipe {
-            ProductVariant::query()
+            $lockedVariant = ProductVariant::query()
                 ->forCompany($company)
                 ->whereKey($variant->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+            if ($isActive
+                && $lockedVariant->inventoryItem()->where('is_active', true)->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages([
+                    'variant' => 'Una variante con stock directo no puede usar una receta activa.',
+                ]);
+            }
 
             $recipe = Recipe::query()
                 ->where('product_variant_id', $variant->getKey())

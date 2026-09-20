@@ -6,20 +6,29 @@ use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\CancelOrderItemAction;
+use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\ConfigureNaturalJuiceFlavorsAction;
 use App\Actions\ConsumeInventoryReservationAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\OpenCashSessionAction;
+use App\Actions\RegisterPaymentAction;
 use App\Actions\SaveProductAction;
+use App\Actions\UpdateRecipeAction;
 use App\Enums\InventoryMovementType;
 use App\Enums\InventoryReservationStatus;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
+use App\Enums\OrderStatus;
 use App\Enums\OrderType;
+use App\Enums\PaymentMethod;
 use App\Enums\ProductType;
 use App\Enums\RecipeComponentType;
 use App\Enums\TableChargeMode;
 use App\Enums\UnitType;
 use App\Exceptions\InsufficientStockException;
 use App\Models\Branch;
+use App\Models\CashRegister;
+use App\Models\CashSession;
 use App\Models\Company;
 use App\Models\Ingredient;
 use App\Models\InventoryItem;
@@ -35,7 +44,9 @@ use App\Models\Recipe;
 use App\Models\RecipeItem;
 use App\Models\Unit;
 use App\Models\User;
+use App\Printing\Renderers\KitchenCommandRenderer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
 
 class NaturalJuiceFlavorStockTest extends TestCase
@@ -109,6 +120,40 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $this->assertSame(1, InventoryMovement::query()->count());
     }
 
+    public function test_command_apply_requires_an_explicit_authorized_actor(): void
+    {
+        $context = $this->context();
+
+        $this->artisan('app:configure-natural-juice-flavors', [
+            '--company' => $context['company']->id,
+            '--branch' => $context['branch']->id,
+            '--apply' => true,
+        ])->expectsOutputToContain('Indica --actor-email')
+            ->assertFailed();
+
+        $this->assertTrue($context['historical']->refresh()->is_active);
+        $this->assertSame(1, $context['product']->variants()->count());
+    }
+
+    public function test_command_apply_with_an_authorized_actor_and_confirmation_is_transactional(): void
+    {
+        $context = $this->context();
+
+        $this->artisan('app:configure-natural-juice-flavors', [
+            '--company' => $context['company']->id,
+            '--branch' => $context['branch']->id,
+            '--actor-email' => $context['owner']->email,
+            '--apply' => true,
+        ])->expectsConfirmation(
+            'Se desactivará Única y se cargará el stock inicial por sabor. ¿Continuar?',
+            'yes',
+        )->assertSuccessful();
+
+        $this->assertFalse($context['historical']->refresh()->is_active);
+        $this->assertSame(4, $context['product']->variants()->where('is_active', true)->count());
+        $this->assertSame(5, InventoryMovement::query()->count());
+    }
+
     public function test_prepared_flavors_keep_direct_stock_when_the_catalog_product_is_saved(): void
     {
         $context = $this->context();
@@ -137,6 +182,137 @@ class NaturalJuiceFlavorStockTest extends TestCase
             ->whereIn('product_variant_id', collect($variants)->pluck('ulid')->map(
                 fn (string $ulid): int => ProductVariant::query()->where('ulid', $ulid)->value('id'),
             ))->where('is_active', true)->count());
+    }
+
+    public function test_configured_prepared_flavors_can_be_saved_through_the_catalog_http_flow(): void
+    {
+        $context = $this->context();
+        $this->configure($context);
+        $variants = $context['product']->variants()->where('is_active', true)
+            ->orderBy('sort_order')->get()->map(fn (ProductVariant $variant): array => [
+                'ulid' => $variant->ulid,
+                'name' => $variant->name,
+                'sku' => null,
+                'price' => $variant->price,
+                'requires_preparation' => '1',
+                'track_stock' => '1',
+                'inventory_unit_id' => $context['unit']->id,
+                'is_active' => '1',
+                'sort_order' => (string) $variant->sort_order,
+            ])->all();
+
+        $this->actingInContext($context)
+            ->put(route('products.update', $context['product']->ulid), [
+                'name' => ConfigureNaturalJuiceFlavorsAction::PRODUCT_NAME,
+                'type' => ProductType::Other->value,
+                'is_active' => '1',
+                'variants' => $variants,
+            ])->assertSessionHasNoErrors();
+
+        $this->assertSame(4, InventoryItem::query()
+            ->whereIn('product_variant_id', $context['product']->variants()
+                ->where('is_active', true)->pluck('id'))
+            ->where('is_active', true)->count());
+    }
+
+    public function test_configuration_aborts_when_the_expected_product_and_historical_variant_ids_do_not_match(): void
+    {
+        $context = $this->context(false);
+
+        $this->expectException(\DomainException::class);
+
+        app(ConfigureNaturalJuiceFlavorsAction::class)
+            ->execute($context['company'], $context['branch'], $context['owner']);
+    }
+
+    public function test_configuration_aborts_if_the_historical_price_changed(): void
+    {
+        $context = $this->context();
+        $context['historical']->update(['price' => '21.00']);
+
+        try {
+            app(ConfigureNaturalJuiceFlavorsAction::class)
+                ->execute($context['company'], $context['branch'], $context['owner']);
+            $this->fail('La configuración no debe inferir un precio distinto al validado.');
+        } catch (\DomainException $exception) {
+            $this->assertStringContainsString('precio esperado', $exception->getMessage());
+        }
+
+        $this->assertTrue($context['historical']->refresh()->is_active);
+        $this->assertTrue($context['recipe']->refresh()->is_active);
+        $this->assertSame(1, $context['product']->variants()->count());
+    }
+
+    public function test_existing_unmarked_movement_aborts_and_rolls_back_flavors_created_earlier(): void
+    {
+        $context = $this->context();
+        $tumbo = ProductVariant::factory()->for($context['company'])->for($context['product'])->create([
+            'name' => 'Tumbo',
+            'price' => '20.00',
+            'requires_preparation' => true,
+        ]);
+        $tumboItem = InventoryItem::query()->create([
+            'company_id' => $context['company']->id,
+            'unit_id' => $context['unit']->id,
+            'product_variant_id' => $tumbo->id,
+            'name' => 'Jugo Natural - Tumbo',
+            'is_active' => true,
+        ]);
+        app(ApplyInventoryMovementAction::class)->execute(
+            $context['company'],
+            $context['branch'],
+            $tumboItem,
+            InventoryMovementType::AdjustmentIn,
+            '1.000',
+            '0.000000',
+            $context['owner'],
+            reason: 'Movimiento manual previo',
+        );
+
+        try {
+            app(ConfigureNaturalJuiceFlavorsAction::class)
+                ->execute($context['company'], $context['branch'], $context['owner']);
+            $this->fail('Un movimiento previo ambiguo debe abortar toda la configuración.');
+        } catch (\DomainException $exception) {
+            $this->assertStringContainsString('movimientos sin el marcador inicial', $exception->getMessage());
+        }
+
+        $this->assertTrue($context['historical']->refresh()->is_active);
+        $this->assertTrue($context['recipe']->refresh()->is_active);
+        $this->assertSame(['Única', 'Tumbo'], $context['product']->variants()
+            ->orderBy('id')->pluck('name')->all());
+        $this->assertSame(2, InventoryMovement::query()->count());
+        $this->assertSame('1.000', InventoryStock::query()
+            ->where('inventory_item_id', $tumboItem->id)->value('quantity'));
+    }
+
+    public function test_existing_stock_without_a_ledger_marker_aborts_instead_of_adding_initial_stock(): void
+    {
+        $context = $this->context();
+        $pineapple = ProductVariant::factory()->for($context['company'])->for($context['product'])->create([
+            'name' => 'Piña',
+            'price' => '20.00',
+            'requires_preparation' => true,
+        ]);
+        $pineappleItem = InventoryItem::query()->create([
+            'company_id' => $context['company']->id,
+            'unit_id' => $context['unit']->id,
+            'product_variant_id' => $pineapple->id,
+            'name' => 'Jugo Natural - Piña',
+            'is_active' => true,
+        ]);
+        InventoryStock::query()->create([
+            'company_id' => $context['company']->id,
+            'branch_id' => $context['branch']->id,
+            'inventory_item_id' => $pineappleItem->id,
+            'quantity' => '2.000',
+            'average_cost' => '0.000000',
+        ]);
+
+        $this->expectException(\DomainException::class);
+
+        app(ConfigureNaturalJuiceFlavorsAction::class)
+            ->execute($context['company'], $context['branch'], $context['owner']);
     }
 
     public function test_catalog_does_not_mix_an_active_recipe_with_direct_stock(): void
@@ -181,6 +357,31 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $this->assertTrue($context['recipe']->refresh()->is_active);
     }
 
+    public function test_catalog_does_not_mix_even_an_empty_active_recipe_with_direct_stock(): void
+    {
+        $context = $this->context();
+        $context['recipe']->items()->delete();
+        $payload = [[
+            'ulid' => $context['historical']->ulid,
+            'name' => 'Única',
+            'sku' => null,
+            'price' => '20.00',
+            'requires_preparation' => true,
+            'track_stock' => true,
+            'inventory_unit_id' => $context['unit']->id,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]];
+
+        $this->expectException(\DomainException::class);
+
+        app(SaveProductAction::class)->execute($context['company'], [
+            'name' => ConfigureNaturalJuiceFlavorsAction::PRODUCT_NAME,
+            'type' => ProductType::Other->value,
+            'is_active' => true,
+        ], $payload, $context['product']);
+    }
+
     public function test_each_sale_consumes_only_its_flavor_once_without_recipe_or_pulp_consumption(): void
     {
         $context = $this->context();
@@ -196,7 +397,7 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $this->assertSame('50.000', InventoryStock::query()
             ->where('inventory_item_id', $context['pulpaItem']->id)->value('quantity'));
 
-        app(DispatchOrderToKitchenAction::class)->execute($order, $context['owner']);
+        $pineappleDispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $context['owner']);
         $this->assertSame('7.000', $this->stock($context, 'Piña'));
         $this->assertSame('11.000', $this->stock($context, 'Maracuyá'));
         $this->assertSame(1, InventoryMovement::query()
@@ -208,6 +409,9 @@ class NaturalJuiceFlavorStockTest extends TestCase
             ->where('reference_type', OrderItem::class)
             ->where('reference_id', $pineappleItem->id)
             ->where('inventory_item_id', $context['pulpaItem']->id)->count());
+        $command = app(KitchenCommandRenderer::class)->render($pineappleDispatch)->plainText;
+        $this->assertStringContainsString('PIÑA', $command);
+        $this->assertStringNotContainsString('ÚNICA', $command);
 
         app(ConsumeInventoryReservationAction::class)->execute($pineappleItem, $context['owner']);
         $this->assertSame('7.000', $this->stock($context, 'Piña'));
@@ -220,6 +424,162 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $this->assertSame(InventoryReservationStatus::Consumed, $passionFruitItem->reservations()->sole()->status);
         $this->assertSame('50.000', InventoryStock::query()
             ->where('inventory_item_id', $context['pulpaItem']->id)->value('quantity'));
+
+        $session = $this->cashSession($context);
+        $movementCount = InventoryMovement::query()->count();
+        app(RegisterPaymentAction::class)->execute(
+            $order->refresh(),
+            $session,
+            PaymentMethod::Qr,
+            '40.00',
+            $context['owner'],
+            'juice-table-at-end',
+            reference: 'QR-JUGOS',
+        );
+        $this->assertSame($movementCount, InventoryMovement::query()->count());
+        $this->assertSame('7.000', $this->stock($context, 'Piña'));
+        $this->assertSame('10.000', $this->stock($context, 'Maracuyá'));
+    }
+
+    public function test_catalog_keeps_pizza_restriction_and_does_not_create_unrequested_stock(): void
+    {
+        $context = $this->context();
+        $pizza = Product::factory()->for($context['company'])->create([
+            'name' => 'Pizza de prueba',
+            'type' => ProductType::Pizza,
+        ]);
+
+        try {
+            app(SaveProductAction::class)->execute($context['company'], [
+                'name' => 'Pizza de prueba',
+                'type' => ProductType::Pizza->value,
+                'is_active' => true,
+            ], [[
+                'name' => 'Grande',
+                'price' => '50.00',
+                'requires_preparation' => true,
+                'track_stock' => true,
+                'inventory_unit_id' => $context['unit']->id,
+                'is_active' => true,
+                'sort_order' => 0,
+            ]], $pizza);
+            $this->fail('Una pizza preparada no debe aceptar stock directo.');
+        } catch (\DomainException $exception) {
+            $this->assertStringContainsString('pizzas controlan inventario', $exception->getMessage());
+        }
+        $this->assertSame(0, $pizza->variants()->count());
+
+        $prepared = Product::factory()->for($context['company'])->create([
+            'name' => 'Preparado sin stock',
+            'type' => ProductType::Other,
+        ]);
+        app(SaveProductAction::class)->execute($context['company'], [
+            'name' => 'Preparado sin stock',
+            'type' => ProductType::Other->value,
+            'is_active' => true,
+        ], [[
+            'name' => 'Única',
+            'price' => '10.00',
+            'requires_preparation' => true,
+            'track_stock' => false,
+            'inventory_unit_id' => null,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]], $prepared);
+        $this->assertNull($prepared->variants()->sole()->inventoryItem);
+    }
+
+    public function test_recipe_editor_cannot_activate_a_recipe_on_a_direct_stock_flavor(): void
+    {
+        $context = $this->context();
+        $this->configure($context);
+        $pineapple = $this->variant($context, 'Piña');
+
+        $this->expectException(ValidationException::class);
+
+        app(UpdateRecipeAction::class)->execute(
+            $context['company'],
+            $pineapple,
+            [[
+                'ingredient_id' => $context['pulpaItem']->ingredient_id,
+                'component_type' => RecipeComponentType::Base->value,
+                'quantity' => '1.000',
+            ]],
+            'Receta accidental',
+            true,
+        );
+    }
+
+    public function test_takeaway_per_batch_payment_consumes_once_and_paid_reversal_restores_once(): void
+    {
+        $context = $this->context();
+        $context['company']->update(['table_charge_mode' => TableChargeMode::PerBatch]);
+        $this->configure($context);
+        $pineapple = $this->variant($context, 'Piña');
+        $order = Order::factory()->for($context['branch'])->create([
+            'company_id' => $context['company']->id,
+            'created_by' => $context['owner']->id,
+            'type' => OrderType::Takeaway,
+            'charge_mode' => TableChargeMode::PerBatch,
+        ]);
+        $item = app(AddOrderItemAction::class)
+            ->execute($order, $pineapple, '1.000', $context['owner']);
+        $dispatch = app(DispatchOrderToKitchenAction::class)
+            ->execute($order, $context['owner']);
+
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->status);
+        $this->assertSame('8.000', $this->stock($context, 'Piña'));
+        $this->assertSame(InventoryReservationStatus::Reserved, $item->reservations()->sole()->status);
+
+        $session = $this->cashSession($context);
+        app(RegisterPaymentAction::class)->execute(
+            $order->refresh(),
+            $session,
+            PaymentMethod::Qr,
+            '20.00',
+            $context['owner'],
+            'juice-takeaway-batch',
+            reference: 'QR-JUGO',
+            dispatch: $dispatch,
+        );
+
+        $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+        $this->assertSame('7.000', $this->stock($context, 'Piña'));
+        $this->assertSame(1, InventoryMovement::query()
+            ->where('reference_type', OrderItem::class)
+            ->where('reference_id', $item->id)
+            ->where('type', InventoryMovementType::OrderConsumption->value)->count());
+
+        app(RegisterPaymentAction::class)->execute(
+            $order,
+            $session,
+            PaymentMethod::Qr,
+            '20.00',
+            $context['owner'],
+            'juice-takeaway-batch',
+            reference: 'QR-JUGO',
+            dispatch: $dispatch,
+        );
+        $this->assertSame('7.000', $this->stock($context, 'Piña'));
+
+        app(CancelSettledKitchenDispatchAction::class)
+            ->execute($dispatch->refresh(), $context['owner'], 'Devolución de jugo');
+        $this->assertSame('8.000', $this->stock($context, 'Piña'));
+        $this->assertSame(1, InventoryMovement::query()
+            ->where('type', InventoryMovementType::Reversal->value)
+            ->whereHas('reversalOf', fn ($query) => $query
+                ->where('reference_type', OrderItem::class)
+                ->where('reference_id', $item->id))
+            ->count());
+
+        try {
+            app(CancelSettledKitchenDispatchAction::class)
+                ->execute($dispatch->refresh(), $context['owner'], 'Segundo intento');
+            $this->fail('La reversión pagada no debe poder duplicarse.');
+        } catch (\DomainException) {
+            $this->assertSame('8.000', $this->stock($context, 'Piña'));
+        }
     }
 
     public function test_pos_lists_flavors_hides_unique_and_backend_blocks_exhausted_stock(): void
@@ -288,7 +648,7 @@ class NaturalJuiceFlavorStockTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    private function context(): array
+    private function context(bool $useExpectedIds = true): array
     {
         $company = Company::factory()->create(['table_charge_mode' => TableChargeMode::AtEnd]);
         $branch = Branch::factory()->for($company)->create();
@@ -297,18 +657,26 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $unit = Unit::factory()->for($company)->create([
             'name' => 'Unidad', 'symbol' => 'u', 'type' => UnitType::Unit,
         ]);
-        $product = Product::factory()->for($company)->create([
+        $productAttributes = [
             'name' => ConfigureNaturalJuiceFlavorsAction::PRODUCT_NAME,
             'type' => ProductType::Other,
             'is_active' => true,
-        ]);
-        $historical = ProductVariant::factory()->for($company)->for($product)->create([
+        ];
+        if ($useExpectedIds) {
+            $productAttributes['id'] = ConfigureNaturalJuiceFlavorsAction::PRODUCT_ID;
+        }
+        $product = Product::factory()->for($company)->create($productAttributes);
+        $historicalAttributes = [
             'name' => 'Única',
             'size_key' => 'unit',
             'price' => '20.00',
             'requires_preparation' => true,
             'is_active' => true,
-        ]);
+        ];
+        if ($useExpectedIds) {
+            $historicalAttributes['id'] = ConfigureNaturalJuiceFlavorsAction::HISTORICAL_VARIANT_ID;
+        }
+        $historical = ProductVariant::factory()->for($company)->for($product)->create($historicalAttributes);
         $pulpa = Ingredient::factory()->for($company)->for($unit)->create(['name' => 'Pulpa de fruta']);
         $pulpaItem = InventoryItem::query()->create([
             'company_id' => $company->id,
@@ -385,5 +753,17 @@ class NaturalJuiceFlavorStockTest extends TestCase
             'active_company_id' => $context['company']->id,
             'active_branch_id' => $context['branch']->id,
         ]);
+    }
+
+    private function cashSession(array $context): CashSession
+    {
+        $register = CashRegister::query()->firstOrCreate([
+            'company_id' => $context['company']->id,
+            'branch_id' => $context['branch']->id,
+            'name' => 'Caja de prueba',
+        ], ['is_active' => true]);
+
+        return app(OpenCashSessionAction::class)
+            ->execute($register, '0.00', $context['owner']);
     }
 }

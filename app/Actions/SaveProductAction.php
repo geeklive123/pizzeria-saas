@@ -49,7 +49,7 @@ class SaveProductAction
                 $kept[] = $variant->getKey();
 
                 $inventoryItem = $variant->inventoryItem()->first();
-                $hasActiveRecipe = $variant->recipe()->where('is_active', true)->whereHas('items')->exists();
+                $hasActiveRecipe = $variant->recipe()->where('is_active', true)->exists();
                 if ($trackStock && $product->type !== ProductType::Pizza && $hasActiveRecipe) {
                     throw new DomainException('Una variante con receta activa no puede controlar stock directo.');
                 }

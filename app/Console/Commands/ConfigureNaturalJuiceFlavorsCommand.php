@@ -123,14 +123,15 @@ class ConfigureNaturalJuiceFlavorsCommand extends Command
     private function resolveActor(Company $company): User
     {
         $email = strtolower(trim((string) $this->option('actor-email')));
+        if ($email === '') {
+            throw new DomainException('Indica --actor-email para aplicar la configuración.');
+        }
         $query = Membership::query()
             ->where('company_id', $company->getKey())
             ->where('is_active', true)
             ->whereIn('role', [MembershipRole::Owner->value, MembershipRole::Admin->value])
             ->with(['user', 'permissionOverrides']);
-        if ($email !== '') {
-            $query->whereHas('user', fn (Builder $users): Builder => $users->where('email', $email));
-        }
+        $query->whereHas('user', fn (Builder $users): Builder => $users->where('email', $email));
         $membership = $query->get()->first(
             fn (Membership $membership): bool => $membership->allows(Permission::ManageCatalog)
                 && $membership->allows(Permission::ManageInventory),

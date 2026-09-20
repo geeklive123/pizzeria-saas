@@ -67,10 +67,11 @@ class ProductRequest extends FormRequest
                         continue;
                     }
 
-                    if ($variant['requires_preparation'] ?? false) {
+                    if (($variant['requires_preparation'] ?? false)
+                        && $this->input('type') === ProductType::Pizza->value) {
                         $validator->errors()->add(
                             "variants.{$index}.track_stock",
-                            'El control de stock directo solo aplica a variantes que no van a cocina.',
+                            'Las pizzas controlan inventario mediante recetas y packaging.',
                         );
                     }
 
