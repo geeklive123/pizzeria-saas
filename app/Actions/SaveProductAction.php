@@ -34,8 +34,8 @@ class SaveProductAction
                 $inventoryUnitId = $variantData['inventory_unit_id'] ?? null;
                 unset($variantData['track_stock'], $variantData['inventory_unit_id']);
 
-                if ($trackStock && $variantData['requires_preparation']) {
-                    throw new DomainException('Solo las variantes de venta directa pueden controlar stock mediante un artículo de inventario.');
+                if ($trackStock && $variantData['requires_preparation'] && $product->type === ProductType::Pizza) {
+                    throw new DomainException('Las pizzas controlan inventario mediante recetas y packaging.');
                 }
 
                 $variantData['sku'] = filled($variantData['sku'] ?? null) ? $variantData['sku'] : null;
@@ -49,7 +49,12 @@ class SaveProductAction
                 $kept[] = $variant->getKey();
 
                 $inventoryItem = $variant->inventoryItem()->first();
-                if (! $variant->requires_preparation && ($trackStock || $inventoryItem)) {
+                $hasActiveRecipe = $variant->recipe()->where('is_active', true)->whereHas('items')->exists();
+                if ($trackStock && $product->type !== ProductType::Pizza && $hasActiveRecipe) {
+                    throw new DomainException('Una variante con receta activa no puede controlar stock directo.');
+                }
+
+                if (($trackStock || $inventoryItem) && ! ($variant->requires_preparation && $hasActiveRecipe)) {
                     if (! $inventoryItem && ! $inventoryUnitId) {
                         throw new DomainException('Selecciona la unidad de inventario para controlar el stock de la variante.');
                     }
