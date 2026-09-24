@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\CancelOrderItemAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
@@ -13,6 +14,7 @@ use App\Actions\OpenCashSessionAction;
 use App\Actions\OpenTableOrderAction;
 use App\Actions\RegisterMixedPaymentAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\ReversePaymentAction;
 use App\Enums\InventoryMovementType;
 use App\Enums\InventoryReservationStatus;
 use App\Enums\KitchenDispatchStatus;
@@ -176,6 +178,34 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertPerBatchDiscountCanBeAppliedBeforePayment(PaymentMethod::Cash);
     }
 
+    public function test_payment_idempotency_key_cannot_be_reused_for_another_dispatch(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::PerBatch);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
+        $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'same-key', dispatch: $first);
+
+        $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.payments.store', $order->ulid), [
+                'method' => PaymentMethod::Qr->value,
+                'amount' => '100.00',
+                'kitchen_dispatch' => $second->ulid,
+                'idempotency_key' => 'same-key',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasErrors('payment');
+
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $second->refresh()->status);
+        $this->assertSame('100.00', app(OrderPaymentService::class)->dispatchBalance($second));
+    }
 
     public function test_per_batch_discount_can_be_applied_before_a_qr_payment(): void
     {
@@ -210,6 +240,30 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('100.00', Payment::query()->where('kitchen_dispatch_id', $first->id)->sole()->amount);
     }
 
+    public function test_per_batch_discount_ignores_and_zeroes_a_cancelled_dispatched_item(): void
+    {
+        [$company, $branch, $owner] = $this->context(TableChargeMode::PerBatch);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
+        $cancelled = $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $active = $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        app(CancelKitchenDispatchItemAction::class)->execute($cancelled, $owner, 'Cliente cambiÃ³ el pedido');
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.dispatches.discount', [$order->ulid, $dispatch->ulid]), ['discount_percentage' => '10'])
+            ->assertRedirect(route('orders.show', $order->ulid))
+            ->assertSessionHasNoErrors();
+
+        $cancelledLine = $dispatch->items()->where('order_item_id', $cancelled->id)->sole();
+        $activeLine = $dispatch->items()->where('order_item_id', $active->id)->sole();
+        $this->assertSame('0.00', $cancelledLine->gross_total);
+        $this->assertSame('0.00', $cancelledLine->net_total);
+        $this->assertSame('100.00', $activeLine->gross_total);
+        $this->assertSame('90.00', $activeLine->net_total);
+        $this->assertSame('90.00', $dispatch->refresh()->total);
+    }
 
     public function test_another_company_cannot_update_a_pending_dispatch_discount(): void
     {
@@ -346,12 +400,55 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertAtEndDiscountCanBeRestoredBeforePayment(PaymentMethod::Cash);
     }
 
+    public function test_at_end_discount_ignores_and_zeroes_a_cancelled_dispatched_item(): void
+    {
+        [$company, $branch, $owner] = $this->context(TableChargeMode::AtEnd);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::AtEnd);
+        $cancelled = $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $active = $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        app(CancelKitchenDispatchItemAction::class)->execute($cancelled, $owner, 'Cliente cambiÃ³ el pedido');
+        app(MarkOrderReadyForPaymentAction::class)->execute($order->refresh(), $owner, '10');
+
+        $cancelledLine = $dispatch->items()->where('order_item_id', $cancelled->id)->sole();
+        $activeLine = $dispatch->items()->where('order_item_id', $active->id)->sole();
+        $this->assertSame('0.00', $cancelledLine->gross_total);
+        $this->assertSame('0.00', $cancelledLine->net_total);
+        $this->assertSame('100.00', $activeLine->gross_total);
+        $this->assertSame('90.00', $activeLine->net_total);
+        $this->assertSame('90.00', $dispatch->refresh()->total);
+        $this->assertSame('90.00', $order->refresh()->total);
+    }
 
     public function test_at_end_discount_can_be_restored_before_a_qr_payment_without_a_new_dispatch_or_inventory_movement(): void
     {
         $this->assertAtEndDiscountCanBeRestoredBeforePayment(PaymentMethod::Qr);
     }
 
+    public function test_at_end_discount_cannot_change_after_a_reversed_payment(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::AtEnd);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::AtEnd);
+        $this->financialItem($order, $company, $owner, '200.00', '200.00', true);
+        app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        app(MarkOrderReadyForPaymentAction::class)->execute($order->refresh(), $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $payment = app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::Qr, '10.00', $owner, 'reversed-before-discount');
+        app(ReversePaymentAction::class)->execute($payment, 'Error de cobro', $owner);
+
+        try {
+            app(MarkOrderReadyForPaymentAction::class)->execute($order->refresh(), $owner, '10');
+            $this->fail('El descuento se modifico despues de existir historial de pagos.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('primer pago', $exception->getMessage());
+        }
+
+        $this->assertSame('0.00', $order->refresh()->discount_total);
+        $this->assertSame('200.00', $order->total);
+    }
 
     public function test_takeaway_closes_when_a_later_draft_item_is_cancelled_after_the_dispatch_was_fully_paid(): void
     {

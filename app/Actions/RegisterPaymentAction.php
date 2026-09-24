@@ -46,7 +46,7 @@ class RegisterPaymentAction
         $this->access->ensure($user, $order->company, Permission::CreatePayments);
         $existing = Payment::query()->forCompany($order->company)->where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
-            return $this->validateDuplicate($existing, $order, $method, $amount);
+            return $this->validateDuplicate($existing, $order, $method, $amount, $dispatch);
         }
 
         try {
@@ -56,7 +56,7 @@ class RegisterPaymentAction
                 $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
                 $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
                 if ($duplicate) {
-                    return $this->validateDuplicate($duplicate, $order, $method, $amount);
+                    return $this->validateDuplicate($duplicate, $order, $method, $amount, $dispatch);
                 }
                 if ($session->status !== CashSessionStatus::Open
                     || (int) $session->company_id !== (int) $order->company_id
@@ -120,15 +120,21 @@ class RegisterPaymentAction
         } catch (QueryException $exception) {
             $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
             if ($duplicate) {
-                return $this->validateDuplicate($duplicate, $order, $method, $amount);
+                return $this->validateDuplicate($duplicate, $order, $method, $amount, $dispatch);
             }
             throw $exception;
         }
     }
 
-    private function validateDuplicate(Payment $payment, Order $order, PaymentMethod $method, int|string $amount): Payment
-    {
+    private function validateDuplicate(
+        Payment $payment,
+        Order $order,
+        PaymentMethod $method,
+        int|string $amount,
+        ?KitchenDispatch $dispatch,
+    ): Payment {
         if ((int) $payment->order_id !== (int) $order->id
+            || (int) $payment->kitchen_dispatch_id !== (int) $dispatch?->getKey()
             || $payment->method !== $method
             || ! BigDecimal::of($payment->amount)->isEqualTo(BigDecimal::of($amount))) {
             throw new DomainException('La operación de pago ya fue utilizada con datos diferentes.');

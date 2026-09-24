@@ -59,7 +59,16 @@ class OrderFinancialService
         $dispatch->loadMissing('items.orderItem.sections');
         $snapshot = $this->preview($dispatch->items->map->orderItem, $percentage);
         foreach ($dispatch->items as $dispatchItem) {
-            $line = $snapshot['lines'][$dispatchItem->order_item_id];
+            $line = $snapshot['lines'][$dispatchItem->order_item_id] ?? null;
+            if ($line === null) {
+                $dispatchItem->forceFill([
+                    'gross_total' => '0.00', 'pizza_base_total' => '0.00',
+                    'extras_total' => '0.00', 'other_total' => '0.00',
+                    'discount_total' => '0.00', 'net_total' => '0.00',
+                ])->save();
+
+                continue;
+            }
             $dispatchItem->forceFill([
                 'financial_type' => $line['type'],
                 'gross_total' => $line['gross'],
@@ -89,8 +98,17 @@ class OrderFinancialService
         $order->load(['items.sections', 'kitchenDispatches.items.orderItem.sections']);
         $snapshot = $this->preview($order->items, $percentage);
         foreach ($order->kitchenDispatches as $dispatch) {
-            $dispatchLines = $dispatch->items->map(function ($dispatchItem) use ($snapshot): OrderItem {
-                $line = $snapshot['lines'][$dispatchItem->order_item_id];
+            $dispatchLines = $dispatch->items->map(function ($dispatchItem) use ($snapshot): ?OrderItem {
+                $line = $snapshot['lines'][$dispatchItem->order_item_id] ?? null;
+                if ($line === null) {
+                    $dispatchItem->forceFill([
+                        'gross_total' => '0.00', 'pizza_base_total' => '0.00',
+                        'extras_total' => '0.00', 'other_total' => '0.00',
+                        'discount_total' => '0.00', 'net_total' => '0.00',
+                    ])->save();
+
+                    return null;
+                }
                 $dispatchItem->forceFill([
                     'financial_type' => $line['type'], 'gross_total' => $line['gross'],
                     'pizza_base_total' => $line['pizza_base'], 'extras_total' => $line['extras'],
@@ -98,7 +116,7 @@ class OrderFinancialService
                 ])->save();
 
                 return $dispatchItem->orderItem;
-            });
+            })->filter();
             $dispatchSnapshot = $this->preview($dispatchLines, $percentage);
             $dispatch->forceFill([
                 'gross_subtotal' => $dispatchSnapshot['gross'], 'pizza_base_subtotal' => $dispatchSnapshot['pizza_base'],
