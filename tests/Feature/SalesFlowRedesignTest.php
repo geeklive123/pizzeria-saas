@@ -171,6 +171,64 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame($dispatchCount, $order->kitchenDispatches()->count());
     }
 
+    public function test_per_batch_discount_can_be_applied_before_a_cash_payment(): void
+    {
+        $this->assertPerBatchDiscountCanBeAppliedBeforePayment(PaymentMethod::Cash);
+    }
+
+
+    public function test_per_batch_discount_can_be_applied_before_a_qr_payment(): void
+    {
+        $this->assertPerBatchDiscountCanBeAppliedBeforePayment(PaymentMethod::Qr);
+    }
+
+    public function test_updating_a_pending_dispatch_discount_does_not_modify_another_dispatch(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::PerBatch);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
+        $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'first-dispatch', dispatch: $first);
+
+        $this->financialItem($order, $company, $owner, '120.00', '120.00', true);
+        $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.dispatches.discount', [$order->ulid, $second->ulid]), ['discount_percentage' => '10'])
+            ->assertRedirect(route('orders.show', $order->ulid))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('100.00', $first->refresh()->total);
+        $this->assertSame('0.00', $first->discount_total);
+        $this->assertSame(KitchenDispatchStatus::Settled, $first->status);
+        $this->assertSame('108.00', $second->refresh()->total);
+        $this->assertSame('12.00', $second->discount_total);
+        $this->assertSame(2, $order->kitchenDispatches()->count());
+        $this->assertSame('100.00', Payment::query()->where('kitchen_dispatch_id', $first->id)->sole()->amount);
+    }
+
+
+    public function test_another_company_cannot_update_a_pending_dispatch_discount(): void
+    {
+        [$company, $branch, $owner] = $this->context(TableChargeMode::PerBatch);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
+        $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+
+        [$otherCompany, $otherBranch, $otherOwner] = $this->context(TableChargeMode::PerBatch);
+        $this->actingAs($otherOwner)
+            ->withSession(['active_company_id' => $otherCompany->id, 'active_branch_id' => $otherBranch->id])
+            ->post(route('orders.dispatches.discount', [$order->ulid, $dispatch->ulid]), ['discount_percentage' => '10'])
+            ->assertNotFound();
+
+        $this->assertSame('100.00', $dispatch->refresh()->total);
+        $this->assertSame('0.00', $dispatch->discount_total);
+    }
+
     public function test_quick_cash_with_more_received_keeps_the_payment_at_balance_and_records_change(): void
     {
         [$company, $branch, $owner, , $order, $dispatch] = $this->paymentBatch('38.00');
@@ -198,7 +256,7 @@ class SalesFlowRedesignTest extends TestCase
         foreach (['38.01', '-0.01'] as $invalidCash) {
             try {
                 $action->execute($order->refresh(), $session, $invalidCash, $owner, 'invalid-'.$invalidCash, dispatch: $dispatch->refresh());
-                $this->fail('El efectivo inválido debió rechazarse.');
+                $this->fail('El efectivo invÃ¡lido debiÃ³ rechazarse.');
             } catch (DomainException) {
                 $this->assertDatabaseCount('payments', 0);
             }
@@ -232,7 +290,7 @@ class SalesFlowRedesignTest extends TestCase
 
         try {
             app(RegisterMixedPaymentAction::class)->execute($order, $session, '20.00', $owner, 'mixed-atomic', dispatch: $dispatch);
-            $this->fail('El QR forzado debía fallar.');
+            $this->fail('El QR forzado debÃ­a fallar.');
         } catch (QueryException) {
             $this->assertDatabaseCount('payments', 0);
             $this->assertDatabaseMissing('cash_movements', ['type' => 'sale_cash']);
@@ -282,6 +340,18 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertSame('Daniela', $order->customer_name);
     }
+
+    public function test_at_end_discount_can_be_restored_before_a_cash_payment_without_a_new_dispatch_or_inventory_movement(): void
+    {
+        $this->assertAtEndDiscountCanBeRestoredBeforePayment(PaymentMethod::Cash);
+    }
+
+
+    public function test_at_end_discount_can_be_restored_before_a_qr_payment_without_a_new_dispatch_or_inventory_movement(): void
+    {
+        $this->assertAtEndDiscountCanBeRestoredBeforePayment(PaymentMethod::Qr);
+    }
+
 
     public function test_takeaway_closes_when_a_later_draft_item_is_cancelled_after_the_dispatch_was_fully_paid(): void
     {
@@ -429,5 +499,114 @@ class SalesFlowRedesignTest extends TestCase
     private function stock(Branch $branch, InventoryItem $item): string
     {
         return InventoryStock::query()->where('branch_id', $branch->id)->where('inventory_item_id', $item->id)->value('quantity');
+    }
+
+    private function assertAtEndDiscountCanBeRestoredBeforePayment(PaymentMethod $method): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::AtEnd);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::AtEnd);
+        $this->financialItem($order, $company, $owner, '90.00', '100.00', true);
+        app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.request-payment', $order->ulid))
+            ->assertRedirect(route('orders.show', $order->ulid));
+
+        $this->assertSame(OrderStatus::ReadyForPayment, $order->refresh()->status);
+        $this->actingAs($owner)->withSession($context)
+            ->get(route('orders.show', $order->ulid))
+            ->assertOk()
+            ->assertSee('ACTUALIZAR DESCUENTO');
+
+        $dispatchCount = $order->kitchenDispatches()->count();
+        $inventoryMovementCount = InventoryMovement::query()->count();
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.request-payment', $order->ulid), ['discount_percentage' => '10'])
+            ->assertRedirect(route('orders.show', $order->ulid))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(OrderStatus::ReadyForPayment, $order->refresh()->status);
+        $this->assertSame('10.00', $order->discount_percentage);
+        $this->assertSame('9.00', $order->discount_total);
+        $this->assertSame('91.00', $order->total);
+        $this->assertSame($dispatchCount, $order->kitchenDispatches()->count());
+        $this->assertSame($inventoryMovementCount, InventoryMovement::query()->count());
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.payments.store', $order->ulid), [
+                'method' => $method->value,
+                'amount' => '91.00',
+                'idempotency_key' => 'at-end-discount-'.$method->value,
+            ])->assertRedirect(route('orders.show', $order->ulid));
+
+        $payment = Payment::query()->where('order_id', $order->id)->sole();
+        $this->assertSame($method, $payment->method);
+        $this->assertSame('91.00', $payment->amount);
+        $this->assertSame($session->id, $payment->cash_session_id);
+        $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order));
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+        $this->assertSame($dispatchCount, $order->kitchenDispatches()->count());
+        $this->assertSame($inventoryMovementCount, InventoryMovement::query()->count());
+    }
+
+    private function assertPerBatchDiscountCanBeAppliedBeforePayment(PaymentMethod $method): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::PerBatch);
+        $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
+        $order = app(OpenTableOrderAction::class)->execute($company, $branch, $table, $owner, null, TableChargeMode::PerBatch);
+        $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+
+        $this->assertSame(1, $dispatch->sequence_number);
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->status);
+        $this->assertSame('100.00', $dispatch->total);
+        $this->actingAs($owner)->withSession($context)
+            ->get(route('orders.show', $order->ulid))
+            ->assertOk()
+            ->assertSee('ACTUALIZAR DESCUENTO DE TANDA');
+
+        $dispatchCount = $order->kitchenDispatches()->count();
+        $inventoryMovementCount = InventoryMovement::query()->count();
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.dispatches.discount', [$order->ulid, $dispatch->ulid]), ['discount_percentage' => '10'])
+            ->assertRedirect(route('orders.show', $order->ulid))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('10.00', $dispatch->refresh()->discount_percentage);
+        $this->assertSame('10.00', $dispatch->discount_total);
+        $this->assertSame('90.00', $dispatch->total);
+        $this->assertSame($dispatchCount, $order->kitchenDispatches()->count());
+        $this->assertSame($inventoryMovementCount, InventoryMovement::query()->count());
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.payments.store', $order->ulid), [
+                'method' => $method->value,
+                'amount' => '90.00',
+                'kitchen_dispatch' => $dispatch->ulid,
+                'idempotency_key' => 'per-batch-discount-'.$method->value,
+            ])->assertRedirect(route('orders.show', $order->ulid));
+
+        $payment = Payment::query()->where('kitchen_dispatch_id', $dispatch->id)->sole();
+        $this->assertSame($method, $payment->method);
+        $this->assertSame('90.00', $payment->amount);
+        $this->assertSame($session->id, $payment->cash_session_id);
+        $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
+
+        $this->actingAs($owner)->withSession($context)
+            ->post(route('orders.dispatches.discount', [$order->ulid, $dispatch->ulid]), ['discount_percentage' => '20'])
+            ->assertRedirect(route('orders.show', $order->ulid))
+            ->assertSessionHasErrors('order');
+
+        $this->assertSame('10.00', $dispatch->refresh()->discount_percentage);
+        $this->assertSame('90.00', $dispatch->total);
+        $this->assertSame($dispatchCount, $order->kitchenDispatches()->count());
+        $this->assertSame($inventoryMovementCount, InventoryMovement::query()->count());
     }
 }

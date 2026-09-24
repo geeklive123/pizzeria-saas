@@ -22,6 +22,7 @@ use App\Actions\RestoreCancelledKitchenDispatchAction;
 use App\Actions\RestoreCancelledKitchenDispatchItemAction;
 use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\UpdateConfiguredPizzaAction;
+use App\Actions\UpdateKitchenDispatchDiscountAction;
 use App\Actions\UpdateOrderCustomerAction;
 use App\Actions\UpdateOrderItemQuantityAction;
 use App\Enums\KitchenDispatchStatus;
@@ -29,6 +30,7 @@ use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PaymentStatus;
+use App\Enums\Permission;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\ProductType;
 use App\Http\Requests\AddOrderItemRequest;
@@ -41,6 +43,7 @@ use App\Http\Requests\OrderCustomerRequest;
 use App\Http\Requests\OrderHistoryFilterRequest;
 use App\Http\Requests\RestoreCancellationRequest;
 use App\Http\Requests\TakeawayOrderRequest;
+use App\Http\Requests\UpdateKitchenDispatchDiscountRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
 use App\Models\ModifierOption;
@@ -114,6 +117,7 @@ class OrderController extends Controller
         $pendingDispatch?->load(['items.orderItem.productVariant.product', 'items.orderItem.sections', 'payments.receivedBy']);
         $pendingPaid = $pendingDispatch ? $payments->dispatchPaid($pendingDispatch) : '0.00';
         $pendingBalance = $pendingDispatch ? $payments->dispatchBalance($pendingDispatch) : '0.00';
+        $pendingHasPayments = $pendingDispatch?->payments()->exists() ?? false;
         $cashSession = $cashSessions->forUser($this->company(), $this->branch(), request()->user());
         $paymentClass = Payment::class;
         $idempotencyCash = (string) Str::ulid();
@@ -122,6 +126,8 @@ class OrderController extends Controller
         $idempotencyMixedQr = (string) Str::ulid();
         $orderPaid = $payments->paid($order);
         $orderBalance = $payments->balance($order);
+        $orderHasPayments = $order->payments()->exists();
+        $canApplyOrderDiscount = request()->user()->canForCompany(Permission::ApplyOrderDiscounts, $order->company_id);
         $orderHistory = $history->forOrder($order);
         $canCancelOrder = in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)
             && ! $order->payments()->where('status', PaymentStatus::Completed->value)->exists();
@@ -131,7 +137,7 @@ class OrderController extends Controller
         $canReverseSettledDispatches = $order->status === OrderStatus::Paid
             && Gate::allows('cancelPaid', $order);
 
-        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHistory', 'canCancelOrder', 'canCancelDispatchItems', 'canRestoreCancellations', 'canReverseSettledDispatches'));
+        return view('orders.show', compact('order', 'products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions', 'lastDispatch', 'draftFinancial', 'pendingDispatch', 'pendingPaid', 'pendingBalance', 'pendingHasPayments', 'cashSession', 'paymentClass', 'idempotencyCash', 'idempotencyQr', 'idempotencyMixedCash', 'idempotencyMixedQr', 'orderPaid', 'orderBalance', 'orderHasPayments', 'canApplyOrderDiscount', 'orderHistory', 'canCancelOrder', 'canCancelDispatchItems', 'canRestoreCancellations', 'canReverseSettledDispatches'));
     }
 
     public function updateCustomer(OrderCustomerRequest $request, string $order, UpdateOrderCustomerAction $action): RedirectResponse
@@ -257,6 +263,26 @@ class OrderController extends Controller
         }
 
         return redirect()->route('tables.index')->with('success', 'Mesa finalizada y liberada sin generar un nuevo cobro.');
+    }
+
+    public function updateDispatchDiscount(
+        UpdateKitchenDispatchDiscountRequest $request,
+        string $order,
+        string $dispatch,
+        UpdateKitchenDispatchDiscountAction $action,
+    ): RedirectResponse {
+        $order = $this->order($order);
+        Gate::authorize('update', $order);
+        $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
+
+        try {
+            $action->execute($dispatch, $request->user(), $request->validated('discount_percentage'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['order' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('orders.show', $order->ulid)->with('success', 'Descuento de tanda actualizado.');
     }
 
     public function printKitchen(string $order, string $dispatch, PrintKitchenDispatchAction $action): RedirectResponse

@@ -4,7 +4,7 @@ namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class PrepareCheckoutRequest extends FormRequest
+class UpdateKitchenDispatchDiscountRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -13,6 +13,6 @@ class PrepareCheckoutRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['discount_percentage' => ['nullable', 'decimal:0,2', 'gte:0', 'lte:100']];
+        return ['discount_percentage' => ['required', 'decimal:0,2', 'gte:0', 'lte:100']];
     }
 }

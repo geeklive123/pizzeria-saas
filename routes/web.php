@@ -72,6 +72,7 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/dispatch', [OrderController::class, 'dispatch'])->name('orders.dispatch');
             Route::post('/orders/{order}/finalize-table', [OrderController::class, 'finalizeTable'])->name('orders.finalize-table');
             Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/print', [OrderController::class, 'printKitchen'])->name('orders.kitchen.print');
+            Route::post('/orders/{order}/kitchen-dispatches/{dispatch}/discount', [OrderController::class, 'updateDispatchDiscount'])->name('orders.dispatches.discount');
             Route::post('/orders/{order}/account/print', [OrderController::class, 'printAccount'])->name('orders.account.print');
             Route::put('/orders/{order}/items/{item}', [OrderController::class, 'updateItem'])->name('orders.items.update');
             Route::post('/orders/{order}/items/{item}/served', [OrderController::class, 'serveItem'])->name('orders.items.served');
