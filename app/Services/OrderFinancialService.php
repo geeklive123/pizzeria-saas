@@ -181,7 +181,10 @@ class OrderFinancialService
     {
         $gross = BigDecimal::of($item->line_total)->toScale(2, RoundingMode::HalfUp);
         if ($item->promotion_id || ($item->configuration_snapshot['type'] ?? null) === 'promotion') {
-            return $this->lineValues('promotion', $gross, BigDecimal::zero(), BigDecimal::zero(), $gross);
+            $promotionExtras = BigDecimal::of($item->configuration_snapshot['promotion']['extras_price'] ?? '0.00')
+                ->multipliedBy($item->quantity)->toScale(2, RoundingMode::HalfUp);
+
+            return $this->lineValues('promotion', $gross, BigDecimal::zero(), $promotionExtras, $gross->minus($promotionExtras));
         }
         if (($item->configuration_snapshot['type'] ?? null) === 'standalone_extra') {
             return $this->lineValues('extra', $gross, BigDecimal::zero(), $gross, BigDecimal::zero());

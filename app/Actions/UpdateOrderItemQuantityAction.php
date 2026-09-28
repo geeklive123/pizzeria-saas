@@ -55,6 +55,9 @@ class UpdateOrderItemQuantityAction
             if ($item->status !== OrderItemStatus::Draft || $item->order->status !== OrderStatus::Open) {
                 throw new DomainException('Solo un producto en borrador de un pedido abierto puede editarse.');
             }
+            if (($item->configuration_snapshot['pizzas'] ?? []) !== []) {
+                throw new DomainException('Una promoción con pizzas se reemplaza como unidad completa; no puede editarse parcialmente.');
+            }
             $current = BigDecimal::of($item->quantity);
             if ($new->isGreaterThan($current)) {
                 $this->reserve->execute($item, (string) $new->minus($current));

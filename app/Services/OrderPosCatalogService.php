@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\InventoryReservationStatus;
+use App\Enums\OrderType;
 use App\Enums\ProductModifierPurpose;
 use App\Enums\ProductType;
 use App\Models\Branch;
@@ -23,7 +24,7 @@ class OrderPosCatalogService
     ) {}
 
     /** @return array<string, mixed> */
-    public function forOrderScreen(Company $company, Branch $branch): array
+    public function forOrderScreen(Company $company, Branch $branch, OrderType $fulfillment = OrderType::DineIn): array
     {
         $products = Product::query()->forCompany($company)->where('is_active', true)
             ->whereDoesntHave('variants.promotion')
@@ -81,7 +82,7 @@ class OrderPosCatalogService
         $promotions = Promotion::query()->forCompany($company)->currentlyActive()
             ->whereHas('productVariant', fn ($query) => $query->where('is_active', true)
                 ->whereHas('product', fn ($product) => $product->where('is_active', true)))
-            ->whereHas('components')
+            ->where(fn ($query) => $query->whereHas('components')->orWhereHas('selectionGroups'))
             ->with([
                 'productVariant.product.category',
                 'components.inventoryItem.unit',
@@ -90,11 +91,12 @@ class OrderPosCatalogService
                 'components.inventoryItem.inventoryReservations' => fn ($query) => $query
                     ->where('branch_id', $branch->getKey())
                     ->where('status', InventoryReservationStatus::Reserved->value),
+                'selectionGroups.category',
             ])
             ->get()
             ->each(fn ($promotion) => $promotion->setAttribute(
                 'sellable_availability',
-                $this->promotionAvailability->calculate($promotion, $branch),
+                $this->promotionAvailability->calculate($promotion, $branch, $fulfillment),
             ));
 
         return compact('products', 'promotions', 'pizzaVariants', 'pizzaSizeKeys', 'modifierOptions', 'toppingOptions');

@@ -298,6 +298,33 @@ document.querySelectorAll('[data-open-pizza-composer]').forEach((button) => {
     });
 });
 
+document.querySelectorAll('[data-open-promotion-composer]').forEach((button) => {
+    const composer = button.closest('[data-pos-product]')?.querySelector('[data-promotion-composer]');
+    button.addEventListener('click', () => {
+        document.querySelectorAll('[data-promotion-composer]').forEach((candidate) => { candidate.hidden = candidate !== composer; });
+        if (composer) {
+            composer.hidden = false;
+            composer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
+    composer?.querySelector('[data-close-promotion-composer]')?.addEventListener('click', () => { composer.hidden = true; });
+});
+
+document.querySelectorAll('[data-promotion-pizza]').forEach((pizza) => {
+    const count = pizza.querySelector('[data-promotion-section-count]');
+    const sections = [...pizza.querySelectorAll('[data-promotion-section]')];
+    const refresh = () => {
+        const active = Number(count?.value ?? 1);
+        sections.forEach((section, index) => {
+            const enabled = index < active;
+            section.hidden = !enabled;
+            section.querySelectorAll('select, input').forEach((field) => { field.disabled = !enabled; });
+        });
+    };
+    count?.addEventListener('change', refresh);
+    refresh();
+});
+
 document.querySelectorAll('[data-payment-selector]').forEach((selector) => {
     const forms = [...selector.querySelectorAll('[data-payment-form]')];
     const buttons = [...selector.querySelectorAll('[data-payment-method]')];

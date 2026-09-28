@@ -52,6 +52,11 @@ class Promotion extends Model
         return $this->hasMany(PromotionComponent::class)->orderBy('inventory_item_id');
     }
 
+    public function selectionGroups(): HasMany
+    {
+        return $this->hasMany(PromotionSelectionGroup::class)->orderBy('sort_order')->orderBy('id');
+    }
+
     public function orderItems(): HasMany
     {
         return $this->hasMany(OrderItem::class);

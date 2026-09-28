@@ -330,14 +330,17 @@
                             @foreach ($promotion->components as $component)
                                 <p>{{ $component->inventoryItem->name }} × {{ \App\Support\UiFormatter::quantity($component->quantity, $component->inventoryItem->unit->symbol) }}</p>
                             @endforeach
+                            @foreach ($promotion->selectionGroups as $group)
+                                <p>{{ $group->quantity }} pizza(s) · {{ $group->category->name }} · {{ $group->size_key === 'familiar' ? 'Grande (Familiar)' : ucfirst($group->size_key) }}</p>
+                            @endforeach
                         </div>
                         <p class="mt-3 text-xs {{ $promotionAvailable ? 'text-emerald-700' : 'text-red-700' }}">{{ $promotionAvailable ? 'Disponibles: '.\App\Support\UiFormatter::inputQuantity($promotion->sellable_availability->availableQuantity) : 'AGOTADO' }}</p>
-                        <form method="POST" action="{{ route('orders.promotions.store', $order->ulid) }}" class="mt-4">
-                            @csrf
-                            <input type="hidden" name="promotion" value="{{ $promotion->ulid }}">
-                            <input type="hidden" name="quantity" value="1">
-                            <button class="btn-primary w-full" @disabled(! $promotionAvailable)>Agregar promoción</button>
-                        </form>
+                        @if($promotion->selectionGroups->isEmpty())
+                            <form method="POST" action="{{ route('orders.promotions.store', $order->ulid) }}" class="mt-4">@csrf<input type="hidden" name="promotion" value="{{ $promotion->ulid }}"><input type="hidden" name="quantity" value="1"><button class="btn-primary w-full" @disabled(! $promotionAvailable)>Agregar promoción</button></form>
+                        @else
+                            <button class="btn-primary mt-4 w-full" type="button" data-open-promotion-composer @disabled(! $promotionAvailable)>Configurar promoción</button>
+                            @include('orders._promotion_composer')
+                        @endif
                     </article>
                 @endforeach
                 @foreach ($toppingOptions as $option)
@@ -430,6 +433,10 @@
                                 <p class="mt-1 truncate text-sm font-medium uppercase text-slate-600">{{ $item->sections->pluck('product_name_snapshot')->join(' / ') }}</p>
                             @endif
                             @if (($item->configuration_snapshot['type'] ?? null) === 'promotion')
+                                @foreach ($item->configuration_snapshot['pizzas'] ?? [] as $pizzaIndex => $pizza)
+                                    <p class="mt-1 text-xs font-semibold text-slate-600">Pizza {{ $pizzaIndex + 1 }}: {{ collect($pizza['sections'] ?? [])->pluck('product')->join(' / ') }} · {{ ($pizza['size_key'] ?? null) === 'familiar' ? 'Grande' : ucfirst($pizza['size_key'] ?? '') }}</p>
+                                    @foreach($pizza['modifiers'] ?? [] as $modifier)<p class="ml-2 text-xs {{ ($modifier['type'] ?? null) === 'remove' ? 'text-red-700' : 'text-emerald-700' }}">{{ ($modifier['type'] ?? null) === 'remove' ? '-' : '+' }} {{ $modifier['name'] }}</p>@endforeach
+                                @endforeach
                                 @foreach ($item->configuration_snapshot['components'] ?? [] as $component)
                                     <p class="mt-1 text-xs text-slate-500">{{ $component['inventory_item_name'] }} × {{ \App\Support\UiFormatter::quantity($component['quantity_applied'], $component['unit_symbol'] ?? null) }}</p>
                                 @endforeach
@@ -469,6 +476,7 @@
 
                     @if ($item->status === \App\Enums\OrderItemStatus::Draft && $order->status === \App\Enums\OrderStatus::Open)
                         @can('update', $order)
+                            @if(($item->configuration_snapshot['pizzas'] ?? []) === [])
                             <details class="group mt-3">
                                 <summary class="ml-auto flex min-h-10 w-fit cursor-pointer list-none items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-orange-300 hover:text-orange-700">
                                     <span aria-hidden="true">✎</span><span class="group-open:hidden">Editar</span><span class="hidden group-open:inline">Cerrar edición</span>
@@ -540,6 +548,9 @@
                                 <button class="inline-flex min-h-11 w-full items-center justify-center rounded-xl bg-orange-100 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-200">Guardar cambios</button>
                             </form>
                             </details>
+                            @else
+                                <p class="ml-10 mt-3 rounded-lg bg-stone-50 px-3 py-2 text-xs text-stone-600">La promoción con pizzas se configura como una unidad. Para cambiarla, elimínala y vuelve a agregarla.</p>
+                            @endif
                             <form method="POST" action="{{ route('orders.items.cancel', [$order->ulid, $item->ulid]) }}" class="mt-2 text-right">
                                 @csrf
                                 <button class="inline-flex min-h-10 items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-3 text-sm font-semibold text-red-600 transition hover:bg-red-100"><span aria-hidden="true">⌫</span> Eliminar</button>

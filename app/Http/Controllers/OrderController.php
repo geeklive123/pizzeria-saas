@@ -109,7 +109,7 @@ class OrderController extends Controller
             'kitchenDispatches' => fn ($query) => $query->with('printAttempts')->latest('sequence_number'),
         ]);
         Gate::authorize('view', $order);
-        ['products' => $products, 'promotions' => $promotions, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch());
+        ['products' => $products, 'promotions' => $promotions, 'pizzaVariants' => $pizzaVariants, 'pizzaSizeKeys' => $pizzaSizeKeys, 'modifierOptions' => $modifierOptions, 'toppingOptions' => $toppingOptions] = $catalog->forOrderScreen($this->company(), $this->branch(), $order->type);
 
         $lastDispatch = $order->kitchenDispatches->first();
         $draftFinancial = $financials->preview($order->items->where('status', OrderItemStatus::Draft));
@@ -163,6 +163,7 @@ class OrderController extends Controller
                 $request->user(),
                 $request->enum('fulfillment_type', OrderType::class),
                 $request->validated('notes'),
+                $request->validated('pizzas', []),
             );
         } catch (DomainException $exception) {
             return back()->withErrors(['item' => $exception->getMessage()]);

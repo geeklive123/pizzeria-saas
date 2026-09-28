@@ -52,6 +52,7 @@ class KitchenCommandRenderer
                     $builder->line('    '.$fraction.mb_strtoupper($section->product_name_snapshot));
                 }
             }
+            $this->promotionDetails($builder, $item);
 
             $builder->line()->bold()->line($item->fulfillment_type === OrderType::Takeaway ? '    PARA LLEVAR' : '    COMER AQUÍ')->bold(false);
             $this->modifiers($builder, $item, ModifierOptionType::Add, 'EXTRAS:', '+ ');
@@ -104,6 +105,7 @@ class KitchenCommandRenderer
                     $builder->line('    '.$fraction.mb_strtoupper($section->product_name_snapshot));
                 }
             }
+            $this->promotionDetails($builder, $item);
 
             $builder->line()->bold()->line($item->fulfillment_type === OrderType::Takeaway ? '    PARA LLEVAR' : '    COMER AQUÍ')->bold(false);
             $this->modifiers($builder, $item, ModifierOptionType::Add, 'EXTRAS:', '+ ');
@@ -153,5 +155,32 @@ class KitchenCommandRenderer
         foreach ($modifiers as $modifier) {
             $builder->line($prefix.mb_strtoupper($modifier->name_snapshot));
         }
+    }
+
+    private function promotionDetails(EscPosDocumentBuilder $builder, OrderItem $item): void
+    {
+        if (($item->configuration_snapshot['type'] ?? null) !== 'promotion'
+            || ($item->configuration_snapshot['pizzas'] ?? []) === []) {
+            return;
+        }
+        foreach ($item->configuration_snapshot['pizzas'] ?? [] as $index => $pizza) {
+            $builder->line()->bold()->line('PIZZA '.($index + 1).' · '.$this->sizeLabel($pizza['size_key'] ?? null))->bold(false);
+            foreach ($pizza['sections'] ?? [] as $section) {
+                $fraction = count($pizza['sections'] ?? []) > 1 ? ($section['fraction'] ?? '').' ' : '';
+                $builder->line('    '.$fraction.mb_strtoupper($section['product'] ?? ''));
+            }
+            foreach ($pizza['modifiers'] ?? [] as $modifier) {
+                $prefix = ($modifier['type'] ?? null) === 'remove' ? '- ' : '+ ';
+                $builder->line('    '.$prefix.mb_strtoupper($modifier['name'] ?? ''));
+            }
+        }
+        foreach ($item->configuration_snapshot['components'] ?? [] as $component) {
+            $builder->line('INCLUYE: '.mb_strtoupper($component['inventory_item_name'] ?? '').' x '.UiFormatter::inputQuantity($component['quantity_applied'] ?? '0'));
+        }
+    }
+
+    private function sizeLabel(?string $sizeKey): string
+    {
+        return $sizeKey === 'familiar' ? 'GRANDE' : mb_strtoupper((string) $sizeKey);
     }
 }

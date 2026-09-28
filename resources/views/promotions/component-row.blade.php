@@ -1,5 +1,7 @@
 <div class="grid gap-3 rounded-xl border border-stone-200 p-4 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end" data-row>
     <div>
+        <label class="label">Tipo</label>
+        <input class="input mb-3 bg-stone-50" value="Inventario fijo" readonly>
         <label class="label" for="component-item-{{ $index }}">Artículo de inventario</label>
         <select class="input" id="component-item-{{ $index }}" name="components[{{ $index }}][inventory_item_ulid]" required>
             <option value="">Seleccionar…</option>

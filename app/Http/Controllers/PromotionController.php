@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Actions\SavePromotionAction;
 use App\Http\Requests\PromotionRequest;
+use App\Models\Category;
 use App\Models\InventoryItem;
 use App\Models\Promotion;
 use DomainException;
@@ -18,7 +19,7 @@ class PromotionController extends Controller
     {
         Gate::authorize('viewAny', Promotion::class);
         $promotions = Promotion::query()->forCompany($this->company())
-            ->with(['productVariant.product', 'components.inventoryItem.unit'])
+            ->with(['productVariant.product', 'components.inventoryItem.unit', 'selectionGroups.category'])
             ->latest()->paginate(20);
 
         return view('promotions.index', compact('promotions'));
@@ -48,7 +49,7 @@ class PromotionController extends Controller
         $promotion = $this->promotion($promotion);
         Gate::authorize('update', $promotion);
 
-        return $this->form($promotion->load(['productVariant.product', 'components.inventoryItem']));
+        return $this->form($promotion->load(['productVariant.product', 'components.inventoryItem', 'selectionGroups.category']));
     }
 
     public function update(PromotionRequest $request, string $promotion, SavePromotionAction $action): RedirectResponse
@@ -66,7 +67,7 @@ class PromotionController extends Controller
 
     public function toggle(Request $request, string $promotion, SavePromotionAction $action): RedirectResponse
     {
-        $promotion = $this->promotion($promotion)->load(['productVariant.product', 'components.inventoryItem']);
+        $promotion = $this->promotion($promotion)->load(['productVariant.product', 'components.inventoryItem', 'selectionGroups.category']);
         Gate::authorize('update', $promotion);
         $action->execute($this->company(), [
             'name' => $promotion->productVariant->product->name,
@@ -79,6 +80,16 @@ class PromotionController extends Controller
                 'inventory_item_ulid' => $component->inventoryItem->ulid,
                 'quantity' => $component->quantity,
             ])->all(),
+            'selection_groups' => $promotion->selectionGroups->map(fn ($group): array => [
+                'ulid' => $group->ulid,
+                'category_ulid' => $group->category->ulid,
+                'size_key' => $group->size_key,
+                'quantity' => $group->quantity,
+                'allow_repeated_flavors' => $group->allow_repeated_flavors,
+                'allow_fusions' => $group->allow_fusions,
+                'allow_extras' => $group->allow_extras,
+                'allow_removals' => $group->allow_removals,
+            ])->all(),
         ], $request->user(), $promotion);
 
         return back()->with('success', 'Estado de la promoción actualizado.');
@@ -88,8 +99,11 @@ class PromotionController extends Controller
     {
         $inventoryItems = InventoryItem::query()->forCompany($this->company())->where('is_active', true)
             ->with('unit')->orderBy('name')->get();
+        $pizzaCategories = Category::query()->forCompany($this->company())->where('is_active', true)
+            ->whereHas('products', fn ($query) => $query->where('type', 'pizza')->where('is_active', true))
+            ->orderBy('name')->get();
 
-        return view('promotions.form', compact('promotion', 'inventoryItems'));
+        return view('promotions.form', compact('promotion', 'inventoryItems', 'pizzaCategories'));
     }
 
     private function promotion(string $ulid): Promotion

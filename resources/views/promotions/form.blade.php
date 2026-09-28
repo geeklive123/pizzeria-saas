@@ -4,6 +4,7 @@
 @section('content')
 @php($product = $promotion->productVariant?->product)
 @php($componentRows = old('components', $promotion->exists ? $promotion->components->map(fn ($component) => ['inventory_item_ulid' => $component->inventoryItem->ulid, 'quantity' => $component->quantity])->values()->all() : [['inventory_item_ulid' => '', 'quantity' => '']]))
+@php($groupRows = old('selection_groups', $promotion->exists ? $promotion->selectionGroups->map(fn ($group) => ['ulid' => $group->ulid, 'category_ulid' => $group->category->ulid, 'size_key' => $group->size_key, 'quantity' => $group->quantity, 'allow_repeated_flavors' => $group->allow_repeated_flavors, 'allow_fusions' => $group->allow_fusions, 'allow_extras' => $group->allow_extras, 'allow_removals' => $group->allow_removals])->values()->all() : []))
 <div class="mx-auto max-w-4xl">
     <div class="page-heading"><div><a class="back-link" href="{{ route('promotions.index') }}">← Volver a promociones</a><h1>{{ $promotion->exists ? 'Editar promoción' : 'Nueva promoción' }}</h1><p>El precio y los componentes quedan bajo autoridad del servidor. Las cantidades usan la unidad del artículo de inventario.</p></div></div>
     <form method="POST" action="{{ $promotion->exists ? route('promotions.update', $promotion->ulid) : route('promotions.store') }}" class="space-y-6">
@@ -19,13 +20,17 @@
             </div>
         </section>
         <section class="card p-5 sm:p-8">
-            <div class="flex items-start justify-between gap-4"><div><h2 class="card-title">Componentes de inventario</h2><p class="card-subtitle">Ejemplo vino: 0.500 botella por promoción de dos copas.</p></div><button class="btn-secondary" type="button" data-add-row="promotion-components">+ Componente</button></div>
+            <div class="flex flex-wrap items-start justify-between gap-4"><div><h2 class="card-title">Componentes</h2><p class="card-subtitle">Elige inventario fijo o grupos de pizzas seleccionables. Puedes combinar ambos tipos.</p></div><div class="flex gap-2"><button class="btn-secondary" type="button" data-add-row="promotion-components">+ Inventario fijo</button><button class="btn-secondary" type="button" data-add-row="promotion-selection-groups">+ Pizza seleccionable</button></div></div>
             <div class="mt-5 space-y-3" data-rows="promotion-components">
                 @foreach($componentRows as $index => $component) @include('promotions.component-row', compact('index', 'component', 'inventoryItems')) @endforeach
+            </div>
+            <div class="mt-5 space-y-3" data-rows="promotion-selection-groups">
+                @foreach($groupRows as $index => $group) @include('promotions.selection-group-row', compact('index', 'group', 'pizzaCategories')) @endforeach
             </div>
         </section>
         <div class="flex justify-end gap-3"><a class="btn-secondary" href="{{ route('promotions.index') }}">Cancelar</a><button class="btn-primary">Guardar promoción</button></div>
     </form>
 </div>
 <template id="promotion-components-template">@include('promotions.component-row', ['index' => '__INDEX__', 'component' => ['inventory_item_ulid' => '', 'quantity' => ''], 'inventoryItems' => $inventoryItems])</template>
+<template id="promotion-selection-groups-template">@include('promotions.selection-group-row', ['index' => '__INDEX__', 'group' => ['category_ulid' => '', 'size_key' => 'mediana', 'quantity' => 1], 'pizzaCategories' => $pizzaCategories])</template>
 @endsection

@@ -42,6 +42,9 @@ class UpdateConfiguredPizzaAction
             if ($item->status !== OrderItemStatus::Draft || $item->order->status !== OrderStatus::Open) {
                 throw new DomainException('Una línea enviada no se edita; debe cancelarse y agregarse nuevamente.');
             }
+            if ($item->promotion_id || ($item->configuration_snapshot['type'] ?? null) === 'promotion') {
+                throw new DomainException('Una promoción se reemplaza como unidad completa; no puede convertirse en una pizza normal.');
+            }
 
             $result = $this->composition->compose($item->company, $sections, $modifiers, $fulfillment, $toppings);
             $this->release->execute($item, $item->quantity);

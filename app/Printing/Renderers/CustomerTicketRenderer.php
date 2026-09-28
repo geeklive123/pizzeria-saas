@@ -14,6 +14,8 @@ use App\Printing\EscPosDocumentBuilder;
 use App\Printing\ThermalDocument;
 use App\Services\OrderPaymentService;
 use App\Support\UiFormatter;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use DateTimeZone;
 
 class CustomerTicketRenderer
@@ -55,8 +57,7 @@ class CustomerTicketRenderer
 
         $builder->line(str_repeat('-', 48));
         foreach ($order->items->where('status', '!=', OrderItemStatus::Cancelled) as $item) {
-            $builder->line($this->amountLine($this->itemName($item), $item->line_total));
-            $this->extras($builder, $item);
+            $this->item($builder, $item, $item->line_total);
         }
         $builder->line(str_repeat('-', 48))->line()
             ->line($this->amountLine('SUBTOTAL', $order->subtotal))
@@ -104,8 +105,7 @@ class CustomerTicketRenderer
         }
         $builder->line(str_repeat('-', 48));
         foreach ($dispatch->items as $dispatchItem) {
-            $builder->line($this->amountLine($this->itemName($dispatchItem->orderItem), $dispatchItem->gross_total));
-            $this->extras($builder, $dispatchItem->orderItem);
+            $this->item($builder, $dispatchItem->orderItem, $dispatchItem->gross_total);
         }
         $builder->line(str_repeat('-', 48))->line()
             ->line($this->amountLine('SUBTOTAL', $dispatch->gross_subtotal))
@@ -129,6 +129,36 @@ class CustomerTicketRenderer
 
         foreach ($item->modifiers->where('type', ModifierOptionType::Add) as $modifier) {
             $builder->line('  + '.mb_strtoupper($modifier->name_snapshot).'  Bs '.UiFormatter::decimal($modifier->price_delta_snapshot, 2));
+        }
+    }
+
+    private function item(EscPosDocumentBuilder $builder, OrderItem $item, int|string $amount): void
+    {
+        $snapshot = $item->configuration_snapshot;
+        if (($snapshot['type'] ?? null) !== 'promotion' || ($snapshot['pizzas'] ?? []) === []) {
+            $builder->line($this->amountLine($this->itemName($item), $amount));
+            $this->extras($builder, $item);
+
+            return;
+        }
+
+        $base = BigDecimal::of($snapshot['promotion']['base_price'] ?? $snapshot['promotion']['unit_price'])
+            ->multipliedBy($item->quantity)->toScale(2, RoundingMode::HalfUp);
+        $builder->line($this->amountLine($this->itemName($item), (string) $base));
+        foreach ($snapshot['pizzas'] as $index => $pizza) {
+            $flavors = collect($pizza['sections'] ?? [])->pluck('product')->join(' / ');
+            $size = ($pizza['size_key'] ?? null) === 'familiar' ? 'Grande' : ucfirst((string) ($pizza['size_key'] ?? ''));
+            $builder->line('  Pizza '.($index + 1).': '.$flavors.' '.$size);
+            foreach ($pizza['modifiers'] ?? [] as $modifier) {
+                $builder->line('    '.(($modifier['type'] ?? null) === 'remove' ? '- ' : '+ ').mb_strtoupper($modifier['name'] ?? ''));
+            }
+        }
+        foreach ($snapshot['components'] ?? [] as $component) {
+            $builder->line('  '.($component['inventory_item_name'] ?? '').' x '.UiFormatter::inputQuantity($component['quantity_applied'] ?? '0'));
+        }
+        $extras = $snapshot['promotion']['extras_price'] ?? '0.00';
+        if (BigDecimal::of($extras)->isGreaterThan(0)) {
+            $builder->line($this->amountLine('  EXTRAS', $extras));
         }
     }
 
