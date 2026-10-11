@@ -19,6 +19,7 @@ class ProfitabilityReportService
         private readonly SalesReportService $sales,
         private readonly ExpenseReportService $expenses,
         private readonly InventoryReportService $inventory,
+        private readonly InternalConsumptionReportService $internalConsumptions,
         private readonly ReportDecimalService $decimal,
     ) {}
 
@@ -60,15 +61,17 @@ class ProfitabilityReportService
         $productionCost = $this->sum($movements, 'total_cost');
         $expenseTotal = $this->expenses->data($company, $branch, $range, $filters)['total'];
         $wasteCost = $this->inventory->waste($company, $branch, $range)['total_cost'];
+        $internalConsumptions = $this->internalConsumptions->period($company, $branch, $range);
 
         return [
             'sales' => $sales['sales_total'],
             'production_cost' => $productionCost,
             'expenses' => $expenseTotal,
             'waste_cost' => $wasteCost,
-            'estimated_result' => $this->decimal->subtract($sales['sales_total'], $productionCost, $expenseTotal, $wasteCost),
+            'internal_consumptions' => $internalConsumptions,
+            'estimated_result' => $this->decimal->subtract($sales['sales_total'], $productionCost, $expenseTotal, $wasteCost, $internalConsumptions['known_cost']),
             'by_variant' => $byVariant,
-            'methodology' => 'Ventas cobradas menos costo histórico de movimientos de consumo, gastos operativos y costo estimado de mermas. Las compras no se restan nuevamente.',
+            'methodology' => 'Ventas cobradas menos costo histórico de consumo comercial, consumos internos, gastos operativos y mermas. Las compras no se restan nuevamente.',
         ];
     }
 

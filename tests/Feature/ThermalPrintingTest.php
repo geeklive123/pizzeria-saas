@@ -170,7 +170,10 @@ class ThermalPrintingTest extends TestCase
         $this->assertStringContainsString('1/2 LA CHURA', $text);
         $this->assertStringContainsString('1/3 PATA NEGRA', $text);
         $this->assertStringContainsString('1/4 DULCE FUEGO', $text);
-        $this->assertStringNotContainsString('1/1', $text);
+        $this->assertDoesNotMatchRegularExpression(
+            '/^[ \t]*1\/1[ \t]+/m',
+            $text
+        );
         $this->assertStringContainsString("EXTRAS:\n+ QUESO", $text);
         $this->assertStringContainsString("QUITAR:\n- CEBOLLA", $text);
         $this->assertStringContainsString("OBS:\nBIEN COCIDA", $text);

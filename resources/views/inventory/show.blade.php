@@ -232,7 +232,7 @@
                 @forelse ($movements as $movement)
                     <tr>
                         <td>{{ \App\Support\UiFormatter::date($movement->occurred_at, true) }}</td>
-                        <td>{{ \App\Support\UiFormatter::movement($movement->type) }}</td>
+                        <td>{{ $movement->type === \App\Enums\InventoryMovementType::InternalConsumption ? 'Consumo interno' : \App\Support\UiFormatter::movement($movement->type) }}</td>
                         <td><span class="badge {{ $movement->direction() > 0 ? 'badge-success' : 'badge-danger' }}">{{ $movement->direction() > 0 ? 'Entrada' : 'Salida' }}</span></td>
                         <td>{{ \App\Support\UiFormatter::quantity($movement->quantity, $item->unit->symbol) }}</td>
                         <td>{{ $movement->unit_cost ? \App\Support\UiFormatter::money($movement->unit_cost) : '—' }}</td>

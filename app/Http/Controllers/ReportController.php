@@ -7,6 +7,7 @@ use App\Http\Requests\ReportExportRequest;
 use App\Http\Requests\ReportFilterRequest;
 use App\Services\CashReportService;
 use App\Services\ExpenseReportService;
+use App\Services\InternalConsumptionReportService;
 use App\Services\InventoryReportService;
 use App\Services\ProfitabilityReportService;
 use App\Services\PurchaseReportService;
@@ -78,12 +79,16 @@ class ReportController extends Controller
         return $this->view('purchases', $range, $filters, ['purchases' => $reports->data($this->company(), $this->branch(), $range), 'purchaseRows' => $reports->paginate($this->company(), $this->branch(), $range)]);
     }
 
-    public function inventory(ReportFilterRequest $request, ReportDateRangeService $ranges, InventoryReportService $reports): View
+    public function inventory(ReportFilterRequest $request, ReportDateRangeService $ranges, InventoryReportService $reports, InternalConsumptionReportService $internalConsumptions): View
     {
         Gate::authorize('reports.financial');
         [$filters, $range] = $this->filters($request, $ranges);
 
-        return $this->view('inventory', $range, $filters, ['inventory' => $reports->inventory($this->company(), $this->branch(), $filters['sort'] ?? 'name'), 'consumption' => $reports->consumption($this->company(), $this->branch(), $range)]);
+        return $this->view('inventory', $range, $filters, [
+            'inventory' => $reports->inventory($this->company(), $this->branch(), $filters['sort'] ?? 'name'),
+            'consumption' => $reports->consumption($this->company(), $this->branch(), $range),
+            'internalConsumptions' => $internalConsumptions->period($this->company(), $this->branch(), $range),
+        ]);
     }
 
     public function waste(ReportFilterRequest $request, ReportDateRangeService $ranges, InventoryReportService $reports): View

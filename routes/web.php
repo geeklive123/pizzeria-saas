@@ -11,6 +11,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ExpenseCategoryController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\IngredientController;
+use App\Http\Controllers\InternalConsumptionController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\KitchenController;
@@ -128,6 +129,14 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/kitchen', [KitchenController::class, 'index'])->name('kitchen.index');
             Route::post('/kitchen/items/{item}/start', [KitchenController::class, 'start'])->name('kitchen.items.start');
             Route::post('/kitchen/items/{item}/ready', [KitchenController::class, 'ready'])->name('kitchen.items.ready');
+
+            Route::get('/internal-consumptions', [InternalConsumptionController::class, 'index'])->name('internal-consumptions.index');
+            Route::get('/internal-consumptions/create', [InternalConsumptionController::class, 'create'])->name('internal-consumptions.create');
+            Route::post('/internal-consumptions/preview', [InternalConsumptionController::class, 'preview'])->name('internal-consumptions.preview');
+            Route::post('/internal-consumptions', [InternalConsumptionController::class, 'store'])->name('internal-consumptions.store');
+            Route::get('/internal-consumptions/{consumption}', [InternalConsumptionController::class, 'show'])->name('internal-consumptions.show');
+            Route::post('/internal-consumptions/{consumption}/print', [InternalConsumptionController::class, 'print'])->name('internal-consumptions.print');
+            Route::post('/internal-consumptions/{consumption}/cancel', [InternalConsumptionController::class, 'cancel'])->name('internal-consumptions.cancel');
 
             Route::resource('products', ProductController::class)->except(['show', 'destroy']);
             Route::resource('promotions', PromotionController::class)->except(['show', 'destroy']);
