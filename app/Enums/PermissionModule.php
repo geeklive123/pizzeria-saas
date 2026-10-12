@@ -10,6 +10,7 @@ enum PermissionModule: string
     case Cash = 'cash';
     case CatalogAndRecipes = 'catalog_and_recipes';
     case Inventory = 'inventory';
+    case InternalConsumptions = 'internal_consumptions';
     case Purchases = 'purchases';
     case Expenses = 'expenses';
     case Reports = 'reports';
@@ -25,6 +26,7 @@ enum PermissionModule: string
             self::Cash => 'Caja',
             self::CatalogAndRecipes => 'Productos y recetas',
             self::Inventory => 'Inventario',
+            self::InternalConsumptions => 'Consumos internos',
             self::Purchases => 'Compras',
             self::Expenses => 'Gastos',
             self::Reports => 'Reportes',
@@ -42,6 +44,7 @@ enum PermissionModule: string
             self::Cash => 'Turnos, cajas y movimientos.',
             self::CatalogAndRecipes => 'Catálogo, categorías y recetas.',
             self::Inventory => 'Existencias, ajustes y mermas.',
+            self::InternalConsumptions => 'Registro, impresión, anulación y reporte de producción no comercial.',
             self::Purchases => 'Compras inventariables.',
             self::Expenses => 'Gastos, categorías y proveedores.',
             self::Reports => 'Información operativa y financiera.',

@@ -17,6 +17,7 @@
         ['key' => 'operations', 'label' => 'Operación', 'items' => [
             ['route' => 'kitchen.index', 'label' => 'Cocina', 'icon' => '♨', 'pattern' => 'kitchen.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\KitchenDispatch::class)],
             ['route' => 'preparations.index', 'label' => 'Preparaciones', 'icon' => 'P', 'pattern' => 'preparations.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Preparation::class)],
+            ['route' => 'internal-consumptions.index', 'label' => 'Consumos internos', 'icon' => 'CI', 'pattern' => 'internal-consumptions.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\InternalConsumption::class)],
         ]],
         ['key' => 'catalog', 'label' => 'Productos y recetas', 'items' => [
             ['route' => 'products.index', 'label' => 'Productos', 'icon' => '◫', 'pattern' => 'products.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Product::class)],

@@ -13,6 +13,7 @@ class ReportsOverviewService
         private readonly ExpenseReportService $expenses,
         private readonly PurchaseReportService $purchases,
         private readonly InventoryReportService $inventory,
+        private readonly InternalConsumptionReportService $internalConsumptions,
         private readonly ProfitabilityReportService $profitability,
         private readonly UserOperationsReportService $users,
     ) {}
@@ -25,6 +26,7 @@ class ReportsOverviewService
             'purchases' => $this->purchases->data($company, $branch, $range),
             'waste' => $this->inventory->waste($company, $branch, $range),
             'inventory' => $this->inventory->inventory($company, $branch, $filters['sort'] ?? 'name'),
+            'internalConsumptions' => $this->internalConsumptions->period($company, $branch, $range),
             'profitability' => $this->profitability->data($company, $branch, $range, $filters),
             'users' => $this->users->data($company, $branch, $range),
         ];

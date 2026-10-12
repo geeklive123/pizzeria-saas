@@ -459,3 +459,68 @@ document.querySelectorAll('[data-preparation-production]').forEach((section) => 
     });
     refresh();
 });
+
+document.querySelectorAll('[data-internal-consumption-form]').forEach((form) => {
+    const list = form.querySelector('[data-internal-pizza-list]');
+    const template = document.querySelector('[data-internal-pizza-template]');
+    let nextIndex = 0;
+
+    const renumber = () => list.querySelectorAll('[data-internal-pizza]').forEach((card, index) => {
+        card.querySelector('[data-pizza-number]').textContent = String(index + 1);
+        card.querySelector('[data-remove-internal-pizza]').hidden = list.querySelectorAll('[data-internal-pizza]').length === 1;
+    });
+
+    const initialize = (card) => {
+        const size = card.querySelector('[data-internal-size]');
+        const count = card.querySelector('[data-internal-section-count]');
+        const rows = [...card.querySelectorAll('[data-internal-section]')];
+        const refresh = () => {
+            if (size.value === 'personal' && Number(count.value) > 1) count.value = '1';
+            [...count.options].forEach((option) => { option.disabled = size.value === 'personal' && Number(option.value) > 1; });
+            const source = card.querySelector(`template[data-internal-options="${CSS.escape(size.value)}"]`);
+            rows.forEach((row, index) => {
+                const select = row.querySelector('[data-internal-variant]');
+                const active = index < Number(count.value);
+                row.hidden = !active;
+                select.disabled = !active;
+                select.required = active;
+                if (active && select.dataset.loadedSize !== size.value) {
+                    select.innerHTML = source?.innerHTML ?? '<option value="">Sin sabores disponibles</option>';
+                    select.dataset.loadedSize = size.value;
+                }
+            });
+        };
+        size.addEventListener('change', refresh);
+        count.addEventListener('change', refresh);
+        card.querySelector('[data-remove-internal-pizza]').addEventListener('click', () => {
+            if (list.querySelectorAll('[data-internal-pizza]').length > 1) card.remove();
+            renumber();
+        });
+        refresh();
+    };
+
+    const add = () => {
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = template.innerHTML.replaceAll('__INDEX__', String(nextIndex++));
+        const card = wrapper.firstElementChild;
+        list.append(card);
+        initialize(card);
+        renumber();
+    };
+
+    form.querySelector('[data-add-internal-pizza]').addEventListener('click', add);
+    form.addEventListener('submit', (event) => {
+        let valid = true;
+        list.querySelectorAll('[data-internal-pizza]').forEach((card) => {
+            const selects = [...card.querySelectorAll('[data-internal-variant]:not(:disabled)')];
+            selects.forEach((select) => select.setCustomValidity(''));
+            const values = selects.map((select) => select.value);
+            if (new Set(values).size !== values.length) {
+                valid = false;
+                selects[0]?.setCustomValidity('No repitas el mismo sabor en una pizza.');
+            }
+        });
+        if (!valid) event.preventDefault();
+    });
+    add();
+});

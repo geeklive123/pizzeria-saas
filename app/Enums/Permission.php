@@ -17,6 +17,11 @@ enum Permission: string
     case ManageRecipes = 'recipes.manage';
     case ViewInventory = 'inventory.view';
     case ManageInventory = 'inventory.manage';
+    case ViewInternalConsumptions = 'internal_consumptions.view';
+    case CreateInternalConsumptions = 'internal_consumptions.create';
+    case PrintInternalConsumptions = 'internal_consumptions.print';
+    case CancelInternalConsumptions = 'internal_consumptions.cancel';
+    case ViewInternalConsumptionReports = 'internal_consumptions.reports.view';
     case ViewPurchases = 'purchases.view';
     case ManagePurchases = 'purchases.manage';
     case ViewOrders = 'orders.view';
@@ -58,6 +63,8 @@ enum Permission: string
             self::ViewCatalog, self::ManageCatalog, self::ViewMenuAvailability, self::ViewRecipes,
             self::ManageRecipes => PermissionModule::CatalogAndRecipes,
             self::ViewInventory, self::ManageInventory => PermissionModule::Inventory,
+            self::ViewInternalConsumptions, self::CreateInternalConsumptions, self::PrintInternalConsumptions,
+            self::CancelInternalConsumptions, self::ViewInternalConsumptionReports => PermissionModule::InternalConsumptions,
             self::ViewPurchases, self::ManagePurchases => PermissionModule::Purchases,
             self::ViewExpenses, self::CreateExpenses, self::ReverseExpenses, self::ManageExpenseCategories,
             self::ViewSuppliers, self::ManageSuppliers => PermissionModule::Expenses,
@@ -72,7 +79,8 @@ enum Permission: string
         return match ($this) {
             self::ViewCompany, self::ViewBranches, self::ViewMemberships, self::ViewCatalog,
             self::ViewMenuAvailability,
-            self::ViewRecipes, self::ViewInventory, self::ViewPurchases, self::ViewOrders,
+            self::ViewRecipes, self::ViewInventory, self::ViewInternalConsumptions,
+            self::ViewInternalConsumptionReports, self::ViewPurchases, self::ViewOrders,
             self::ViewTables, self::ViewKitchen, self::ViewCash, self::ViewExpenses,
             self::ViewSuppliers, self::ViewReports, self::ViewFinancialReports => true,
             default => false,
@@ -95,6 +103,11 @@ enum Permission: string
             self::ManageRecipes => 'Administrar recetas',
             self::ViewInventory => 'Ver inventario',
             self::ManageInventory => 'Administrar inventario, ajustes y mermas',
+            self::ViewInternalConsumptions => 'Ver consumos internos',
+            self::CreateInternalConsumptions => 'Registrar consumos internos',
+            self::PrintInternalConsumptions => 'Imprimir comandas de consumos internos',
+            self::CancelInternalConsumptions => 'Anular consumos internos',
+            self::ViewInternalConsumptionReports => 'Ver reportes de consumos internos',
             self::ViewPurchases => 'Ver compras',
             self::ManagePurchases => 'Crear, publicar y corregir compras',
             self::ViewOrders => 'Ver pedidos',

@@ -2,17 +2,22 @@
 
 namespace App\Services;
 
+use App\Enums\InternalConsumptionStatus;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
+use App\Models\InternalConsumption;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\PrintAttempt;
 use App\Models\PrinterSetting;
 use App\Models\User;
 use App\Printing\Renderers\CustomerTicketRenderer;
+use App\Printing\Renderers\InternalConsumptionCommandRenderer;
 use App\Printing\Renderers\KitchenCommandRenderer;
 use App\Printing\Renderers\TestPageRenderer;
 use App\Printing\ThermalDocument;
+use DomainException;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -22,6 +27,7 @@ class ThermalPrintingService
         private readonly KitchenCommandRenderer $kitchenRenderer,
         private readonly CustomerTicketRenderer $ticketRenderer,
         private readonly TestPageRenderer $testRenderer,
+        private readonly InternalConsumptionCommandRenderer $internalConsumptionRenderer,
     ) {}
 
     public function kitchen(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
@@ -112,6 +118,61 @@ class ThermalPrintingService
             null,
             'test_page:'.$setting->ulid.':'.Str::ulid(),
         );
+    }
+
+    public function internalConsumption(InternalConsumption $consumption, User $user, string $idempotencyKey): PrintAttempt
+    {
+        $setting = $this->setting($consumption->company_id, $consumption->branch_id, PrinterPurpose::Kitchen);
+        $idempotencyKey = 'internal_consumption:'.$consumption->ulid.':'.hash('sha256', $idempotencyKey);
+
+        try {
+            return DB::transaction(function () use ($consumption, $user, $idempotencyKey, $setting): PrintAttempt {
+                $consumption = InternalConsumption::query()->lockForUpdate()->findOrFail($consumption->getKey());
+                if ($consumption->status !== InternalConsumptionStatus::Confirmed) {
+                    throw new DomainException('Un consumo interno anulado no puede enviarse a cocina.');
+                }
+                $existing = PrintAttempt::query()
+                    ->where('company_id', $consumption->company_id)
+                    ->where('branch_id', $consumption->branch_id)
+                    ->where('internal_consumption_id', $consumption->getKey())
+                    ->where('idempotency_key', $idempotencyKey)->first();
+                if ($existing) {
+                    return $existing;
+                }
+                $reprint = $consumption->printAttempts()->exists();
+                $enabled = $setting?->is_active === true;
+                $document = $this->internalConsumptionRenderer->render($consumption, $reprint);
+
+                return PrintAttempt::query()->create([
+                    'company_id' => $consumption->company_id,
+                    'branch_id' => $consumption->branch_id,
+                    'printer_setting_id' => $setting?->getKey(),
+                    'internal_consumption_id' => $consumption->getKey(),
+                    'purpose' => PrinterPurpose::Kitchen,
+                    'windows_printer_name' => $setting?->windows_printer_name,
+                    'copies' => $setting?->copies ?? 1,
+                    'status' => $enabled ? PrintAttemptStatus::Pending : PrintAttemptStatus::Failed,
+                    'is_reprint' => $reprint,
+                    'requested_by' => $user->getKey(),
+                    'attempted_at' => now(),
+                    'available_at' => $enabled ? now() : null,
+                    'error_message' => $enabled ? null : 'La impresora lógica no está activa.',
+                    'idempotency_key' => $idempotencyKey,
+                    'document_payload' => base64_encode($document->bytes),
+                ]);
+            });
+        } catch (QueryException $exception) {
+            $existing = PrintAttempt::query()
+                ->where('company_id', $consumption->company_id)
+                ->where('branch_id', $consumption->branch_id)
+                ->where('internal_consumption_id', $consumption->getKey())
+                ->where('idempotency_key', $idempotencyKey)->first();
+            if ($existing) {
+                return $existing;
+            }
+
+            throw $exception;
+        }
     }
 
     public function retry(PrintAttempt $attempt): PrintAttempt

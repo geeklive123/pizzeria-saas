@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['company_id', 'branch_id', 'printer_setting_id', 'kitchen_dispatch_id', 'order_id', 'purpose', 'windows_printer_name', 'copies', 'status', 'is_reprint', 'requested_by', 'attempted_at', 'error_message', 'idempotency_key', 'document_payload', 'attempts', 'claimed_by_agent_id', 'claimed_at', 'claim_expires_at', 'claim_token_hash', 'available_at', 'printed_at'])]
+#[Fillable(['company_id', 'branch_id', 'printer_setting_id', 'kitchen_dispatch_id', 'order_id', 'internal_consumption_id', 'purpose', 'windows_printer_name', 'copies', 'status', 'is_reprint', 'requested_by', 'attempted_at', 'error_message', 'idempotency_key', 'document_payload', 'attempts', 'claimed_by_agent_id', 'claimed_at', 'claim_expires_at', 'claim_token_hash', 'available_at', 'printed_at'])]
 class PrintAttempt extends Model
 {
     use BelongsToCompany, HasUlids;
@@ -51,6 +51,11 @@ class PrintAttempt extends Model
     public function order(): BelongsTo
     {
         return $this->belongsTo(Order::class);
+    }
+
+    public function internalConsumption(): BelongsTo
+    {
+        return $this->belongsTo(InternalConsumption::class);
     }
 
     public function requestedBy(): BelongsTo
