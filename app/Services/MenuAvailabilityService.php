@@ -118,6 +118,7 @@ class MenuAvailabilityService
 
         if (in_array($result->mode, ['recipe_pending', 'untracked'], true)) {
             return new MenuAvailabilityVariantData(
+                $variant->ulid,
                 UiFormatter::variantName($variant->name, $variant->size_key),
                 $variant->price,
                 null,
@@ -137,6 +138,7 @@ class MenuAvailabilityService
         }
 
         return new MenuAvailabilityVariantData(
+            $variant->ulid,
             UiFormatter::variantName($variant->name, $variant->size_key),
             $variant->price,
             $quantity,

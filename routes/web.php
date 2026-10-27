@@ -28,6 +28,11 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\RestaurantTableController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SettingsController;
+use App\Http\Controllers\Storefront\CheckoutController as StorefrontCheckoutController;
+use App\Http\Controllers\Storefront\HomeController as StorefrontHomeController;
+use App\Http\Controllers\Storefront\LocationController as StorefrontLocationController;
+use App\Http\Controllers\Storefront\MenuController as StorefrontMenuController;
+use App\Http\Controllers\Storefront\PromotionController as StorefrontPromotionController;
 use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\ToppingController;
 use App\Http\Controllers\UnitController;
@@ -35,6 +40,17 @@ use App\Http\Controllers\UserAccessLogController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', fn () => auth()->check() ? redirect()->route('dashboard') : view('auth.login'));
+
+Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->group(function (): void {
+    Route::get('/', StorefrontHomeController::class)->name('home');
+    Route::get('/menu', StorefrontMenuController::class)->name('menu');
+    Route::get('/promociones', StorefrontPromotionController::class)->name('promotions');
+    Route::get('/ubicacion', StorefrontLocationController::class)->name('location');
+    Route::get('/checkout', [StorefrontCheckoutController::class, 'show'])->name('checkout');
+    Route::post('/checkout/whatsapp', [StorefrontCheckoutController::class, 'whatsapp'])
+        ->middleware('throttle:30,1')
+        ->name('checkout.whatsapp');
+});
 
 Route::middleware('guest')->group(function (): void {
     Route::get('/login', [AuthController::class, 'create'])->name('login');

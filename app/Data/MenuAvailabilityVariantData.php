@@ -8,6 +8,7 @@ final readonly class MenuAvailabilityVariantData
 {
     /** @param list<string> $limitingComponents */
     public function __construct(
+        public string $ulid,
         public string $name,
         public string $price,
         public ?string $availableQuantity,
