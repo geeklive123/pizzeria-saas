@@ -47,12 +47,14 @@ use App\Printing\Renderers\KitchenCommandRenderer;
 use App\Services\OrderFinancialService;
 use App\Services\PromotionAvailabilityService;
 use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class PromotionPizzaSelectionTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public function test_admin_can_create_a_normalized_group_and_familiar_is_the_internal_key(): void
     {
@@ -243,7 +245,7 @@ class PromotionPizzaSelectionTest extends TestCase
         $session = $this->cashSession($f);
 
         app(RegisterPaymentAction::class)->execute($f['order']->refresh(), $session, PaymentMethod::Cash, '100.00', $f['owner'], 'promo-cash', '100.00');
-        app(RegisterPaymentAction::class)->execute($f['order']->refresh(), $session, PaymentMethod::Qr, '34.00', $f['owner'], 'promo-qr', reference: 'QR-TEST');
+        $this->confirmBankQr($f['order']->refresh(), $session, $f['owner'], 'promo-qr');
 
         $this->assertSame(1, CashMovement::query()->where('type', 'sale_cash')->count());
         $this->assertSame(4, InventoryMovement::query()->where('type', InventoryMovementType::OrderConsumption)->count());
@@ -259,7 +261,7 @@ class PromotionPizzaSelectionTest extends TestCase
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($f['order']->refresh(), $f['owner']);
         $session = $this->cashSession($f);
 
-        app(RegisterPaymentAction::class)->execute($f['order']->refresh(), $session, PaymentMethod::Qr, '129.00', $f['owner'], 'promo-batch', reference: 'QR-BATCH', dispatch: $dispatch);
+        $this->confirmBankQr($f['order']->refresh(), $session, $f['owner'], 'promo-batch', $dispatch);
 
         $this->assertSame('settled', $dispatch->refresh()->status->value);
         $this->assertSame(3, InventoryMovement::query()->where('type', InventoryMovementType::OrderConsumption)->count());
@@ -273,13 +275,13 @@ class PromotionPizzaSelectionTest extends TestCase
         $item = $this->add($f, [$this->pizza($f, $f['a'])]);
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($f['order'], $f['owner']);
         $session = $this->cashSession($f);
-        app(RegisterPaymentAction::class)->execute($f['order']->refresh(), $session, PaymentMethod::Qr, '129.00', $f['owner'], 'promo-paid-reversal', reference: 'QR-REV', dispatch: $dispatch);
+        $payment = $this->confirmBankQr($f['order']->refresh(), $session, $f['owner'], 'promo-paid-reversal', $dispatch);
 
         app(CancelSettledKitchenDispatchAction::class)->execute($dispatch->refresh(), $f['owner'], 'Reversión de prueba');
 
         $this->assertSame('cancelled', $item->refresh()->status->value);
         $this->assertSame(3, InventoryMovement::query()->where('type', InventoryMovementType::Reversal)->count());
-        $this->assertDatabaseHas('payments', ['idempotency_key' => 'promo-paid-reversal', 'status' => 'reversed']);
+        $this->assertDatabaseHas('payments', ['id' => $payment->id, 'status' => 'reversed']);
     }
 
     public function test_repeated_flavor_is_rejected_when_group_disables_it(): void

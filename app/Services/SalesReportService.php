@@ -61,15 +61,17 @@ class SalesReportService
             ->with(['productVariant.product.category', 'sections', 'modifiers', 'kitchenDispatchItem'])
             ->get();
 
+        $recognizedSales = $orders->concat($batchDispatches);
+
         return [
             'sales_total' => $salesTotal,
             'gross_sales' => $grossSales,
             'discount_total' => $discountTotal,
             'orders_paid' => $orders->count() + $batchDispatches->count(),
             'average_ticket' => $this->decimal->average($salesTotal, $orders->count() + $batchDispatches->count()),
-            'by_day' => $this->ordersByLocalKey($orders, $range, 'Y-m-d'),
-            'by_hour' => $this->ordersByLocalKey($orders, $range, 'H:00'),
-            'by_type' => $this->groupOrders($orders, fn (Order $order) => $order->type->value),
+            'by_day' => $this->ordersByLocalKey($recognizedSales, $range, 'Y-m-d'),
+            'by_hour' => $this->ordersByLocalKey($recognizedSales, $range, 'H:00'),
+            'by_type' => $this->groupOrders($recognizedSales, fn (Order|KitchenDispatch $sale) => $sale instanceof KitchenDispatch ? $sale->order->type->value : $sale->type->value),
             'payments' => $this->paymentBreakdown($payments),
             'products' => $this->productRanking($items, false),
             'variants' => $this->productRanking($items, true),
@@ -181,7 +183,7 @@ class SalesReportService
 
     private function ordersByLocalKey(Collection $orders, ReportDateRange $range, string $format): Collection
     {
-        return $orders->groupBy(fn (Order $order) => $order->closed_at->setTimezone($range->timezone)->format($format))
+        return $orders->groupBy(fn (Order|KitchenDispatch $sale) => ($sale instanceof KitchenDispatch ? $sale->settled_at : $sale->closed_at)->setTimezone($range->timezone)->format($format))
             ->map(fn (Collection $group, string $key) => ['label' => $key, 'orders' => $group->count(), 'amount' => $this->sum($group, 'total')])
             ->sortBy('label')->values();
     }

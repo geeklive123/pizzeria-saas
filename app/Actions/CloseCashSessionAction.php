@@ -4,8 +4,10 @@ namespace App\Actions;
 
 use App\Enums\CashClosingBalanceStatus;
 use App\Enums\CashSessionStatus;
+use App\Enums\DynamicQrStatus;
 use App\Enums\Permission;
 use App\Models\CashSession;
+use App\Models\DynamicQrIntent;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
 use App\Services\CompanyAccessService;
@@ -35,6 +37,10 @@ class CloseCashSessionAction
             $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
             if ($session->status === CashSessionStatus::Closed) {
                 return $session;
+            }
+            if (DynamicQrIntent::query()->where('cash_session_id', $session->id)
+                ->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhere('status', DynamicQrStatus::ReconciliationRequired))->exists()) {
+                throw new DomainException('Hay QR bancarios activos o pendientes de conciliación. Resuélvelos antes de cerrar caja.');
             }
             $summary = $this->summary->calculate($session);
             $expected = BigDecimal::of($summary['expected_cash']);

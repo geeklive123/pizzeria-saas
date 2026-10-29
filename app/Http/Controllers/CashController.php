@@ -9,6 +9,7 @@ use App\Actions\OwnerCashWithdrawalAction;
 use App\Actions\RegisterExpenseAction;
 use App\Actions\ResolveOperationalExpenseCategoryAction;
 use App\Enums\CashMovementType;
+use App\Enums\DynamicQrStatus;
 use App\Enums\ExpenseDocumentType;
 use App\Enums\LogoutReason;
 use App\Enums\MembershipRole;
@@ -19,6 +20,7 @@ use App\Http\Requests\OpenCashSessionRequest;
 use App\Http\Requests\OwnerCashWithdrawalRequest;
 use App\Models\CashRegister;
 use App\Models\CashSession;
+use App\Models\DynamicQrIntent;
 use App\Models\Expense;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
@@ -52,8 +54,11 @@ class CashController extends Controller
         $cashRegisterClass = CashRegister::class;
         $withdrawalIdempotencyKeys = $activeSessions->mapWithKeys(fn (CashSession $item): array => [$item->id => (string) Str::ulid()]);
         $canCreateExpense = $session !== null && Gate::allows('create', Expense::class);
+        $bankQrAlerts = DynamicQrIntent::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+            ->whereIn('status', [DynamicQrStatus::GenerationUnknown, DynamicQrStatus::ReconciliationRequired])
+            ->with('order')->orderBy('created_at')->limit(50)->get();
 
-        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys', 'canCreateExpense'));
+        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys', 'canCreateExpense', 'bankQrAlerts'));
     }
 
     public function openForm(): View

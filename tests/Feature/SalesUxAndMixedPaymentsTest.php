@@ -30,12 +30,14 @@ use DomainException;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class SalesUxAndMixedPaymentsTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public function test_pos_prioritizes_catalog_and_renders_each_live_flavor_selector_with_one_size_only(): void
     {
@@ -119,7 +121,7 @@ class SalesUxAndMixedPaymentsTest extends TestCase
         $this->assertSame('70.00', app(OrderPaymentService::class)->balance($order));
         $this->assertSame($table->id, $order->refresh()->active_restaurant_table_id);
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '70.00', $owner, 'mix-qr-70');
+        $this->confirmBankQr($order->refresh(), $session, $owner, 'mix-qr-70');
 
         $this->assertSame('100.00', app(OrderPaymentService::class)->paid($order));
         $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order));
@@ -140,7 +142,7 @@ class SalesUxAndMixedPaymentsTest extends TestCase
         $item = $order->items()->firstOrFail();
         $inventoryMovements = InventoryMovement::query()->count();
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '20.00', $owner, 'sequence-qr-20');
+        $this->historicalQrPayment($order, $session, $owner, '20.00', 'sequence-qr-20');
         $this->assertSame('20.00', app(OrderPaymentService::class)->paid($order));
         $this->assertSame('80.00', app(OrderPaymentService::class)->balance($order));
         $this->assertSame($table->id, $order->refresh()->active_restaurant_table_id);
@@ -150,7 +152,7 @@ class SalesUxAndMixedPaymentsTest extends TestCase
         $this->assertSame('30.00', app(OrderPaymentService::class)->balance($order));
         $this->assertSame($table->id, $order->refresh()->active_restaurant_table_id);
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '30.00', $owner, 'sequence-qr-30');
+        $this->confirmBankQr($order->refresh(), $session, $owner, 'sequence-qr-30');
         $this->assertSame('100.00', app(OrderPaymentService::class)->paid($order));
         $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order));
         $this->assertDatabaseCount('payments', 3);
@@ -187,23 +189,31 @@ class SalesUxAndMixedPaymentsTest extends TestCase
     {
         [$company, $branch, $owner, $session] = $this->paymentContext();
         $order = $this->servedOrder($company, $branch, $owner, '100.00');
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '20.00', $owner, 'ux-qr-20');
+        $order->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->historicalQrPayment($order, $session, $owner, '20.00', 'ux-qr-20');
 
         $this->actingInContext($owner, $company, $branch)
             ->get(route('orders.checkout', $order->ulid))
             ->assertOk()
             ->assertSee('Saldo restante')
-            ->assertSee('combinar Efectivo + QR')
-            ->assertSee('Siguiente monto sugerido: Bs 80,00')
-            ->assertSee('Monto aplicado a la cuenta')
+            ->assertSee('Cobrar con QR')
+            ->assertDontSee('Efectivo parcial (opcional)')
+            ->assertSee('Bs 80,00')
+            ->assertSee('Monto aplicado en efectivo')
             ->assertSee('Efectivo recibido')
             ->assertSee('Cambio')
-            ->assertSee('value="80.00" max="80.00"', false)
+            ->assertSee('value="80.00"', false)
             ->assertSee('Historial individual para pagos simples, mixtos y parciales.');
 
         try {
             app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '80.01', $owner, 'over-balance');
             $this->fail('QR no debe superar el saldo pendiente.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('solo se registra después de consultar al banco', $exception->getMessage());
+        }
+        try {
+            app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '80.01', $owner, 'cash-over-balance');
+            $this->fail('El efectivo no debe superar el saldo pendiente.');
         } catch (DomainException $exception) {
             $this->assertStringContainsString('no puede superar el saldo', $exception->getMessage());
         }

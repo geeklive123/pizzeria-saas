@@ -1,3 +1,6 @@
+import './dynamic-qr';
+import './bank-qr-diagnostic';
+
 const sidebar = document.querySelector('#sidebar');
 const backdrop = document.querySelector('#sidebar-backdrop');
 const sidebarToggle = document.querySelector('#sidebar-toggle');

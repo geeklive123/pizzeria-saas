@@ -28,10 +28,12 @@ use App\Services\CashSessionSummaryService;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
 use Tests\TestCase;
 
 class CashSessionTransferTest extends TestCase
 {
+    use InteractsWithBankQr;
     use RefreshDatabase;
 
     public function test_owner_transfers_mixed_payments_and_preserves_operational_records(): void
@@ -54,7 +56,7 @@ class CashSessionTransferTest extends TestCase
         ]);
         $dispatchBefore = \DB::table('kitchen_dispatches')->where('id', $dispatch->id)->first();
         $cash = app(RegisterPaymentAction::class)->execute($order, $source, PaymentMethod::Cash, '40.00', $valeria, 'transfer-cash', '40.00');
-        $qr = app(RegisterPaymentAction::class)->execute($order, $source, PaymentMethod::Qr, '60.00', $valeria, 'transfer-qr');
+        $qr = $this->transferQr($order, $source, $valeria, '60.00', 'transfer-qr');
         $inventoryCounts = [
             'stocks' => \DB::table('inventory_stocks')->count(),
             'movements' => \DB::table('inventory_movements')->count(),
@@ -109,7 +111,7 @@ class CashSessionTransferTest extends TestCase
         $source = $this->cashSession($company, $branch, $cashier, 'Origen');
         $destination = $this->cashSession($company, $branch, $admin, 'Destino');
         $order = $this->servedOrder($company, $branch, $owner, '30.00');
-        $payment = app(RegisterPaymentAction::class)->execute($order, $source, PaymentMethod::Qr, '30.00', $cashier, 'admin-qr');
+        $payment = $this->transferQr($order, $source, $cashier, '30.00', 'admin-qr');
 
         $this->actingInContext($cashier, $company, $branch)
             ->get(route('orders.cash-session-transfer.create', $order->ulid))
@@ -169,7 +171,7 @@ class CashSessionTransferTest extends TestCase
         $cashier = $this->member($company, MembershipRole::Cashier, 'Origen');
         $source = $this->cashSession($company, $branch, $cashier, 'Origen');
         $order = $this->servedOrder($company, $branch, $owner, '10.00');
-        app(RegisterPaymentAction::class)->execute($order, $source, PaymentMethod::Qr, '10.00', $cashier, 'validation-qr');
+        $this->transferQr($order, $source, $cashier, '10.00', 'validation-qr');
         $otherBranch = Branch::factory()->for($company)->create();
         $otherBranchSession = $this->cashSession($company, $otherBranch, $cashier, 'Otra sucursal');
         $otherCompany = Company::factory()->create();
@@ -206,7 +208,7 @@ class CashSessionTransferTest extends TestCase
         $destination = $this->cashSession($company, $branch, $destinationUser, 'Caja 3');
         $order = $this->servedOrder($company, $branch, $owner, '100.00');
         app(RegisterPaymentAction::class)->execute($order, $first, PaymentMethod::Cash, '40.00', $firstUser, 'multi-cash', '40.00');
-        app(RegisterPaymentAction::class)->execute($order, $second, PaymentMethod::Qr, '60.00', $secondUser, 'multi-qr');
+        $this->transferQr($order, $second, $secondUser, '60.00', 'multi-qr');
         $action = app(TransferOrderPaymentsToCashSessionAction::class);
         $audit = $action->execute($company, $order->refresh(), $destination, $owner, 'Consolidar cobros');
 
@@ -255,7 +257,7 @@ class CashSessionTransferTest extends TestCase
         $source = $this->cashSession($company, $branch, $cashier, 'Origen');
         $destination = $this->cashSession($company, $branch, $destinationUser, 'Destino');
         $order = $this->servedOrder($company, $branch, $owner, '15.00');
-        app(RegisterPaymentAction::class)->execute($order, $source, PaymentMethod::Qr, '15.00', $cashier, 'invalid-owner');
+        $this->transferQr($order, $source, $cashier, '15.00', 'invalid-owner');
 
         $this->expectException(AuthorizationException::class);
         app(TransferOrderPaymentsToCashSessionAction::class)
@@ -281,12 +283,20 @@ class CashSessionTransferTest extends TestCase
         $sourceUser = $this->member($company, MembershipRole::Cashier, 'Origen');
         $source = $this->cashSession($company, $branch, $sourceUser, 'Origen');
         $paidOrder = $this->servedOrder($company, $branch, $owner, '15.00');
-        app(RegisterPaymentAction::class)->execute($paidOrder, $source, PaymentMethod::Qr, '15.00', $sourceUser, 'invalid-holder');
+        $this->transferQr($paidOrder, $source, $sourceUser, '15.00', 'invalid-holder');
         Membership::query()->where('company_id', $company->id)->where('user_id', $destinationUser->id)->update(['is_active' => false]);
 
         $this->expectException(DomainException::class);
         $this->expectExceptionMessage('La sesión destino no tiene un titular válido para esta empresa.');
         $action->execute($company, $paidOrder->refresh(), $destination, $owner, 'Titular inválido');
+    }
+
+    private function transferQr(Order $order, CashSession $session, User $user, string $amount, string $key): Payment
+    {
+        $payment = $this->historicalQrPayment($order, $session, $user, $amount, $key);
+        $order->forceFill(['status' => OrderStatus::Paid, 'closed_at' => now()])->save();
+
+        return $payment;
     }
 
     private function context(): array

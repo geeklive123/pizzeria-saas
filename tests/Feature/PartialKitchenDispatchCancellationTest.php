@@ -7,9 +7,9 @@ use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CancelKitchenDispatchAction;
 use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\MarkOrderReadyForPaymentAction;
 use App\Actions\OpenCashSessionAction;
 use App\Actions\OpenTableOrderAction;
-use App\Actions\RegisterPaymentAction;
 use App\Actions\RestoreCancelledKitchenDispatchAction;
 use App\Actions\RestoreCancelledKitchenDispatchItemAction;
 use App\Enums\InventoryMovementType;
@@ -18,7 +18,6 @@ use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
-use App\Enums\PaymentMethod;
 use App\Enums\ProductType;
 use App\Enums\TableChargeMode;
 use App\Enums\UnitType;
@@ -42,12 +41,14 @@ use App\Models\User;
 use App\Services\ReportDateRangeService;
 use App\Services\SalesReportService;
 use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class PartialKitchenDispatchCancellationTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     protected function setUp(): void
     {
@@ -166,7 +167,8 @@ class PartialKitchenDispatchCancellationTest extends TestCase
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($f['order'], $f['owner']);
         $register = CashRegister::query()->create(['company_id' => $f['company']->id, 'branch_id' => $f['branch']->id, 'name' => 'Caja', 'is_active' => true]);
         $cashSession = app(OpenCashSessionAction::class)->execute($register, '0.00', $f['owner']);
-        app(RegisterPaymentAction::class)->execute($f['order']->refresh(), $cashSession, PaymentMethod::Qr, '13.00', $f['owner'], 'partial-cancel-paid');
+        app(MarkOrderReadyForPaymentAction::class)->execute($f['order']->refresh(), $f['owner']);
+        $this->confirmBankQr($f['order']->refresh(), $cashSession, $f['owner'], 'partial-cancel-paid');
 
         try {
             app(CancelKitchenDispatchItemAction::class)->execute($item, $f['owner'], 'No permitido');

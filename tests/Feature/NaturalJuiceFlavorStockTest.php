@@ -10,8 +10,8 @@ use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\ConfigureNaturalJuiceFlavorsAction;
 use App\Actions\ConsumeInventoryReservationAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\MarkOrderReadyForPaymentAction;
 use App\Actions\OpenCashSessionAction;
-use App\Actions\RegisterPaymentAction;
 use App\Actions\SaveProductAction;
 use App\Actions\UpdateRecipeAction;
 use App\Enums\InventoryMovementType;
@@ -20,7 +20,6 @@ use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
-use App\Enums\PaymentMethod;
 use App\Enums\ProductType;
 use App\Enums\RecipeComponentType;
 use App\Enums\TableChargeMode;
@@ -45,13 +44,15 @@ use App\Models\RecipeItem;
 use App\Models\Unit;
 use App\Models\User;
 use App\Printing\Renderers\KitchenCommandRenderer;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class NaturalJuiceFlavorStockTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     protected function setUp(): void
     {
@@ -427,15 +428,8 @@ class NaturalJuiceFlavorStockTest extends TestCase
 
         $session = $this->cashSession($context);
         $movementCount = InventoryMovement::query()->count();
-        app(RegisterPaymentAction::class)->execute(
-            $order->refresh(),
-            $session,
-            PaymentMethod::Qr,
-            '40.00',
-            $context['owner'],
-            'juice-table-at-end',
-            reference: 'QR-JUGOS',
-        );
+        app(MarkOrderReadyForPaymentAction::class)->execute($order->refresh(), $context['owner']);
+        $this->confirmBankQr($order->refresh(), $session, $context['owner'], 'juice-table-at-end');
         $this->assertSame($movementCount, InventoryMovement::query()->count());
         $this->assertSame('7.000', $this->stock($context, 'Piña'));
         $this->assertSame('10.000', $this->stock($context, 'Maracuyá'));
@@ -532,16 +526,7 @@ class NaturalJuiceFlavorStockTest extends TestCase
         $this->assertSame(InventoryReservationStatus::Reserved, $item->reservations()->sole()->status);
 
         $session = $this->cashSession($context);
-        app(RegisterPaymentAction::class)->execute(
-            $order->refresh(),
-            $session,
-            PaymentMethod::Qr,
-            '20.00',
-            $context['owner'],
-            'juice-takeaway-batch',
-            reference: 'QR-JUGO',
-            dispatch: $dispatch,
-        );
+        $this->confirmBankQr($order->refresh(), $session, $context['owner'], 'juice-takeaway-batch', $dispatch);
 
         $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
@@ -551,16 +536,7 @@ class NaturalJuiceFlavorStockTest extends TestCase
             ->where('reference_id', $item->id)
             ->where('type', InventoryMovementType::OrderConsumption->value)->count());
 
-        app(RegisterPaymentAction::class)->execute(
-            $order,
-            $session,
-            PaymentMethod::Qr,
-            '20.00',
-            $context['owner'],
-            'juice-takeaway-batch',
-            reference: 'QR-JUGO',
-            dispatch: $dispatch,
-        );
+        $this->confirmBankQr($order, $session, $context['owner'], 'juice-takeaway-batch', $dispatch);
         $this->assertSame('7.000', $this->stock($context, 'Piña'));
 
         app(CancelSettledKitchenDispatchAction::class)

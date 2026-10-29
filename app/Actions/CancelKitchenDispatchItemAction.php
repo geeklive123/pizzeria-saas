@@ -8,13 +8,16 @@ use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderCancellationScope;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use App\Enums\Permission;
+use App\Models\DynamicQrIntent;
 use App\Models\InventoryMovement;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Order;
 use App\Models\OrderCancellationAudit;
 use App\Models\OrderItem;
+use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
 use App\Services\OrderFinancialService;
@@ -62,6 +65,15 @@ class CancelKitchenDispatchItemAction
                 || (int) $item->company_id !== (int) $dispatch->company_id
                 || (int) $item->branch_id !== (int) $dispatch->branch_id) {
                 throw new DomainException('El producto y la tanda no pertenecen al mismo pedido.');
+            }
+            if (Payment::query()->where('company_id', $order->company_id)->where('branch_id', $order->branch_id)
+                ->where('kitchen_dispatch_id', $dispatch->id)->where('status', PaymentStatus::Completed->value)->exists()) {
+                throw new DomainException('Esta tanda tiene pagos registrados. Utiliza la reversión financiera correspondiente.');
+            }
+            if (DynamicQrIntent::query()->where('company_id', $order->company_id)->where('branch_id', $order->branch_id)
+                ->where('active_order_id', $order->id)
+                ->where(fn ($query) => $query->whereNull('kitchen_dispatch_id')->orWhere('kitchen_dispatch_id', $dispatch->id))->exists()) {
+                throw new DomainException('Existe un QR bancario activo para este cobro. Verifica su estado antes de anular.');
             }
 
             $reservationSnapshots = $item->reservations

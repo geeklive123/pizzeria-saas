@@ -45,36 +45,7 @@
             </div>
         @elseif ($order->status !== \App\Enums\OrderStatus::Paid && $balance !== '0.00')
             @can('create', $paymentClass)
-                <div class="mt-6" data-payment-selector>
-                    <h2 class="text-lg font-semibold">{{ $paid === '0.00' ? 'Registrar uno o varios pagos' : '¿Cómo paga el restante?' }}</h2>
-                    <p class="mt-1 text-sm text-stone-600">Puedes pagar todo con un método o combinar Efectivo + QR en varios pagos. Cada registro se guarda por separado y reduce el saldo inmediatamente.</p>
-                    <p class="mt-3 rounded-xl bg-blue-50 p-3 text-sm font-medium text-blue-900">Siguiente monto sugerido: {{ $formatter::money($balance) }}</p>
-                    <div class="mt-4 grid grid-cols-2 gap-3">
-                        <button class="btn-secondary" type="button" data-payment-method="cash" aria-pressed="false">Efectivo</button>
-                        <button class="btn-secondary" type="button" data-payment-method="qr" aria-pressed="false">QR</button>
-                    </div>
-                    <form class="mt-4 rounded-2xl border border-stone-200 p-4" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="cash" data-cash-payment hidden>
-                        @csrf
-                        <input type="hidden" name="method" value="cash">
-                        @if ($dispatch)<input type="hidden" name="kitchen_dispatch" value="{{ $dispatch->ulid }}">@endif
-                        <input type="hidden" name="idempotency_key" value="{{ $idempotencyCash }}">
-                        <label class="mt-3 block"><span class="label">Monto aplicado a la cuenta</span><input class="input" name="amount" value="{{ $balance }}" max="{{ $balance }}" inputmode="decimal" required></label>
-                        <label class="mt-3 block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $balance }}" inputmode="decimal" required></label>
-                        <div class="mt-3 rounded-xl bg-emerald-50 p-4 text-emerald-900"><span class="text-sm">Cambio</span><strong class="block text-2xl" data-cash-change>Bs 0,00</strong></div>
-                        <p class="mt-2 text-xs text-stone-500">El cambio es información operativa: no es gasto ni otro pago.</p>
-                        <button class="btn-primary mt-4 w-full" type="submit">Registrar pago en efectivo</button>
-                    </form>
-                    <form class="mt-4 rounded-2xl border border-stone-200 p-4" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-payment-form="qr" hidden>
-                        @csrf
-                        <input type="hidden" name="method" value="qr">
-                        @if ($dispatch)<input type="hidden" name="kitchen_dispatch" value="{{ $dispatch->ulid }}">@endif
-                        <input type="hidden" name="idempotency_key" value="{{ $idempotencyQr }}">
-                        <label class="mt-3 block"><span class="label">Monto aplicado por QR</span><input class="input" name="amount" value="{{ $balance }}" max="{{ $balance }}" inputmode="decimal" required></label>
-                        <label class="mt-3 block"><span class="label">Referencia opcional</span><input class="input" name="reference"></label>
-                        <p class="mt-2 text-xs text-stone-500">El QR suma al turno, pero no al efectivo físico esperado.</p>
-                        <button class="btn-primary mt-4 w-full" type="submit">Registrar pago QR</button>
-                    </form>
-                </div>
+                    @include('orders._dynamic_qr', ['qrDispatch' => $dispatch, 'qrBalance' => $balance])
             @endcan
         @endif
     </section>

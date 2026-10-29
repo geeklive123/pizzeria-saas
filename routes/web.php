@@ -1,6 +1,9 @@
 <?php
 
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BancoEconomicoSettingsController;
+use App\Http\Controllers\BankQrDiagnosticController;
+use App\Http\Controllers\BankQrHistoryController;
 use App\Http\Controllers\CashController;
 use App\Http\Controllers\CashRegisterController;
 use App\Http\Controllers\CashSessionTransferController;
@@ -8,6 +11,7 @@ use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\ContextController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DynamicQrController;
 use App\Http\Controllers\ExpenseCategoryController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\IngredientController;
@@ -68,6 +72,19 @@ Route::middleware('auth')->group(function (): void {
 
         Route::middleware(['branch.context', 'user.access'])->group(function (): void {
             Route::get('/dashboard', DashboardController::class)->name('dashboard');
+            Route::get('/administracion/banco-economico', [BancoEconomicoSettingsController::class, 'index'])->name('bank-settings.index');
+            Route::post('/administracion/banco-economico', [BancoEconomicoSettingsController::class, 'store'])->name('bank-settings.store');
+            Route::post('/administracion/banco-economico/autenticacion', [BancoEconomicoSettingsController::class, 'authenticate'])->middleware('throttle:5,1')->name('bank-settings.authenticate');
+            Route::get('/administracion/banco-economico/historial', [BankQrHistoryController::class, 'index'])->name('bank-qr-history.index');
+            Route::post('/administracion/banco-economico/historial/consultar', [BankQrHistoryController::class, 'consult'])->middleware('throttle:5,1')->name('bank-qr-history.consult');
+            Route::post('/administracion/banco-economico/historial/{ulid}/estado', [BankQrHistoryController::class, 'status'])->middleware('throttle:10,1')->name('bank-qr-history.status');
+            Route::post('/administracion/banco-economico/historial/{ulid}/abono', [BankQrHistoryController::class, 'recordDeposit'])->middleware('throttle:10,1')->name('bank-qr-history.deposit');
+            Route::get('/administracion/banco-economico/probar-qr', [BankQrDiagnosticController::class, 'index'])->name('bank-qr-diagnostics.index');
+            Route::post('/administracion/banco-economico/probar-qr', [BankQrDiagnosticController::class, 'store'])->middleware('throttle:10,1')->name('bank-qr-diagnostics.store');
+            Route::get('/administracion/banco-economico/probar-qr/{ulid}/imagen', [BankQrDiagnosticController::class, 'image'])->name('bank-qr-diagnostics.image');
+            Route::post('/administracion/banco-economico/probar-qr/{ulid}/consultar', [BankQrDiagnosticController::class, 'check'])->middleware('throttle:20,1')->name('bank-qr-diagnostics.check');
+            Route::post('/administracion/banco-economico/probar-qr/{ulid}/cancelar', [BankQrDiagnosticController::class, 'check'])->middleware('throttle:10,1')->name('bank-qr-diagnostics.cancel');
+            Route::post('/administracion/banco-economico/probar-qr/{ulid}/conciliar', [BankQrDiagnosticController::class, 'reconcile'])->middleware('throttle:10,1')->name('bank-qr-diagnostics.reconcile');
 
             Route::get('/sales/create', [SaleController::class, 'create'])->name('sales.create');
             Route::get('/tables', [RestaurantTableController::class, 'index'])->name('tables.index');
@@ -103,6 +120,11 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/cancel-paid', [OrderController::class, 'cancelPaid'])->name('orders.cancel-paid');
             Route::post('/orders/{order}/restore-paid', [OrderController::class, 'restorePaid'])->name('orders.restore-paid');
             Route::get('/orders/{order}/checkout', [CheckoutController::class, 'show'])->name('orders.checkout');
+            Route::get('/orders/{order}/dynamic-qr', [DynamicQrController::class, 'show'])->name('orders.dynamic-qr.show');
+            Route::post('/orders/{order}/dynamic-qr', [DynamicQrController::class, 'store'])->middleware('throttle:10,1')->name('orders.dynamic-qr.store');
+            Route::get('/orders/{order}/dynamic-qr/{intent}/image', [DynamicQrController::class, 'image'])->name('orders.dynamic-qr.image');
+            Route::post('/orders/{order}/dynamic-qr/{intent}/check', [DynamicQrController::class, 'check'])->middleware('throttle:20,1')->name('orders.dynamic-qr.check');
+            Route::post('/orders/{order}/dynamic-qr/{intent}/cancel', [DynamicQrController::class, 'cancel'])->middleware('throttle:10,1')->name('orders.dynamic-qr.cancel');
             Route::post('/orders/{order}/request-payment', [CheckoutController::class, 'requestPayment'])->name('orders.request-payment');
             Route::post('/orders/{order}/payments', [CheckoutController::class, 'store'])->name('orders.payments.store');
             Route::post('/orders/{order}/ticket/print', [CheckoutController::class, 'printTicket'])->name('orders.ticket.print');

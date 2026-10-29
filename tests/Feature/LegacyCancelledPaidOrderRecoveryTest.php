@@ -8,7 +8,6 @@ use App\Actions\CancelPaidOrderAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\OpenCashSessionAction;
-use App\Actions\RegisterPaymentAction;
 use App\Actions\RestoreLegacyCancelledPaidOrderAction;
 use App\Enums\InventoryMovementType;
 use App\Enums\InventoryReservationStatus;
@@ -41,13 +40,15 @@ use App\Services\SalesReportService;
 use App\Support\LegacyManifestTimestamp;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class LegacyCancelledPaidOrderRecoveryTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public function test_valid_dry_run_is_read_only_and_reports_complete_legacy_evidence(): void
     {
@@ -386,16 +387,7 @@ class LegacyCancelledPaidOrderRecoveryTest extends TestCase
             'is_active' => true,
         ]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $actor);
-        $payment = app(RegisterPaymentAction::class)->execute(
-            $order->refresh(),
-            $session,
-            PaymentMethod::Qr,
-            '99.00',
-            $actor,
-            'legacy-original-'.$order->id,
-            reference: 'QR original',
-            dispatch: $dispatch,
-        );
+        $payment = $this->confirmBankQr($order->refresh(), $session, $actor, 'legacy-original-'.$order->id, $dispatch);
         $operationalNumber = $order->refresh()->operational_number;
         app(CancelPaidOrderAction::class)->execute($order, $actor, 'Error legacy');
         $reversal = Payment::query()->where('reversal_of_id', $payment->id)->sole();

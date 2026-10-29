@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelKitchenDispatchAction;
 use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\CloseCashSessionAction;
 use App\Actions\DispatchOrderToKitchenAction;
@@ -13,6 +14,7 @@ use App\Actions\OpenTableOrderAction;
 use App\Actions\RegisterPaymentAction;
 use App\Actions\ReverseInventoryMovementAction;
 use App\Enums\CashMovementType;
+use App\Enums\DynamicQrStatus;
 use App\Enums\InventoryMovementType;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
@@ -27,6 +29,7 @@ use App\Models\Branch;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\Company;
+use App\Models\DynamicQrIntent;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
 use App\Models\InventoryStock;
@@ -39,19 +42,35 @@ use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
+use App\Services\ReportDateRangeService;
+use App\Services\SalesReportService;
 use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class SettledKitchenDispatchReversalTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->withoutVite();
+    }
+
+    public function test_two_confirmed_qr_batches_are_included_in_daily_and_hourly_sales_breakdown(): void
+    {
+        $f = $this->fixture(['qr' => '24.00']);
+        $range = app(ReportDateRangeService::class)->from(['preset' => 'today']);
+        $data = app(SalesReportService::class)->data($f['company'], $f['branch'], $range);
+        $this->assertSame('36.00', $data['sales_total']);
+        $this->assertSame('36.00', $data['by_day']->sole()['amount']);
+        $this->assertSame('36.00', $data['by_hour']->sole()['amount']);
+        $this->assertSame('36.00', $data['by_type']->firstWhere('name', 'dine_in')['amount']);
+        $this->assertSame('36.00', $data['payments']->firstWhere('method', 'qr')['amount']);
     }
 
     public function test_cash_reversal_returns_only_the_selected_batch_and_audits_the_operation(): void
@@ -154,6 +173,10 @@ class SettledKitchenDispatchReversalTest extends TestCase
     {
         $f = $this->fixture(['qr' => '24.00']);
         $cashMovementCount = CashMovement::query()->count();
+        $originalPayment = $f['first']->payments()->whereNull('reversal_of_id')->sole();
+        $intent = DynamicQrIntent::query()->where('payment_id', $originalPayment->id)->sole();
+        $qrId = $intent->bank_qr_id;
+        $transactionId = $intent->reconciliation_data['transactionId'];
 
         app(CancelSettledKitchenDispatchAction::class)
             ->execute($f['first'], $f['owner'], 'Reversión QR');
@@ -162,6 +185,8 @@ class SettledKitchenDispatchReversalTest extends TestCase
         $this->assertSame(PaymentStatus::Reversed, $original->refresh()->status);
         $this->assertSame(PaymentMethod::Qr, $original->reversals()->sole()->method);
         $this->assertSame($cashMovementCount, CashMovement::query()->count());
+        $this->assertSame($qrId, $intent->refresh()->bank_qr_id);
+        $this->assertSame($transactionId, $intent->reconciliation_data['transactionId']);
     }
 
     public function test_mixed_payment_reverses_each_line_and_only_cash_has_a_compensation(): void
@@ -235,7 +260,66 @@ class SettledKitchenDispatchReversalTest extends TestCase
         $this->assertDatabaseCount('order_cancellation_audits', 0);
     }
 
-    private function fixture(array $firstPayments): array
+    public function test_paid_batch_reversal_is_rejected_while_the_table_remains_open_for_cash_qr_and_mixed(): void
+    {
+        foreach ([['cash' => '24.00'], ['qr' => '24.00'], ['cash' => '10.00', 'qr' => '14.00']] as $payments) {
+            $f = $this->fixture($payments, false);
+            $ids = $f['first']->payments()->pluck('id')->all();
+            $stock = $this->stock($f);
+            try {
+                app(CancelSettledKitchenDispatchAction::class)->execute($f['first'], $f['owner'], 'Revisión de tanda abierta');
+                $this->fail('La reversión de la mesa abierta debía ser rechazada.');
+            } catch (DomainException $exception) {
+                $this->assertStringContainsString('Solo se puede revertir una tanda pagada y liquidada', $exception->getMessage());
+            }
+            $this->assertSame(OrderStatus::Open, $f['order']->refresh()->status);
+            $this->assertSame(KitchenDispatchStatus::Settled, $f['first']->refresh()->status);
+            $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $f['second']->refresh()->status);
+            $this->assertSame($stock, $this->stock($f));
+            $this->assertSame(count($ids), Payment::query()->whereIn('id', $ids)->where('status', PaymentStatus::Completed->value)->count());
+            $this->assertSame(0, Payment::query()->whereIn('reversal_of_id', $ids)->count());
+        }
+    }
+
+    public function test_normal_cancellation_cannot_remove_a_paid_batch_on_an_open_table(): void
+    {
+        $f = $this->fixture(['qr' => '24.00'], false);
+        try {
+            app(CancelKitchenDispatchAction::class)->execute($f['first'], $f['owner'], 'Intento sin reversión');
+            $this->fail('Una tanda pagada no debe anularse sin reversión financiera.');
+        } catch (DomainException $exception) {
+            $this->assertNotSame('', $exception->getMessage());
+        }
+        $this->assertSame(KitchenDispatchStatus::Settled, $f['first']->refresh()->status);
+        $this->assertSame(PaymentStatus::Completed, $f['first']->payments()->sole()->status);
+    }
+
+    public function test_cancellation_of_batch_with_pending_qr_keeps_payment_obligation_and_inventory(): void
+    {
+        $f = $this->fixture(['qr' => '24.00'], false);
+        $settingId = DynamicQrIntent::query()->where('order_id', $f['order']->id)->firstOrFail()->bank_qr_setting_id;
+        $intent = DynamicQrIntent::query()->create([
+            'company_id' => $f['company']->id, 'branch_id' => $f['branch']->id, 'order_id' => $f['order']->id,
+            'active_order_id' => $f['order']->id, 'kitchen_dispatch_id' => $f['second']->id,
+            'cash_session_id' => $f['session']->id, 'user_id' => $f['owner']->id, 'bank_qr_setting_id' => $settingId,
+            'amount' => '12.00', 'currency' => 'BOB', 'commercial_reference' => 'pending-cancellation-test',
+            'idempotency_key' => 'pending-cancellation-test', 'bank_qr_id' => 'pending-cancellation-test',
+            'status' => DynamicQrStatus::Pending, 'expires_at' => now()->addDay(),
+        ]);
+        $stock = $this->stock($f);
+        try {
+            app(CancelKitchenDispatchAction::class)->execute($f['second'], $f['owner'], 'QR aún pendiente');
+            $this->fail('La tanda no debe anularse mientras el QR está activo.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('QR bancario activo', $exception->getMessage());
+        }
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $f['second']->refresh()->status);
+        $this->assertSame(DynamicQrStatus::Pending, $intent->refresh()->status);
+        $this->assertSame($stock, $this->stock($f));
+        $this->assertDatabaseCount('order_cancellation_audits', 0);
+    }
+
+    private function fixture(array $firstPayments, bool $close = true): array
     {
         $company = Company::factory()->create(['table_charge_mode' => TableChargeMode::PerBatch]);
         $branch = Branch::factory()->for($company)->create();
@@ -286,6 +370,11 @@ class SettledKitchenDispatchReversalTest extends TestCase
         $firstItem = app(AddOrderItemAction::class)->execute($order, $variant, '2.000', $owner);
         $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         foreach ($firstPayments as $method => $amount) {
+            if ($method === 'qr') {
+                $this->confirmBankQr($order->refresh(), $session, $owner, 'first-qr', $first->refresh());
+
+                continue;
+            }
             app(RegisterPaymentAction::class)->execute(
                 $order->refresh(),
                 $session,
@@ -301,16 +390,10 @@ class SettledKitchenDispatchReversalTest extends TestCase
 
         $secondItem = app(AddOrderItemAction::class)->execute($order->refresh(), $variant, '1.000', $owner);
         $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
-        app(RegisterPaymentAction::class)->execute(
-            $order->refresh(),
-            $session,
-            PaymentMethod::Qr,
-            '12.00',
-            $owner,
-            'second-qr',
-            reference: 'QR-SEGUNDA',
-            dispatch: $second,
-        );
+        if (! $close) {
+            return compact('company', 'branch', 'owner', 'register', 'session', 'inventory', 'order', 'first', 'firstItem', 'second', 'secondItem');
+        }
+        $this->confirmBankQr($order->refresh(), $session, $owner, 'second-qr', $second);
         app(FinalizePerBatchTableAction::class)->execute($order->refresh(), $owner);
 
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);

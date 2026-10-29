@@ -44,13 +44,15 @@ use App\Models\User;
 use App\Services\CashSessionSummaryService;
 use App\Services\OrderPaymentService;
 use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use PHPUnit\Framework\Attributes\DataProvider;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class PaidOrderCancellationTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public static function paymentCases(): array
     {
@@ -428,6 +430,12 @@ class PaidOrderCancellationTest extends TestCase
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '20.00', $actor);
         foreach ($amounts as $method => $amount) {
+            if ($method === 'qr') {
+                $order->refresh()->update(['status' => OrderStatus::ReadyForPayment]);
+                $this->confirmBankQr($order, $session, $actor, 'payment-qr');
+
+                continue;
+            }
             app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::from($method), $amount, $actor, 'payment-'.$method);
         }
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);

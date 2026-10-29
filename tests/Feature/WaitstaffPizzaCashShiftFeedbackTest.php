@@ -11,6 +11,7 @@ use App\Actions\RegisterPaymentAction;
 use App\Enums\CashMovementType;
 use App\Enums\MembershipRole;
 use App\Enums\OrderItemStatus;
+use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PaymentMethod;
 use App\Models\Branch;
@@ -30,12 +31,14 @@ use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\MasaYManaMenuSeeder;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public function test_personal_rejects_combination_while_mediana_and_familiar_accept_one_to_four_size_compatible_flavors(): void
     {
@@ -119,7 +122,8 @@ class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
         $qrOrder = $this->servedOrder($company, $branch, $cashier, '500.00');
 
         app(RegisterPaymentAction::class)->execute($cashOrder, $session, PaymentMethod::Cash, '500.00', $cashier, 'required-cash', '500.00');
-        app(RegisterPaymentAction::class)->execute($qrOrder, $session, PaymentMethod::Qr, '500.00', $cashier, 'required-qr');
+        $qrOrder->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->confirmBankQr($qrOrder, $session, $cashier, 'required-qr');
         app(OwnerCashWithdrawalAction::class)->execute($session, '500.00', 'Retiro de utilidades', 'Entrega al propietario', $owner, 'required-withdrawal');
 
         $summary = app(CashSessionSummaryService::class)->calculate($session);
@@ -183,7 +187,8 @@ class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
         [$company, $branch, , , $cashier, $secondCashier, $register] = $this->cashContext();
         $first = app(OpenCashSessionAction::class)->execute($register, '1000.00', $cashier);
         $order = $this->servedOrder($company, $branch, $cashier, '500.00');
-        app(RegisterPaymentAction::class)->execute($order, $first, PaymentMethod::Qr, '500.00', $cashier, 'handover-qr');
+        $order->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->confirmBankQr($order, $first, $cashier, 'handover-qr');
         $first = app(CloseCashSessionAction::class)->execute($first, '1000.00', $cashier);
         $closedSnapshot = $first->only(['expected_cash_amount', 'counted_cash_amount', 'difference_amount']);
         $closedAt = $first->closed_at->toISOString();
@@ -236,14 +241,15 @@ class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
         $cashOnly = $this->servedOrder($company, $branch, $cashier, '100.00');
         app(RegisterPaymentAction::class)->execute($cashOnly, $session, PaymentMethod::Cash, '100.00', $cashier, 'cash-only', '100.00');
         $qrOnly = $this->servedOrder($company, $branch, $cashier, '100.00');
-        app(RegisterPaymentAction::class)->execute($qrOnly, $session, PaymentMethod::Qr, '100.00', $cashier, 'qr-only');
+        $qrOnly->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->confirmBankQr($qrOnly, $session, $cashier, 'qr-only');
         $mixed = $this->servedOrder($company, $branch, $cashier, '100.00');
         app(RegisterPaymentAction::class)->execute($mixed, $session, PaymentMethod::Cash, '30.00', $cashier, 'mix-30', '30.00');
-        app(RegisterPaymentAction::class)->execute($mixed, $session, PaymentMethod::Qr, '70.00', $cashier, 'mix-70');
+        $this->confirmBankQr($mixed->refresh(), $session, $cashier, 'mix-70');
         $partial = $this->servedOrder($company, $branch, $cashier, '100.00');
-        app(RegisterPaymentAction::class)->execute($partial, $session, PaymentMethod::Qr, '20.00', $cashier, 'partial-20');
+        $this->historicalQrPayment($partial, $session, $cashier, '20.00', 'partial-20');
         app(RegisterPaymentAction::class)->execute($partial, $session, PaymentMethod::Cash, '50.00', $cashier, 'partial-50', '50.00');
-        app(RegisterPaymentAction::class)->execute($partial, $session, PaymentMethod::Qr, '30.00', $cashier, 'partial-30');
+        $this->confirmBankQr($partial->refresh(), $session, $cashier, 'partial-30');
 
         $summary = app(CashSessionSummaryService::class)->calculate($session);
         $this->assertSame('180.00', $summary['cash_payments']);

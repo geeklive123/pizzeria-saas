@@ -98,6 +98,28 @@ class ReportsTest extends TestCase
         $this->assertNull($data['payments']->firstWhere('method', 'mixed'));
     }
 
+    public function test_report_distinguishes_confirmed_qr_cash_mixed_and_pending_sale(): void
+    {
+        [$company, $branch, $owner, $session] = $this->context();
+        $qrOrder = $this->paidOrder($company, $branch, $owner, $session, '35.00', now(), createPayment: false);
+        $cashOrder = $this->paidOrder($company, $branch, $owner, $session, '20.00', now(), createPayment: false);
+        $mixedOrder = $this->paidOrder($company, $branch, $owner, $session, '80.00', now(), createPayment: false);
+        $this->payment($qrOrder, $session, $owner, PaymentMethod::Qr, '35.00', PaymentStatus::Completed, 'qr-35');
+        $this->payment($cashOrder, $session, $owner, PaymentMethod::Cash, '20.00', PaymentStatus::Completed, 'cash-20');
+        $this->payment($mixedOrder, $session, $owner, PaymentMethod::Cash, '30.00', PaymentStatus::Completed, 'mixed-cash');
+        $this->payment($mixedOrder, $session, $owner, PaymentMethod::Qr, '50.00', PaymentStatus::Completed, 'mixed-qr');
+        $this->payment($mixedOrder, $session, $owner, PaymentMethod::Qr, '9.00', PaymentStatus::Reversed, 'reversed-qr');
+        Order::factory()->for($branch)->create(['company_id' => $company->id, 'status' => OrderStatus::ReadyForPayment, 'total' => '12.00', 'closed_at' => null, 'created_by' => $owner->id]);
+
+        $data = app(SalesReportService::class)->data($company, $branch, $this->range('today'));
+        $this->assertSame('135.00', $data['sales_total']);
+        $this->assertSame(3, $data['orders_paid']);
+        $this->assertSame('50.00', $data['payments']->firstWhere('method', 'cash')['amount']);
+        $this->assertSame(2, $data['payments']->firstWhere('method', 'cash')['count']);
+        $this->assertSame('85.00', $data['payments']->firstWhere('method', 'qr')['amount']);
+        $this->assertSame(2, $data['payments']->firstWhere('method', 'qr')['count']);
+    }
+
     public function test_product_variant_and_fused_pizza_rankings_do_not_duplicate_complete_units(): void
     {
         [$company, $branch, $owner, $session] = $this->context();

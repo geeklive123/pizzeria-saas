@@ -43,14 +43,16 @@ use App\Printing\Contracts\ThermalPrinterTransport;
 use App\Printing\Renderers\CustomerTicketRenderer;
 use App\Printing\Renderers\KitchenCommandRenderer;
 use App\Services\OrderPaymentService;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class ThermalPrintingTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     private RecordingThermalPrinterTransport $transport;
 
@@ -128,13 +130,17 @@ class ThermalPrintingTest extends TestCase
         ]);
 
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
-        app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         $this->actingInContext($owner, $company, $branch)->post(route('orders.payments.store', $order->ulid), [
             'method' => PaymentMethod::Qr->value,
             'amount' => '45.00',
             'idempotency_key' => (string) Str::ulid(),
             'kitchen_dispatch' => $result->dispatch->ulid,
-        ])->assertRedirect(route('orders.show', $order->ulid));
+        ])->assertSessionHasErrors('payment');
+
+        $this->assertSame('awaiting_payment', $result->dispatch->refresh()->status->value);
+        $this->assertSame(0, $result->dispatch->printAttempts()->where('purpose', PrinterPurpose::CustomerTicket->value)->count());
+        $this->confirmBankQr($order->refresh(), $session, $owner, 'confirmed-qr', $result->dispatch);
 
         $this->assertSame(1, $result->dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->assertSame(1, $result->dispatch->printAttempts()->where('purpose', PrinterPurpose::CustomerTicket->value)->count());

@@ -26,7 +26,14 @@
 /.zed
 /auth.json
 /node_modules
-/public/build
+/public/build/*
+!/public/build/manifest.json
+!/public/build/assets/
+/public/build/assets/*
+!/public/build/assets/app-*.js
+!/public/build/assets/app-*.css
+!/public/build/assets/storefront-*.js
+!/public/build/assets/storefront-*.css
 /public/fonts-manifest.dev.json
 /public/hot
 /public/storage
@@ -40,3 +47,4 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+/referencias/banco-economico/*.zip

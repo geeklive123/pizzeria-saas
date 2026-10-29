@@ -34,12 +34,14 @@ use App\Services\CashSessionSummaryService;
 use App\Services\OrderPaymentService;
 use Database\Seeders\DatabaseSeeder;
 use DomainException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class CashAndPaymentsTest extends TestCase
 {
-    use RefreshDatabase;
+    use InteractsWithBankQr;
+    use IsolatedSqliteCommits;
 
     public function test_cash_register_and_opening_session_create_one_opening_ledger_entry(): void
     {
@@ -85,7 +87,8 @@ class CashAndPaymentsTest extends TestCase
         $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
         $order = $this->servedOrder($company, $branch, $owner, '200.00', $table);
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'qr-partial', reference: 'QR-001');
+        $order->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->historicalQrPayment($order, $session, $owner, '100.00', 'qr-partial', reference: 'QR-001');
         $summary = app(CashSessionSummaryService::class)->calculate($session);
 
         $this->assertSame('100.00', app(OrderPaymentService::class)->paid($order));
@@ -105,7 +108,7 @@ class CashAndPaymentsTest extends TestCase
         $table = RestaurantTable::factory()->for($branch)->create(['company_id' => $company->id]);
         $order = $this->servedOrder($company, $branch, $owner, '180.00', $table);
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'mixed-qr');
+        $this->historicalQrPayment($order, $session, $owner, '100.00', 'mixed-qr');
         app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::Cash, '80.00', $owner, 'mixed-cash', '80.00');
 
         $this->assertDatabaseCount('payments', 2);
@@ -141,7 +144,8 @@ class CashAndPaymentsTest extends TestCase
             'reserved_at' => now(),
         ]);
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '10.00', $owner, 'advance-full');
+        $order->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->confirmBankQr($order, $session, $owner, 'advance-full');
 
         $this->assertDatabaseCount('payments', 1);
         $this->assertSame(OrderStatus::ReadyForPayment, $order->refresh()->status);
@@ -219,7 +223,7 @@ class CashAndPaymentsTest extends TestCase
             ])->assertSessionHasErrors('payment');
 
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '20.00', $owner, 'partial-before-cancel');
+        $this->historicalQrPayment($order, $session, $owner, '20.00', 'partial-before-cancel');
 
         $this->expectException(DomainException::class);
         app(CancelOrderAction::class)->execute($order, $owner, 'Pedido con pago');
@@ -230,10 +234,29 @@ class CashAndPaymentsTest extends TestCase
         [$company, $branch, $owner, $register] = $this->context();
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         $order = $this->servedOrder($company, $branch, $owner, '100.00');
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Qr, '100.00', $owner, 'paid-before-cancel');
+        $order->update(['status' => OrderStatus::ReadyForPayment]);
+        $this->confirmBankQr($order, $session, $owner, 'paid-before-cancel');
 
         $this->expectException(DomainException::class);
         app(CancelOrderAction::class)->execute($order->refresh(), $owner, 'Pedido pagado');
+    }
+
+    public function test_simulated_bank_can_confirm_two_distinct_orders(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context();
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $first = $this->servedOrder($company, $branch, $owner, '10.00');
+        $second = $this->servedOrder($company, $branch, $owner, '20.00');
+        $first->update(['status' => OrderStatus::ReadyForPayment]);
+        $second->update(['status' => OrderStatus::ReadyForPayment]);
+
+        $firstPayment = $this->confirmBankQr($first, $session, $owner, 'bank-first');
+        $secondPayment = $this->confirmBankQr($second, $session, $owner, 'bank-second');
+
+        $this->assertNotSame($firstPayment->id, $secondPayment->id);
+        $this->assertSame('10.00', $firstPayment->amount);
+        $this->assertSame('20.00', $secondPayment->amount);
+        $this->assertSame(PaymentMethod::Qr, $secondPayment->method);
     }
 
     public function test_payment_rejects_a_cash_session_from_another_branch(): void
@@ -367,15 +390,16 @@ class CashAndPaymentsTest extends TestCase
         $this->actingInContext($owner, $company, $branch)
             ->get(route('orders.checkout', $order->ulid))
             ->assertOk()
-            ->assertSee('¿Cómo paga el restante?')
+            ->assertSee('Saldo restante')
             ->assertSee('Bs 100,00')
             ->assertSee('Bs 40,00')
             ->assertSee('value="40.00"', false)
-            ->assertSee('data-payment-form="cash" data-cash-payment hidden', false)
-            ->assertSee('data-payment-form="qr" hidden', false)
-            ->assertSee('Registrar pago en efectivo')
-            ->assertSee('Registrar pago QR')
-            ->assertSee('Vuelto');
+            ->assertSee('data-cash-payment', false)
+            ->assertSee('data-dynamic-qr', false)
+            ->assertSee('Registrar efectivo')
+            ->assertSee('Cobrar con QR')
+            ->assertDontSee('Efectivo parcial (opcional)')
+            ->assertSee('Cambio');
     }
 
     public function test_cash_register_seeder_is_idempotent_without_opening_a_session(): void

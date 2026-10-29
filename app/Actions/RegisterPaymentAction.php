@@ -4,12 +4,14 @@ namespace App\Actions;
 
 use App\Enums\CashMovementType;
 use App\Enums\CashSessionStatus;
+use App\Enums\DynamicQrStatus;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\Permission;
 use App\Models\CashSession;
+use App\Models\DynamicQrIntent;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\Payment;
@@ -42,6 +44,7 @@ class RegisterPaymentAction
         ?string $receivedAmount = null,
         ?string $reference = null,
         ?KitchenDispatch $dispatch = null,
+        ?DynamicQrIntent $bankIntent = null,
     ): Payment {
         $this->access->ensure($user, $order->company, Permission::CreatePayments);
         $existing = Payment::query()->forCompany($order->company)->where('idempotency_key', $idempotencyKey)->first();
@@ -50,13 +53,39 @@ class RegisterPaymentAction
         }
 
         try {
-            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch): Payment {
+            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $bankIntent): Payment {
                 $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
                 $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
                 $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
                 $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
                 if ($duplicate) {
                     return $this->validateDuplicate($duplicate, $order, $method, $amount, $dispatch);
+                }
+                $activeQr = DynamicQrIntent::query()->where('active_order_id', $order->id)->first();
+                if ($activeQr && $activeQr->id !== $bankIntent?->id) {
+                    throw new DomainException('Existe un QR bancario activo. Verifícalo o anúlalo antes de registrar otro pago.');
+                }
+                if (DynamicQrIntent::query()->where('order_id', $order->id)->where('status', DynamicQrStatus::ReconciliationRequired)->exists()) {
+                    throw new DomainException('El pedido tiene una incidencia bancaria pendiente de conciliación.');
+                }
+                if ($bankIntent) {
+                    $bankIntent = DynamicQrIntent::query()->lockForUpdate()->findOrFail($bankIntent->id);
+                    $bankPayment = $bankIntent->reconciliation_data ?? [];
+                    $bankAmount = $bankPayment['amount'] ?? null;
+                    if ($method !== PaymentMethod::Qr || $bankIntent->bank_status !== '1'
+                        || $bankIntent->active_order_id !== $order->id || $bankIntent->payment_id !== null
+                        || ! is_string($bankIntent->bank_qr_id) || $bankIntent->bank_qr_id === ''
+                        || ($bankPayment['qrId'] ?? null) !== $bankIntent->bank_qr_id
+                        || ($bankPayment['currency'] ?? null) !== $bankIntent->currency
+                        || ! is_string($bankAmount) || ! preg_match('/^\d+(?:\.\d{1,2})?$/D', $bankAmount)
+                        || ! BigDecimal::of($bankAmount)->isEqualTo($bankIntent->amount)
+                        || $bankIntent->order_id !== $order->id || $bankIntent->cash_session_id !== $session->id
+                        || $bankIntent->user_id !== $user->id || $bankIntent->kitchen_dispatch_id !== $dispatch?->id
+                        || ! BigDecimal::of($bankIntent->amount)->isEqualTo($amount)) {
+                        throw new DomainException('La confirmación bancaria no coincide con el contexto del pago.');
+                    }
+                } elseif ($method === PaymentMethod::Qr) {
+                    throw new DomainException('El QR bancario solo se registra después de consultar al banco.');
                 }
                 if ($session->status !== CashSessionStatus::Open
                     || (int) $session->company_id !== (int) $order->company_id
@@ -116,7 +145,7 @@ class RegisterPaymentAction
                 }
 
                 return $payment->refresh();
-            });
+            }, 3);
         } catch (QueryException $exception) {
             $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
             if ($duplicate) {

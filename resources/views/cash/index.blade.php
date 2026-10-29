@@ -2,6 +2,15 @@
 @section('title', 'Caja')
 @section('heading', 'Caja')
 @section('content')
+@if($bankQrAlerts->isNotEmpty())
+<section class="mb-4 rounded-xl border border-red-300 bg-red-50 p-4" role="alert">
+    <h2 class="font-bold">Banco Económico: conciliación requerida</h2>
+    <p class="mt-1 text-sm">Verifica estas operaciones con el responsable de caja antes de volver a cobrar o cerrar el turno.</p>
+    @foreach($bankQrAlerts as $bankQrAlert)
+        <p class="mt-2 text-sm"><a class="link" href="{{ route('orders.show', $bankQrAlert->order->ulid) }}">{{ $bankQrAlert->order->formattedNumber() }}</a> · BOB {{ $bankQrAlert->amount }} · {{ $bankQrAlert->issue_code }} · {{ $bankQrAlert->ulid }}</p>
+    @endforeach
+</section>
+@endif
 <div class='mx-auto min-w-0 max-w-[1280px] text-slate-900 [&_.card-title]:text-slate-950 [&_.card-subtitle]:text-xs [&_.card-subtitle]:leading-relaxed [&_.label]:text-slate-700'>
 @if (! $session)
     <div class='mx-auto max-w-4xl'>
