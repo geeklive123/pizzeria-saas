@@ -14,24 +14,63 @@ use App\Enums\PaymentMethod;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
 use App\Enums\TableChargeMode;
+use App\Exceptions\FinancialVersionConflict;
 use App\Http\Requests\PaymentRequest;
 use App\Http\Requests\PrepareCheckoutRequest;
 use App\Http\Requests\ReversePaymentRequest;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Services\CurrentCashSessionService;
+use App\Services\FinancialPaymentCoordinator;
 use App\Services\OrderPaymentService;
 use App\Services\ThermalPrintingService;
 use App\Support\UiFormatter;
 use DomainException;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class CheckoutController extends Controller
 {
+    public function financialAttempt(string $order): JsonResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('create', Payment::class);
+        $attempt = FinancialPaymentAttempt::query()->forCompany($this->company())
+            ->where('branch_id', $this->branch()->id)->where('order_id', $order->id)
+            ->orderByRaw('active_order_id IS NULL')->orderByDesc('id')->first();
+
+        return response()->json(['attempt' => $attempt ? $this->attemptPayload($attempt) : null, 'financial_version' => $order->financial_version])->header('Cache-Control', 'no-store');
+    }
+
+    public function reconcileFinancialAttempt(string $order, string $attempt, FinancialPaymentCoordinator $coordinator): JsonResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('create', Payment::class);
+        $attempt = FinancialPaymentAttempt::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+            ->where('order_id', $order->id)->where('ulid', $attempt)->firstOrFail();
+        $attempt = $coordinator->reconcile($attempt, request()->user());
+
+        return response()->json(['attempt' => $this->attemptPayload($attempt), 'financial_version' => $order->fresh()->financial_version])->header('Cache-Control', 'no-store');
+    }
+
+    private function attemptPayload(FinancialPaymentAttempt $attempt): array
+    {
+        return [
+            'ulid' => $attempt->ulid, 'status' => $attempt->status, 'method' => $attempt->method,
+            'amount' => $attempt->amount, 'payment_ulid' => $attempt->payment_id ? Payment::query()->whereKey($attempt->payment_id)->value('ulid') : null,
+            'owned_by_current_user' => $attempt->user_id === request()->user()->id,
+            'idempotency_key' => $attempt->user_id === request()->user()->id ? $attempt->idempotency_key : null,
+            'active' => $attempt->active_order_id !== null,
+            'message' => $attempt->active_order_id ? FinancialPaymentCoordinator::UNCERTAIN : null,
+        ];
+    }
+
     public function show(string $order, OrderPaymentService $payments, CurrentCashSessionService $cashSessions): View
     {
         $order = $this->order($order)->load(['restaurantTable', 'items.productVariant.product', 'payments.receivedBy', 'printAttempts']);
@@ -79,9 +118,10 @@ class CheckoutController extends Controller
         return redirect()->route('orders.checkout', $order->ulid)->with('success', 'Cuenta lista para cobrar.');
     }
 
-    public function store(PaymentRequest $request, string $order, RegisterPaymentAction $action, RegisterMixedPaymentAction $mixedPayments, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, ThermalPrintingService $printing): RedirectResponse
+    public function store(PaymentRequest $request, string $order, RegisterPaymentAction $action, RegisterMixedPaymentAction $mixedPayments, OrderPaymentService $payments, CurrentCashSessionService $cashSessions, ThermalPrintingService $printing): RedirectResponse|Response
     {
         $order = $this->order($order);
+        $order->forceFill(['financial_version' => (int) $request->validated('financial_version')]);
         $dispatch = $this->dispatch($order, $request->validated('kitchen_dispatch'))
             ?? $order->kitchenDispatches()->where('status', KitchenDispatchStatus::AwaitingPayment->value)->first();
         Gate::authorize('create', Payment::class);
@@ -114,6 +154,11 @@ class CheckoutController extends Controller
                     $dispatch,
                 );
             }
+        } catch (FinancialVersionConflict $exception) {
+            $current = $this->order($order->ulid);
+            $balance = $dispatch ? $payments->dispatchBalance($dispatch->fresh()) : $payments->balance($current);
+
+            return response()->view('orders.financial-conflict', ['order' => $current, 'balance' => $balance], 409);
         } catch (DomainException $exception) {
             return back()->withInput()->withErrors(['payment' => $exception->getMessage()]);
         }

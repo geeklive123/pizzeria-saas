@@ -8,6 +8,7 @@ use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
+use App\Services\FinancialPaymentCoordinator;
 use App\Services\OrderPaymentService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -19,6 +20,7 @@ class RegisterMixedPaymentAction
     public function __construct(
         private readonly RegisterPaymentAction $payments,
         private readonly OrderPaymentService $balances,
+        private readonly FinancialPaymentCoordinator $financialAttempts,
     ) {}
 
     public function execute(
@@ -30,8 +32,14 @@ class RegisterMixedPaymentAction
         ?string $receivedAmount = null,
         ?string $reference = null,
         ?KitchenDispatch $dispatch = null,
+        ?int $attemptRevision = null,
     ): Payment {
-        return DB::transaction(function () use ($order, $session, $cashAmount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch): Payment {
+        if (DB::transactionLevel() === 0) {
+            return $this->financialAttempts->execute($order, $session, $user, $idempotencyKey, 'mixed', (string) $cashAmount, $receivedAmount, $dispatch,
+                fn (int $revision) => $this->execute($order, $session, $cashAmount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $revision));
+        }
+
+        return DB::transaction(function () use ($order, $session, $cashAmount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $attemptRevision): Payment {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
             $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
             $cashAmount = BigDecimal::of($cashAmount)->toScale(2, RoundingMode::HalfUp);
@@ -85,6 +93,7 @@ class RegisterMixedPaymentAction
                     $cashKey,
                     (string) $received,
                     dispatch: $dispatch,
+                    attemptRevision: $attemptRevision,
                 );
             }
 
@@ -99,6 +108,7 @@ class RegisterMixedPaymentAction
                     $qrKey,
                     reference: $reference,
                     dispatch: $dispatch?->refresh(),
+                    attemptRevision: $attemptRevision,
                 );
             }
 

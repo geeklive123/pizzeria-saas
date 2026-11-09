@@ -21,7 +21,7 @@ async function harness(enabled = '1', initial = { intent: null }) {
     modal.showModal = () => { modal.open = true; };
     modal.close = () => { modal.open = false; modal.closeHandler(); };
     modal.addEventListener = (event, handler) => { if (event === 'close') modal.closeHandler = handler; };
-    const box = { dataset: { enabled, createUrl: '/create', currentUrl: '/current', dispatch: '', key: 'original-key' },
+    const box = { dataset: { enabled, createUrl: '/create', currentUrl: '/current', dispatch: '', key: 'original-key', financialVersion: '7' },
         querySelector(selector) { return elements.get(selector.match(/data-qr-(.+)]/)[1]); }, contains: () => false };
     const requests = [], responses = [initial], timers = new Map(), redirects = [];
     const events = {};
@@ -37,6 +37,7 @@ async function harness(enabled = '1', initial = { intent: null }) {
             const response = await responses.shift();
             assert.notEqual(response, undefined, 'Unexpected UI request');
             if (response instanceof Error) throw response;
+            if (response.httpStatus) return { ok: false, status: response.httpStatus, json: async () => response.data };
             return { ok: true, json: async () => response };
         },
     });
@@ -53,6 +54,7 @@ test('opening generates only the server balance and displays the bank image', as
     assert.equal(ui.requests[1].url, '/create');
     assert.equal(ui.requests[1].body.cash_amount, undefined);
     assert.equal(ui.requests[1].body.amount, undefined);
+    assert.equal(ui.requests[1].body.financial_version, '7');
     assert.equal(ui.elements.get('amount').textContent, 'BOB 40.00');
     assert.equal(ui.elements.get('image').src, '/image');
     assert.equal(ui.elements.get('image').hidden, false);
@@ -60,6 +62,17 @@ test('opening generates only the server balance and displays the bank image', as
     assert.equal(ui.elements.get('identifier').textContent, 'QR ID: bank-1');
     assert.equal(ui.elements.get('status').textContent, 'Esperando pago');
     assert.equal([...ui.timers.values()].filter((t) => t.delay === 6500).length, 1);
+});
+
+test('a stale financial version shows the new balance and requires explicit review', async () => {
+    const ui = await harness();
+    ui.responses.push({ intent: null }, { httpStatus: 409, data: { message: 'El pedido cambió.', summary: { balance: '30.00' } } });
+    await ui.elements.get('open').click();
+    assert.match(ui.elements.get('status').textContent, /pedido cambió/);
+    assert.match(ui.elements.get('balance').textContent, /30\.00/);
+    assert.equal(ui.elements.get('refresh').hidden, false);
+    assert.equal(ui.requests.filter((r) => r.url === '/create').length, 1);
+    assert.equal(ui.box.dataset.key, 'original-key');
 });
 
 test('closing preserves the attempt and reopening resumes it without another generation', async () => {

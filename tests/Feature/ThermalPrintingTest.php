@@ -23,6 +23,7 @@ use App\Models\Branch;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\Company;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\InventoryMovement;
 use App\Models\InventoryReservation;
 use App\Models\InventoryStock;
@@ -134,7 +135,7 @@ class ThermalPrintingTest extends TestCase
 
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        $this->actingInContext($owner, $company, $branch)->post(route('orders.payments.store', $order->ulid), [
+        $this->actingInContext($owner, $company, $branch)->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
             'method' => PaymentMethod::Qr->value,
             'amount' => '45.00',
             'idempotency_key' => (string) Str::ulid(),
@@ -186,7 +187,7 @@ class ThermalPrintingTest extends TestCase
             ->assertSessionHasErrors('printing');
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '45.00', $owner, 'cash-takeaway-print', '45.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '45.00', $owner, 'cash-takeaway-print', '45.00', dispatch: $dispatch);
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
@@ -204,7 +205,7 @@ class ThermalPrintingTest extends TestCase
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         $this->assertSame(0, $dispatch->printAttempts()->count());
-        $this->confirmBankQr($order, $session, $owner, 'mixed-takeaway-print', $dispatch, '10.00');
+        $this->confirmBankQr($order->fresh(), $session, $owner, 'mixed-takeaway-print', $dispatch, '10.00');
         $this->assertSame(2, $order->payments()->count());
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
@@ -222,7 +223,7 @@ class ThermalPrintingTest extends TestCase
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         $this->mock(ThermalPrintingService::class)->shouldReceive('kitchen')->once()->andThrow(new RuntimeException('simulated enqueue failure'));
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '45.00', $owner, 'retry-takeaway-print', '45.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '45.00', $owner, 'retry-takeaway-print', '45.00', dispatch: $dispatch);
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertNull($dispatch->refresh()->auto_kitchen_print_enqueued_at);
         $this->app->forgetInstance(ThermalPrintingService::class);
@@ -249,7 +250,7 @@ class ThermalPrintingTest extends TestCase
         $this->assertNull(app(PrintAgentQueueService::class)->claim($agent));
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '45.00', $owner, 'legacy-queue', '45.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '45.00', $owner, 'legacy-queue', '45.00', dispatch: $dispatch);
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->assertSame($attempt->id, app(PrintAgentQueueService::class)->claim($agent)['job']->id);
     }
@@ -264,9 +265,16 @@ class ThermalPrintingTest extends TestCase
         $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        FinancialPaymentAttempt::query()->create([
+            'company_id' => $company->id, 'branch_id' => $branch->id, 'order_id' => $order->id,
+            'active_order_id' => $order->id, 'cash_session_id' => $session->id, 'user_id' => $owner->id,
+            'kitchen_dispatch_id' => $dispatch->id, 'idempotency_key' => 'rolled-back-payment',
+            'expected_financial_version' => $order->fresh()->financial_version,
+            'method' => 'cash', 'amount' => '45.00', 'received_amount' => '45.00', 'status' => 'pending',
+        ]);
         DB::beginTransaction();
         try {
-            app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '45.00', $owner, 'rolled-back-payment', '45.00', dispatch: $dispatch);
+            app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '45.00', $owner, 'rolled-back-payment', '45.00', dispatch: $dispatch, attemptRevision: 0);
             $this->assertSame(0, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         } finally {
             DB::rollBack();

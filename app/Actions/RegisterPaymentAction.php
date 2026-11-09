@@ -17,6 +17,8 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\FinancialPaymentCoordinator;
+use App\Services\OrderFinancialVersion;
 use App\Services\OrderPaymentService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -32,6 +34,8 @@ class RegisterPaymentAction
         private readonly OrderPaymentService $balances,
         private readonly CompanyAccessService $access,
         private readonly SettleKitchenDispatchAction $settleDispatch,
+        private readonly FinancialPaymentCoordinator $financialAttempts,
+        private readonly OrderFinancialVersion $versions,
     ) {}
 
     public function execute(
@@ -45,6 +49,7 @@ class RegisterPaymentAction
         ?string $reference = null,
         ?KitchenDispatch $dispatch = null,
         ?DynamicQrIntent $bankIntent = null,
+        ?int $attemptRevision = null,
     ): Payment {
         $this->access->ensure($user, $order->company, Permission::CreatePayments);
         $existing = Payment::query()->forCompany($order->company)->where('idempotency_key', $idempotencyKey)->first();
@@ -52,11 +57,22 @@ class RegisterPaymentAction
             return $this->validateDuplicate($existing, $order, $method, $amount, $dispatch);
         }
 
+        if (DB::transactionLevel() === 0 && $bankIntent === null && $method === PaymentMethod::Cash) {
+            return $this->financialAttempts->execute($order, $session, $user, $idempotencyKey, $method->value, (string) $amount, $receivedAmount, $dispatch,
+                fn (int $revision) => $this->execute($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, attemptRevision: $revision));
+        }
+
         try {
-            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $bankIntent): Payment {
+            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $bankIntent, $attemptRevision): Payment {
                 $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
                 $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
                 $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
+                if ($method === PaymentMethod::Qr && $bankIntent === null) {
+                    throw new DomainException('El QR bancario solo se registra después de consultar al banco.');
+                }
+                if ($bankIntent === null) {
+                    $this->financialAttempts->assertPaymentAllowed($order, $session, $user, $idempotencyKey, $method, (string) $amount, $receivedAmount, $dispatch, $attemptRevision);
+                }
                 $duplicate = Payment::query()->forCompany($order->company_id)->where('idempotency_key', $idempotencyKey)->first();
                 if ($duplicate) {
                     return $this->validateDuplicate($duplicate, $order, $method, $amount, $dispatch);
@@ -132,6 +148,7 @@ class RegisterPaymentAction
                     'status' => PaymentStatus::Completed,
                     'idempotency_key' => $idempotencyKey,
                 ]);
+                $this->versions->advance($order);
                 if ($method === PaymentMethod::Cash) {
                     $this->movements->execute($session, CashMovementType::SaleCash, (string) $amount, $user, 'Cobro de venta', $payment);
                 }

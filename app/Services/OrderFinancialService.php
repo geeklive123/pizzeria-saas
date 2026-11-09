@@ -248,7 +248,12 @@ class OrderFinancialService
             'discount_percentage' => $keepPercentage ? $snapshot['discount_percentage'] : $order->discount_percentage,
             'discount_total' => $snapshot['discount'], 'total' => $snapshot['total'],
             'financial_snapshot' => $this->snapshot($snapshot),
-        ])->save();
+        ]);
+        $changed = $order->isDirty(['subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot']);
+        $order->save();
+        if ($changed) {
+            app(OrderFinancialVersion::class)->advance($order);
+        }
 
         return $order->refresh();
     }

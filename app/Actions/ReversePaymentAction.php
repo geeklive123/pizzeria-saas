@@ -12,16 +12,18 @@ use App\Enums\Permission;
 use App\Models\CashMovement;
 use App\Models\CashSession;
 use App\Models\KitchenDispatch;
+use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OrderFinancialVersion;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class ReversePaymentAction
 {
-    public function __construct(private readonly RecordCashMovementAction $movements, private readonly CompanyAccessService $access) {}
+    public function __construct(private readonly RecordCashMovementAction $movements, private readonly CompanyAccessService $access, private readonly OrderFinancialVersion $versions) {}
 
     public function execute(
         Payment $payment,
@@ -40,6 +42,7 @@ class ReversePaymentAction
                 ->filter()->unique()->sort()->values();
             $sessions = CashSession::query()->whereIn('id', $sessionIds)
                 ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $order = Order::query()->lockForUpdate()->findOrFail($payment->order_id);
             $payment = Payment::query()->with('order')->lockForUpdate()->findOrFail($payment->id);
             $sourceSession = $sessions->get($payment->cash_session_id);
             $session = $sessions->get($reversalSession?->getKey() ?? $payment->cash_session_id);
@@ -81,6 +84,7 @@ class ReversePaymentAction
                 'idempotency_key' => 'reverse-'.$payment->ulid,
             ]);
             $payment->forceFill(['status' => PaymentStatus::Reversed])->save();
+            $this->versions->advance($order);
             if ($payment->kitchen_dispatch_id && ! $forPaidCancellation) {
                 KitchenDispatch::query()->whereKey($payment->kitchen_dispatch_id)->update([
                     'status' => KitchenDispatchStatus::Released->value,

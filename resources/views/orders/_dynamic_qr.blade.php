@@ -4,6 +4,7 @@
     @csrf
     <input type="hidden" name="method" value="cash">
     <input type="hidden" name="idempotency_key" value="{{ (string) \Illuminate\Support\Str::ulid() }}">
+    <input type="hidden" name="financial_version" value="{{ $order->financial_version }}">
     @if($qrDispatch)<input type="hidden" name="kitchen_dispatch" value="{{ $qrDispatch->ulid }}">@endif
     <label class="block"><span class="label">Monto aplicado en efectivo</span><input class="input" name="amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
     <label class="block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
@@ -13,6 +14,7 @@
 </details>
 <section class="mt-3 rounded-xl border border-orange-300 bg-orange-50 p-4" data-dynamic-qr
     data-enabled="{{ config('baneco.enabled') ? '1' : '0' }}"
+    data-financial-version="{{ $order->financial_version }}"
     data-create-url="{{ route('orders.dynamic-qr.store', $order->ulid) }}"
     data-current-url="{{ route('orders.dynamic-qr.show', ['order' => $order->ulid, 'dispatch' => $qrDispatch?->ulid]) }}"
     data-dispatch="{{ $qrDispatch?->ulid }}"

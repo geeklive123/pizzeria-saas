@@ -125,6 +125,8 @@ Route::middleware('auth')->group(function (): void {
             Route::post('/orders/{order}/cancel-paid', [OrderController::class, 'cancelPaid'])->name('orders.cancel-paid');
             Route::post('/orders/{order}/restore-paid', [OrderController::class, 'restorePaid'])->name('orders.restore-paid');
             Route::get('/orders/{order}/checkout', [CheckoutController::class, 'show'])->name('orders.checkout');
+            Route::get('/orders/{order}/financial-attempt', [CheckoutController::class, 'financialAttempt'])->name('orders.financial-attempt.show');
+            Route::post('/orders/{order}/financial-attempt/{attempt}/reconcile', [CheckoutController::class, 'reconcileFinancialAttempt'])->name('orders.financial-attempt.reconcile');
             Route::get('/orders/{order}/dynamic-qr', [DynamicQrController::class, 'show'])->name('orders.dynamic-qr.show');
             Route::post('/orders/{order}/dynamic-qr', [DynamicQrController::class, 'store'])->middleware('throttle:10,1')->name('orders.dynamic-qr.store');
             Route::get('/orders/{order}/dynamic-qr/{intent}/image', [DynamicQrController::class, 'image'])->name('orders.dynamic-qr.image');

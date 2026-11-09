@@ -20,6 +20,8 @@ class Order extends Model
 {
     use BelongsToCompany, HasFactory, HasUlids;
 
+    protected $attributes = ['financial_version' => 0];
+
     public function deliveryCharge(): HasOne
     {
         return $this->hasOne(OrderDeliveryCharge::class);
@@ -38,6 +40,7 @@ class Order extends Model
     protected function casts(): array
     {
         return [
+            'financial_version' => 'integer',
             'type' => OrderType::class,
             'charge_mode' => TableChargeMode::class,
             'status' => OrderStatus::class,

@@ -105,7 +105,7 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame(OrderItemStatus::PendingPayment, $firstItem->refresh()->status);
         $this->assertSame('10.000', $this->stock($branch, $inventory));
 
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '10.00', $owner, 'batch-cash', '10.00', dispatch: $first);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '10.00', $owner, 'batch-cash', '10.00', dispatch: $first);
         $this->confirmBankQr($order->refresh(), $session, $owner, 'batch-qr', $first->refresh());
         $this->assertSame(KitchenDispatchStatus::Settled, $first->refresh()->status);
         $this->assertSame('8.000', $this->stock($branch, $inventory));
@@ -141,6 +141,7 @@ class SalesFlowRedesignTest extends TestCase
 
         $dispatchCount = $order->kitchenDispatches()->count();
         $cashPayload = [
+            'financial_version' => $order->fresh()->financial_version,
             'method' => PaymentMethod::Cash->value,
             'amount' => '38.00',
             'idempotency_key' => 'quick-cash-full',
@@ -166,7 +167,7 @@ class SalesFlowRedesignTest extends TestCase
         [$company, $branch, $owner, $session, $order, $dispatch] = $this->paymentBatch('38.00');
         $dispatchCount = $order->kitchenDispatches()->count();
         $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
-            ->post(route('orders.payments.store', $order->ulid), [
+            ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                 'method' => PaymentMethod::Qr->value,
                 'amount' => '38.00',
                 'idempotency_key' => 'quick-qr-full',
@@ -200,7 +201,7 @@ class SalesFlowRedesignTest extends TestCase
         $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
         $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        $this->confirmBankQr($order, $session, $owner, 'same-key', $first);
+        $this->confirmBankQr($order->fresh(), $session, $owner, 'same-key', $first);
 
         $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
         $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
@@ -214,7 +215,7 @@ class SalesFlowRedesignTest extends TestCase
         }
 
         $this->actingAs($owner)->withSession($context)
-            ->post(route('orders.payments.store', $order->ulid), [
+            ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                 'method' => PaymentMethod::Qr->value,
                 'amount' => '100.00',
                 'kitchen_dispatch' => $second->ulid,
@@ -241,7 +242,7 @@ class SalesFlowRedesignTest extends TestCase
         $this->financialItem($order, $company, $owner, '100.00', '100.00', true);
         $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        $this->confirmBankQr($order, $session, $owner, 'first-dispatch', $first);
+        $this->confirmBankQr($order->fresh(), $session, $owner, 'first-dispatch', $first);
 
         $this->financialItem($order, $company, $owner, '120.00', '120.00', true);
         $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
@@ -309,7 +310,7 @@ class SalesFlowRedesignTest extends TestCase
         [$company, $branch, $owner, , $order, $dispatch] = $this->paymentBatch('38.00');
 
         $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
-            ->post(route('orders.payments.store', $order->ulid), [
+            ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                 'method' => PaymentMethod::Cash->value,
                 'amount' => '38.00',
                 'received_amount' => '50.00',
@@ -354,7 +355,7 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $next->status);
 
         [, , $owner, $session, $order, $dispatch] = $this->paymentBatch('100.00');
-        $this->confirmBankQr($order, $session, $owner, 'mixed-100-60', $dispatch, '60.00');
+        $this->confirmBankQr($order->fresh(), $session, $owner, 'mixed-100-60', $dispatch, '60.00');
         $this->assertDatabaseHas('payments', ['kitchen_dispatch_id' => $dispatch->id, 'method' => 'cash', 'amount' => 60]);
         $this->assertDatabaseHas('payments', ['kitchen_dispatch_id' => $dispatch->id, 'method' => 'qr', 'amount' => 40]);
     }
@@ -365,7 +366,7 @@ class SalesFlowRedesignTest extends TestCase
         DB::unprepared("CREATE TEMP TRIGGER fail_mixed_qr BEFORE INSERT ON payments WHEN NEW.method = 'qr' BEGIN SELECT RAISE(ABORT, 'forced qr failure'); END");
 
         try {
-            app(RegisterMixedPaymentAction::class)->execute($order, $session, '20.00', $owner, 'mixed-atomic', dispatch: $dispatch);
+            app(RegisterMixedPaymentAction::class)->execute($order->fresh(), $session, '20.00', $owner, 'mixed-atomic', dispatch: $dispatch);
             $this->fail('El QR forzado debÃ­a fallar.');
         } catch (DomainException) {
             $this->assertDatabaseCount('payments', 0);
@@ -413,7 +414,7 @@ class SalesFlowRedesignTest extends TestCase
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $this->assertSame('17.00', $dispatch->total);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-cash', '17.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-cash', '17.00', dispatch: $dispatch);
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertSame('9.000', $this->stock($branch, $inventory));
         $ticket = app(CustomerTicketRenderer::class)->renderDispatch($dispatch->refresh(), $owner);
@@ -462,7 +463,7 @@ class SalesFlowRedesignTest extends TestCase
         app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '3.00', $owner, 'partial-delivery', '3.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '3.00', $owner, 'partial-delivery', '3.00', dispatch: $dispatch);
         $this->expectException(DomainException::class);
         app(UpdateOrderDeliveryChargeAction::class)->execute($order->refresh(), $owner, '1.00');
     }
@@ -476,7 +477,7 @@ class SalesFlowRedesignTest extends TestCase
         app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-reversal', '17.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-reversal', '17.00', dispatch: $dispatch);
         app(CancelSettledKitchenDispatchAction::class)->execute($dispatch->refresh(), $owner, 'Prueba de anulación');
         $this->assertFalse($order->deliveryCharge()->firstOrFail()->enabled);
         $this->assertSame('0.00', $order->refresh()->total);
@@ -585,7 +586,7 @@ class SalesFlowRedesignTest extends TestCase
         app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
         $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-restore-guard', '17.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-restore-guard', '17.00', dispatch: $dispatch);
         app(CancelPaidOrderAction::class)->execute($order->refresh(), $owner, 'Anulación');
         $count = Payment::query()->count();
         try {
@@ -608,7 +609,7 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('10.000', $this->stock($branch, $inventory));
 
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '12.00', $owner, 'takeaway', '20.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '12.00', $owner, 'takeaway', '20.00', dispatch: $dispatch);
 
         $this->assertSame('9.000', $this->stock($branch, $inventory));
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
@@ -849,7 +850,7 @@ class SalesFlowRedesignTest extends TestCase
             $this->confirmBankQr($order->refresh(), $session, $owner, 'at-end-discount-qr');
         } else {
             $this->actingAs($owner)->withSession($context)
-                ->post(route('orders.payments.store', $order->ulid), [
+                ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                     'method' => $method->value,
                     'amount' => '91.00',
                     'idempotency_key' => 'at-end-discount-'.$method->value,
@@ -902,7 +903,7 @@ class SalesFlowRedesignTest extends TestCase
             $this->confirmBankQr($order->refresh(), $session, $owner, 'per-batch-discount-qr', $dispatch->refresh());
         } else {
             $this->actingAs($owner)->withSession($context)
-                ->post(route('orders.payments.store', $order->ulid), [
+                ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                     'method' => $method->value,
                     'amount' => '90.00',
                     'kitchen_dispatch' => $dispatch->ulid,

@@ -26,6 +26,7 @@ use App\Models\CashRegister;
 use App\Models\CashSession;
 use App\Models\Company;
 use App\Models\DynamicQrIntent;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Membership;
@@ -51,6 +52,20 @@ use Tests\TestCase;
 
 class DynamicQrTest extends TestCase
 {
+    public function test_existing_qr_confirmation_is_not_blocked_by_a_financial_attempt(): void
+    {
+        $intent = $this->generate();
+        FinancialPaymentAttempt::query()->create([
+            'company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'order_id' => $this->order->id, 'active_order_id' => $this->order->id,
+            'cash_session_id' => $this->session->id, 'user_id' => $this->user->id,
+            'idempotency_key' => 'pending-existing-cash', 'method' => 'cash', 'amount' => '10.00', 'status' => 'pending',
+        ]);
+        $this->paid();
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+    }
+
     private Company $company;
 
     private Branch $branch;
@@ -165,7 +180,7 @@ class DynamicQrTest extends TestCase
 
     private function generate(string $cash = '0.00', ?KitchenDispatch $dispatch = null, string $key = 'request-one'): DynamicQrIntent
     {
-        return app(DynamicQrAction::class)->generate($this->order, $this->session, $this->user, $key, $dispatch, $cash);
+        return app(DynamicQrAction::class)->generate($this->order->fresh(), $this->session, $this->user, $key, $dispatch, $cash);
     }
 
     private function paid(string $amount = '100.00', string $currency = 'BOB', string $qr = 'bank-1'): void
@@ -1002,7 +1017,7 @@ class DynamicQrTest extends TestCase
 
     public function test_manual_qr_cannot_be_marked_complete_when_bank_feature_is_enabled(): void
     {
-        $this->login()->post(route('orders.payments.store', $this->order->ulid), ['method' => 'qr', 'amount' => '100.00', 'idempotency_key' => 'forged'])->assertSessionHasErrors('payment');
+        $this->login()->post(route('orders.payments.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'method' => 'qr', 'amount' => '100.00', 'idempotency_key' => 'forged'])->assertSessionHasErrors('payment');
         $this->assertDatabaseCount('payments', 0);
     }
 
@@ -1028,13 +1043,13 @@ class DynamicQrTest extends TestCase
         config(['baneco.enabled' => false]);
         $this->login()->get(route('orders.checkout', $this->order->ulid))
             ->assertOk()->assertSee('Banco Económico no habilitado')->assertDontSee('name="method" value="qr"', false);
-        $this->post(route('orders.payments.store', $this->order->ulid), [
+        $this->post(route('orders.payments.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'method' => 'qr', 'amount' => '100.00', 'idempotency_key' => 'manual-disabled',
         ])->assertSessionHasErrors('payment');
-        $this->post(route('orders.payments.store', $this->order->ulid), [
+        $this->post(route('orders.payments.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'method' => 'mixed', 'cash_amount' => '30.00', 'idempotency_key' => 'mixed-disabled',
         ])->assertSessionHasErrors('payment');
-        $this->postJson(route('orders.dynamic-qr.store', $this->order->ulid), [
+        $this->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'idempotency_key' => 'disabled-generation', 'cash_amount' => '30.00',
         ])->assertUnprocessable();
         $this->assertDatabaseCount('payments', 0);
@@ -1143,7 +1158,7 @@ class DynamicQrTest extends TestCase
     {
         $this->login()->get(route('orders.checkout', $this->order->ulid))->assertOk()->assertSee('Banco Económico')->assertSee('data-dynamic-qr', false)->assertDontSee('Registrar pago QR');
         $this->get(route('orders.show', $this->order->ulid))->assertOk()->assertSee('data-dynamic-qr', false);
-        $response = $this->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'http-create', 'amount' => '0.01', 'currency' => 'USD'])->assertOk()->assertJsonPath('intent.amount', '100.00')->assertJsonPath('intent.currency', 'BOB')->assertJsonPath('intent.status', 'pending');
+        $response = $this->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'http-create', 'amount' => '0.01', 'currency' => 'USD'])->assertOk()->assertJsonPath('intent.amount', '100.00')->assertJsonPath('intent.currency', 'BOB')->assertJsonPath('intent.status', 'pending');
         $this->assertSame(route('orders.dynamic-qr.image', [$this->order->ulid, DynamicQrIntent::query()->sole()->ulid]), $response->json('intent.image_url'));
         $this->assertSame('bank-1', $response->json('intent.bank_qr_id'));
         $this->assertDatabaseCount('payments', 0);
@@ -1174,7 +1189,7 @@ class DynamicQrTest extends TestCase
             'company_id' => $this->company->id, 'created_by' => $this->user->id,
             'type' => OrderType::Takeaway, 'status' => OrderStatus::Open,
         ]);
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-order-a'])
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'notice-order-a'])
             ->assertOk()->assertJsonPath('intent.status', 'pending');
         $intent = DynamicQrIntent::query()->sole();
         $this->get(route('orders.show', $otherOrder->ulid))->assertOk()->assertSee('data-qr-notifications', false);
@@ -1207,7 +1222,7 @@ class DynamicQrTest extends TestCase
 
     public function test_qr_notice_respects_branch_and_never_reports_uncertain_or_late_payment(): void
     {
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-scope'])->assertOk();
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'notice-scope'])->assertOk();
         $intent = DynamicQrIntent::query()->sole();
         foreach ([DynamicQrStatus::GenerationUnknown, DynamicQrStatus::ReconciliationRequired, DynamicQrStatus::Pending] as $status) {
             $intent->update(['status' => $status]);
@@ -1236,13 +1251,13 @@ class DynamicQrTest extends TestCase
         $this->paid();
         $this->check($intent);
         $this->travel(2)->seconds();
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'historical-notice'])->assertOk();
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'historical-notice'])->assertOk();
         $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
     }
 
     public function test_qr_notice_identifies_an_open_order_without_an_operational_number(): void
     {
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-number'])->assertOk();
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'notice-number'])->assertOk();
         $this->paid();
         $this->check(DynamicQrIntent::query()->sole());
         $this->order->update(['status' => OrderStatus::Open, 'operational_number' => null]);
@@ -1252,7 +1267,7 @@ class DynamicQrTest extends TestCase
 
     public function test_qr_notice_is_private_to_the_user_and_requires_payment_permission(): void
     {
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'private-notice'])->assertOk();
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'private-notice'])->assertOk();
         $this->paid();
         $intent = DynamicQrIntent::query()->sole();
         $this->check($intent);
@@ -1296,7 +1311,7 @@ class DynamicQrTest extends TestCase
         $tableB = RestaurantTable::factory()->for($this->branch)->create(['company_id' => $this->company->id]);
         $orderB = Order::factory()->for($this->branch)->create(['company_id' => $this->company->id, 'created_by' => $this->user->id,
             'type' => OrderType::DineIn, 'restaurant_table_id' => $tableB->id, 'active_restaurant_table_id' => $tableB->id, 'status' => OrderStatus::Open]);
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), [
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'idempotency_key' => 'takeaway-global-qr', 'kitchen_dispatch' => $dispatch->ulid,
         ])->assertOk()->assertJsonPath('intent.status', 'pending');
         $this->get(route('orders.show', $orderB->ulid))->assertOk()->assertSee('data-qr-notifications', false);
@@ -1360,7 +1375,7 @@ class DynamicQrTest extends TestCase
     public function test_qr_checkout_uses_actual_forty_boliviano_balance_without_recording_cash(): void
     {
         $this->order->update(['total' => '40.00']);
-        $response = $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), [
+        $response = $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'idempotency_key' => 'qr-forty', 'amount' => '1.00',
         ])->assertOk()->assertJsonPath('intent.amount', '40.00')->assertJsonPath('intent.status', 'pending');
         $intent = DynamicQrIntent::query()->sole();
@@ -1375,7 +1390,7 @@ class DynamicQrTest extends TestCase
     {
         $this->order->update(['total' => '80.00']);
         $url = route('orders.dynamic-qr.store', $this->order->ulid);
-        $data = ['idempotency_key' => 'mixed-eighty', 'cash_amount' => '30.00', 'received_amount' => '40.00'];
+        $data = ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'mixed-eighty', 'cash_amount' => '30.00', 'received_amount' => '40.00'];
         $this->login()->postJson($url, $data)->assertUnprocessable();
         $this->assertDatabaseCount('payments', 0);
         $data['confirm_cash'] = true;
@@ -1405,11 +1420,11 @@ class DynamicQrTest extends TestCase
         $this->order->update(['total' => '80.00']);
         $this->failure = 'generate_timeout';
         $url = route('orders.dynamic-qr.store', $this->order->ulid);
-        $data = ['idempotency_key' => 'mixed-timeout', 'cash_amount' => '30.00', 'received_amount' => '30.00', 'confirm_cash' => true];
+        $data = ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'mixed-timeout', 'cash_amount' => '30.00', 'received_amount' => '30.00', 'confirm_cash' => true];
         $this->login()->postJson($url, $data)->assertOk()->assertJsonPath('intent.status', 'generation_unknown')->assertJsonPath('summary.balance', '50.00');
         $this->postJson($url, $data)->assertOk()->assertJsonPath('intent.status', 'generation_unknown');
         $data['idempotency_key'] = 'another-attempt';
-        $this->postJson($url, $data)->assertUnprocessable();
+        $this->postJson($url, $data)->assertStatus(409);
         $this->assertDatabaseCount('payments', 1);
         $this->assertSame(1, $this->generations);
         $this->assertSame(OrderStatus::ReadyForPayment, $this->order->refresh()->status);
@@ -1419,12 +1434,12 @@ class DynamicQrTest extends TestCase
     {
         $this->order->update(['total' => '80.00']);
         $url = route('orders.dynamic-qr.store', $this->order->ulid);
-        $this->login()->postJson($url, ['idempotency_key' => 'mixed-cancel', 'cash_amount' => '30.00', 'received_amount' => '30.00', 'confirm_cash' => true])->assertOk();
+        $this->login()->postJson($url, ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'mixed-cancel', 'cash_amount' => '30.00', 'received_amount' => '30.00', 'confirm_cash' => true])->assertOk();
         $intent = DynamicQrIntent::query()->sole();
         $this->assertSame(DynamicQrStatus::Cancelled, $this->check($intent, true)->status);
         $this->getJson(route('orders.dynamic-qr.show', $this->order->ulid))->assertOk()->assertJsonPath('intent', null)
             ->assertJsonPath('summary.cash_paid', '30.00')->assertJsonPath('summary.balance', '50.00');
-        $this->postJson($url, ['idempotency_key' => 'new-qr-after-cancel'])->assertOk()
+        $this->postJson($url, ['financial_version' => $this->order->fresh()->financial_version, 'idempotency_key' => 'new-qr-after-cancel'])->assertOk()
             ->assertJsonPath('intent.amount', '50.00')->assertJsonPath('summary.cash_paid', '30.00');
         $this->assertDatabaseCount('payments', 1);
         $this->assertSame(1, CashMovement::query()->where('type', 'sale_cash')->count());
@@ -1434,7 +1449,7 @@ class DynamicQrTest extends TestCase
     {
         $this->order->update(['total' => '80.00']);
         app(RegisterPaymentAction::class)->execute($this->order, $this->session, PaymentMethod::Cash, '20.00', $this->user, 'previous-cash', '20.00');
-        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), [
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['financial_version' => $this->order->fresh()->financial_version,
             'idempotency_key' => 'mixed-after-partial', 'cash_amount' => '30.00', 'received_amount' => '30.00', 'confirm_cash' => true,
         ])->assertOk()->assertJsonPath('intent.amount', '30.00')->assertJsonPath('summary.cash_paid', '50.00')
             ->assertJsonPath('summary.paid', '50.00')->assertJsonPath('summary.balance', '30.00');
@@ -1490,7 +1505,7 @@ class DynamicQrTest extends TestCase
         Membership::factory()->for($this->company)->for($other)->owner()->create();
         $register = CashRegister::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id, 'name' => 'Segunda caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $other);
-        $second = app(DynamicQrAction::class)->generate($this->order, $session, $other, 'other-cashier', $dispatch);
+        $second = app(DynamicQrAction::class)->generate($this->order->fresh(), $session, $other, 'other-cashier', $dispatch);
         $this->assertSame($first->id, $second->id);
         $this->assertSame('40.00', $second->amount);
         $this->assertSame(1, $this->generations);
@@ -1508,7 +1523,7 @@ class DynamicQrTest extends TestCase
         $this->actingAs($user)->withSession(['active_company_id' => $other->id, 'active_branch_id' => $branch->id])
             ->postJson(route('orders.dynamic-qr.check', [$this->order->ulid, $intent->ulid]))->assertNotFound();
         $this->expectException(AuthorizationException::class);
-        app(DynamicQrAction::class)->generate($this->order, $this->session, $user, 'foreign');
+        app(DynamicQrAction::class)->generate($this->order->fresh(), $this->session, $user, 'foreign');
     }
 
     public function test_feature_flag_blocks_generation_but_preserves_pending_reconciliation(): void

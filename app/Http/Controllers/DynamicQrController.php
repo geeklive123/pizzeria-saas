@@ -7,6 +7,7 @@ use App\Enums\DynamicQrStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
+use App\Exceptions\FinancialVersionConflict;
 use App\Models\DynamicQrIntent;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
@@ -31,6 +32,7 @@ class DynamicQrController extends Controller
         Gate::authorize('create', Payment::class);
         $data = $request->validate([
             'idempotency_key' => ['required', 'string', 'max:64', 'regex:/^[A-Za-z0-9_-]+$/'],
+            'financial_version' => ['required', 'integer', 'min:0'],
             'kitchen_dispatch' => ['nullable', 'ulid'],
             'cash_amount' => ['nullable', 'regex:/^\d{1,14}(\.\d{1,2})?$/'],
             'received_amount' => ['nullable', 'regex:/^\d{1,14}(\.\d{1,2})?$/'],
@@ -49,10 +51,15 @@ class DynamicQrController extends Controller
         }
         try {
             $startedAt = now()->startOfSecond();
+            $order->forceFill(['financial_version' => (int) $data['financial_version']]);
             $intent = $action->generate($order, $session, $request->user(), $data['idempotency_key'], $dispatch, $data['cash_amount'] ?? '0.00', $data['received_amount'] ?? null);
             $notifications->watch($intent, $request->user(), $startedAt);
 
             return $this->payload($intent);
+        } catch (FinancialVersionConflict $exception) {
+            $fresh = $this->order($order->ulid);
+
+            return response()->json(['message' => $exception->getMessage(), 'summary' => $this->summary($fresh, $dispatch?->fresh())], 409)->header('Cache-Control', 'no-store');
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
@@ -165,6 +172,6 @@ class DynamicQrController extends Controller
 
         return ['balance' => $dispatch ? $this->balances->dispatchBalance($dispatch) : $this->balances->balance($order),
             'paid' => $dispatch ? $this->balances->dispatchPaid($dispatch) : $this->balances->paid($order),
-            'cash_paid' => (string) $cash->toScale(2)];
+            'cash_paid' => (string) $cash->toScale(2), 'financial_version' => $order->financial_version];
     }
 }

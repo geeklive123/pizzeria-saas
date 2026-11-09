@@ -19,6 +19,7 @@ use App\Models\CashMovement;
 use App\Models\CashSession;
 use App\Models\Company;
 use App\Models\DynamicQrIntent;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\Payment;
@@ -26,6 +27,8 @@ use App\Models\User;
 use App\Services\BancoEconomicoGateway;
 use App\Services\BankQrException;
 use App\Services\CompanyAccessService;
+use App\Services\FinancialPaymentCoordinator;
+use App\Services\OrderFinancialVersion;
 use App\Services\OrderPaymentService;
 use App\Services\ThermalPrintingService;
 use Brick\Math\BigDecimal;
@@ -45,6 +48,8 @@ class DynamicQrAction
         private readonly OrderPaymentService $balances,
         private readonly CompanyAccessService $access,
         private readonly ClaimPreparedDynamicQrAction $claims,
+        private readonly FinancialPaymentCoordinator $financialAttempts,
+        private readonly OrderFinancialVersion $versions,
     ) {}
 
     public function generate(Order $order, CashSession $session, User $user, string $key, ?KitchenDispatch $dispatch = null, string $cash = '0.00', ?string $received = null): DynamicQrIntent
@@ -59,7 +64,8 @@ class DynamicQrAction
         $created = false;
         $outerTransaction = DB::transactionLevel() === 0;
         try {
-            $intent = DB::transaction(function () use ($order, $session, $user, $key, $dispatch, $cash, $received, &$created): DynamicQrIntent {
+            $expectedVersion = $order->financial_version;
+            $intent = DB::transaction(function () use ($order, $session, $user, $key, $dispatch, $cash, $received, $expectedVersion, &$created): DynamicQrIntent {
                 $created = false;
                 Company::query()->lockForUpdate()->findOrFail($order->company_id);
                 $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
@@ -86,6 +92,8 @@ class DynamicQrAction
 
                     return $existing;
                 }
+                $this->versions->assertCurrent($order, $expectedVersion);
+                $this->financialAttempts->assertNoActiveAttempt($order);
                 $active = DynamicQrIntent::query()->where('active_order_id', $order->id)->first();
                 if ($active) {
                     if ($active->kitchen_dispatch_id !== $dispatch?->id) {
@@ -125,12 +133,21 @@ class DynamicQrAction
                 if ($cash->isNegative() || $cash->isGreaterThanOrEqualTo($balance)) {
                     throw new DomainException('El efectivo debe ser menor que el saldo para dejar un importe QR positivo.');
                 }
+                $cashAttempt = null;
                 if ($cash->isPositive()) {
-                    $this->payments->execute($order, $session, PaymentMethod::Cash, (string) $cash, $user, 'bqcash:'.hash('sha1', $key), $received, dispatch: $dispatch);
+                    $cashKey = 'bqcash:'.hash('sha1', $key);
+                    $cashAttempt = FinancialPaymentAttempt::query()->create([
+                        'company_id' => $order->company_id, 'branch_id' => $order->branch_id, 'order_id' => $order->id,
+                        'active_order_id' => $order->id, 'kitchen_dispatch_id' => $dispatch?->id,
+                        'cash_session_id' => $session->id, 'user_id' => $user->id, 'idempotency_key' => $cashKey,
+                        'method' => 'cash', 'amount' => (string) $cash, 'received_amount' => $received, 'status' => 'pending', 'revision' => 0,
+                        'expected_financial_version' => $expectedVersion,
+                    ]);
+                    $cashPayment = $this->payments->execute($order, $session, PaymentMethod::Cash, (string) $cash, $user, $cashKey, $received, dispatch: $dispatch, attemptRevision: 0);
                 }
                 $created = true;
 
-                return DynamicQrIntent::query()->create([
+                $intent = DynamicQrIntent::query()->create([
                     'company_id' => $order->company_id, 'branch_id' => $order->branch_id, 'order_id' => $order->id,
                     'active_order_id' => $order->id, 'kitchen_dispatch_id' => $dispatch?->id, 'cash_session_id' => $session->id,
                     'user_id' => $user->id, 'bank_qr_setting_id' => $setting->id, 'amount' => (string) $balance->minus($cash)->toScale(2),
@@ -139,6 +156,12 @@ class DynamicQrAction
                     'generation_phase' => DynamicQrGenerationPhase::Prepared->value,
                     'expires_at' => now()->timezone('America/La_Paz')->addDays($setting->due_days ?? 1)->endOfDay()->utc(),
                 ]);
+                if ($cashAttempt) {
+                    $cashAttempt->update(['status' => 'confirmed', 'active_order_id' => null, 'payment_id' => $cashPayment->id]);
+                }
+                $this->versions->advance($order);
+
+                return $intent;
             }, 3);
         } catch (Throwable $exception) {
             if (! $outerTransaction || ! (new LostConnectionDetector)->causedByLostConnection($exception)) {
@@ -256,7 +279,14 @@ class DynamicQrAction
                 return $intent->refresh();
             }
             if ($cancel && $intent->status === DynamicQrStatus::Failed && ! $intent->bank_qr_id) {
-                $intent->update(['status' => DynamicQrStatus::Cancelled, 'active_order_id' => null]);
+                DB::transaction(function () use ($intent): void {
+                    $order = Order::query()->lockForUpdate()->findOrFail($intent->order_id);
+                    $locked = DynamicQrIntent::query()->lockForUpdate()->findOrFail($intent->id);
+                    if ($locked->status === DynamicQrStatus::Failed && ! $locked->bank_qr_id) {
+                        $locked->update(['status' => DynamicQrStatus::Cancelled, 'active_order_id' => null]);
+                        $this->versions->advance($order);
+                    }
+                });
 
                 return $intent->refresh();
             }
@@ -303,6 +333,7 @@ class DynamicQrAction
                 return $intent;
             }
             $status = (string) ($data['statusQrCode'] ?? $data['statusQRCode'] ?? 'unknown');
+            $previousStatus = $intent->status;
             $intent->bank_status = mb_substr($status, 0, 20);
             if ($status === '9' && $intent->status !== DynamicQrStatus::ReconciliationRequired) {
                 $intent->fill(['status' => DynamicQrStatus::Cancelled, 'active_order_id' => null, 'issue_code' => null]);
@@ -351,6 +382,9 @@ class DynamicQrAction
                 $intent->issue_code = null;
             }
             $intent->save();
+            if ($previousStatus !== DynamicQrStatus::Cancelled && $intent->status === DynamicQrStatus::Cancelled) {
+                $this->versions->advance($order);
+            }
 
             return $intent;
         }, 3);

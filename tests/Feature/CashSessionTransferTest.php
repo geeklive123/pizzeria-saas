@@ -27,14 +27,14 @@ use App\Models\User;
 use App\Services\CashSessionSummaryService;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Concerns\InteractsWithBankQr;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class CashSessionTransferTest extends TestCase
 {
     use InteractsWithBankQr;
-    use RefreshDatabase;
+    use IsolatedSqliteCommits;
 
     public function test_owner_transfers_mixed_payments_and_preserves_operational_records(): void
     {

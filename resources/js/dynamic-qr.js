@@ -121,7 +121,17 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
                 ...(body !== null ? { body: JSON.stringify(body) } : {}),
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.message || 'No se pudo completar la consulta.');
+            if (!response.ok) {
+                if (response.status === 409 && data.summary) {
+                    summary = data.summary;
+                    el('balance').textContent = `Saldo restante: BOB ${summary.balance}`;
+                    el('refresh').hidden = false;
+                    el('status').textContent = 'El pedido cambió. Revisa el saldo actualizado antes de realizar otro cobro.';
+                    el('error').textContent = data.message || '';
+                    return false;
+                }
+                throw new Error(data.message || 'No se pudo completar la consulta.');
+            }
             render(data);
             return true;
         } catch (error) {
@@ -158,6 +168,7 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
         createUncertain = true;
         const ok = await request(box.dataset.createUrl, {
             idempotency_key: box.dataset.key,
+            financial_version: box.dataset.financialVersion,
             kitchen_dispatch: box.dataset.dispatch || null,
             ...(cash ?? {}),
         }, 'Generando QR…');

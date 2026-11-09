@@ -218,7 +218,7 @@ class CashAndPaymentsTest extends TestCase
         [$company, $branch, $owner, $register] = $this->context();
         $order = $this->servedOrder($company, $branch, $owner, '100.00');
         $this->actingInContext($owner, $company, $branch)
-            ->post(route('orders.payments.store', $order->ulid), [
+            ->post(route('orders.payments.store', $order->ulid), ['financial_version' => $order->fresh()->financial_version,
                 'method' => 'cash', 'amount' => '10.00', 'received_amount' => '10.00', 'idempotency_key' => 'no-session',
             ])->assertSessionHasErrors('payment');
 
