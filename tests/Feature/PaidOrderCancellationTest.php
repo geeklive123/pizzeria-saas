@@ -241,6 +241,20 @@ class PaidOrderCancellationTest extends TestCase
         $previousItemStatus = $f['item']->refresh()->status;
         app(CancelPaidOrderAction::class)->execute($f['order'], $f['actor'], 'Comanda incorrecta');
 
+        if (isset($amounts['qr'])) {
+            $count = Payment::query()->count();
+            try {
+                app(RestoreCancelledPaidOrderAction::class)->execute($f['order']->refresh(), $f['actor'], 'Era la venta correcta');
+                $this->fail('La restauración QR debe exigir verificación bancaria.');
+            } catch (DomainException $exception) {
+                $this->assertStringContainsString('devolución bancaria', $exception->getMessage());
+            }
+            $this->assertSame($count, Payment::query()->count());
+            $this->assertSame(OrderStatus::Cancelled, $f['order']->refresh()->status);
+
+            return;
+        }
+
         app(RestoreCancelledPaidOrderAction::class)->execute($f['order']->refresh(), $f['actor'], 'Era la venta correcta');
 
         $this->assertSame(OrderStatus::Paid, $f['order']->refresh()->status);
@@ -330,7 +344,7 @@ class PaidOrderCancellationTest extends TestCase
         $this->assertSame(OrderStatus::Cancelled, $closed['order']->refresh()->status);
         $this->assertDatabaseCount('payments', 2);
 
-        $stock = $this->fixture(amounts: ['qr' => '10.00']);
+        $stock = $this->fixture(amounts: ['cash' => '10.00']);
         app(CancelPaidOrderAction::class)->execute($stock['order'], $stock['actor'], 'Anulación');
         app(ApplyInventoryMovementAction::class)->execute(
             $stock['company'],

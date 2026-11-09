@@ -12,6 +12,7 @@ use App\Enums\OrderType;
 use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\Permission;
+use App\Enums\PrintAttemptStatus;
 use App\Enums\TableChargeMode;
 use App\Models\BankQrSetting;
 use App\Models\CashMovement;
@@ -118,6 +119,7 @@ class DynamicQrAction
                 if (! $setting || ! $setting->enabled) {
                     throw new DomainException('Falta configurar Banco Económico para esta empresa o sucursal.');
                 }
+                $setting->readableCredentials();
                 $balance = BigDecimal::of($dispatch ? $this->balances->dispatchBalance($dispatch) : $this->balances->balance($order));
                 $cash = BigDecimal::of($cash)->toScale(2);
                 if ($cash->isNegative() || $cash->isGreaterThanOrEqualTo($balance)) {
@@ -362,13 +364,18 @@ class DynamicQrAction
         try {
             $printing = app(ThermalPrintingService::class);
             if ($intent->kitchen_dispatch_id) {
-                $printing->dispatchTicket($intent->kitchenDispatch, $intent->user, false);
+                $attempt = $printing->dispatchTicket($intent->kitchenDispatch, $intent->user, false);
             } elseif ($intent->order->status === OrderStatus::Paid) {
-                $printing->ticket($intent->order, $intent->user, false);
+                $attempt = $printing->ticket($intent->order, $intent->user, false);
             } else {
                 return;
             }
-            $intent->update(['ticket_enqueued_at' => now()]);
+            if ($attempt->status === PrintAttemptStatus::Failed) {
+                $attempt = $printing->retryNeverQueuedTicket($attempt);
+            }
+            if ($attempt->status !== PrintAttemptStatus::Failed) {
+                $intent->update(['ticket_enqueued_at' => now()]);
+            }
         } catch (Throwable) {
             // Financial commit is already durable. Scheduler retries the same print key.
             Log::warning('baneco_ticket_pending', ['intent' => $intent->ulid]);

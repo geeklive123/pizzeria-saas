@@ -45,6 +45,7 @@
                             </div>
                             <div class="flex shrink-0 items-center gap-3">
                                 <strong>{{ \App\Support\UiFormatter::money($batch['total']) }}</strong>
+                                @if($batch['delivery_enabled'] ?? false)<span class="text-xs">Envío: {{ \App\Support\UiFormatter::money($batch['delivery_amount']) }}</span>@endif
                                 <span class="text-slate-400 transition group-open:rotate-180" aria-hidden="true">⌄</span>
                             </div>
                         </summary>

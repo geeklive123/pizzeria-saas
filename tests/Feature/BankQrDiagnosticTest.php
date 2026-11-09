@@ -100,6 +100,14 @@ class BankQrDiagnosticTest extends TestCase
         return ['amount' => '1.00', 'request_key' => $this->requestKey, 'confirm_generation' => '1'];
     }
 
+    public function test_unreadable_credentials_block_diagnostic_before_bank_contact(): void
+    {
+        DB::table('bank_qr_settings')->where('company_id', $this->company->id)->update(['credentials' => 'incompatible']);
+        $this->login($this->owner)->post(route('bank-qr-diagnostics.store'), $this->payload())->assertSessionHasErrors();
+        $this->assertDatabaseCount('bank_qr_diagnostics', 0);
+        Http::assertNothingSent();
+    }
+
     public function test_owner_can_generate_check_and_cancel_without_sales_or_cash(): void
     {
         $this->login($this->owner)->get(route('bank-qr-diagnostics.index'))->assertOk()->assertSee('1.00');

@@ -18,6 +18,7 @@ use App\Models\InventoryMovement;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderCancellationAudit;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
@@ -235,6 +236,15 @@ class CancelSettledKitchenDispatchAction
                 'cancelled_by' => $user->getKey(),
                 'cancellation_reason' => $reason,
             ])->save();
+            $delivery = OrderDeliveryCharge::query()->where('order_id', $order->id)->where('kitchen_dispatch_id', $dispatch->id)->lockForUpdate()->first();
+            if ($delivery && $delivery->enabled) {
+                $delivery->update(['enabled' => false, 'updated_by' => $user->id]);
+                DB::table('order_delivery_charge_audits')->insert([
+                    'order_delivery_charge_id' => $delivery->id, 'previous_amount' => $delivery->amount,
+                    'new_amount' => $delivery->amount, 'previous_enabled' => true, 'new_enabled' => false,
+                    'user_id' => $user->id, 'created_at' => now(),
+                ]);
+            }
             $order = $this->totals->recalculate($order);
             if ($this->payments->balance($order) !== '0.00'
                 || $this->payments->paid($order) !== $order->total) {

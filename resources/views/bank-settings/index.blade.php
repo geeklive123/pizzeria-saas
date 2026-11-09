@@ -9,8 +9,9 @@
         <a class="btn-secondary" href="{{ route('bank-qr-diagnostics.index') }}">Probar QR y conciliación</a>
         <a class="btn-secondary" href="{{ route('bank-qr-history.index') }}">Historial de pagos QR</a>
     </nav>
+    @if ($credentialsUnavailable)<p role="alert" class="card p-5 text-red-700">Las credenciales bancarias existentes no están disponibles para descifrado en este entorno.</p>@endif
     <div class="card p-5 flex flex-wrap gap-3 text-sm" aria-label="Estado de la configuración">
-        <span class="rounded-full bg-stone-100 px-3 py-1">{{ $complete ? 'Configuración completa' : 'Configuración incompleta' }}</span>
+        <span class="rounded-full bg-stone-100 px-3 py-1">{{ $credentialsUnavailable ? 'Configuración no disponible' : ($complete ? 'Configuración completa' : 'Configuración incompleta') }}</span>
         <span class="rounded-full bg-stone-100 px-3 py-1">{{ $effective ? 'Configuración guardada' : 'Sin configuración guardada' }}</span>
         <span class="rounded-full bg-stone-100 px-3 py-1">{{ $effective?->enabled ? 'Configuración habilitada' : 'Configuración deshabilitada' }}</span>
         <span class="rounded-full bg-stone-100 px-3 py-1">{{ config('baneco.enabled') ? 'Cobros operativos habilitados globalmente' : 'Cobros operativos deshabilitados' }}</span>
@@ -41,7 +42,7 @@
             <p class="text-sm">Las credenciales y cuentas de certificación y producción pueden ser diferentes. Confirma el ambiente con el banco.</p>
             @foreach (['username' => 'Usuario API', 'password' => 'Contraseña API', 'aes_key' => 'Llave AES', 'account_credit' => 'Cuenta de abono'] as $key => $label)
                 <div class="rounded border p-3 space-y-2">
-                    <p class="font-semibold">{{ $label }} · {{ $configured[$key] ? 'Configurado' : 'Sin configurar' }}</p>
+                    <p class="font-semibold">{{ $label }} · {{ $credentialsUnavailable ? 'No disponible' : ($configured[$key] ? 'Configurado' : 'Sin configurar') }}</p>
                     <label class="block"><input type="checkbox" name="replace_{{ $key }}" value="1"> Sustituir {{ $label }}</label>
                     <input class="input w-full" type="password" name="{{ $key }}" value="" autocomplete="new-password" aria-label="Nuevo valor de {{ $label }}">
                     <p class="text-sm">Deja sin marcar para conservar el valor existente.</p>
@@ -50,7 +51,7 @@
             <label class="block"><span class="label">Código de sucursal bancario (opcional)</span><input class="input" name="branch_code" maxlength="5" value="{{ old('branch_code', $branchCode) }}"></label>
             <label class="block"><span class="label">Vencimiento en días</span><input class="input" type="number" name="due_days" min="1" max="30" value="{{ old('due_days', $effective?->due_days ?? 1) }}" required></label>
             <label class="block"><input type="checkbox" name="technical_logging" value="1" @checked(old('technical_logging', $effective?->technical_logging ?? true))> Registro técnico sanitizado</label>
-            <button class="btn-primary">Guardar configuración</button>
+            <button class="btn-primary" @disabled($credentialsUnavailable)>Guardar configuración</button>
         </form>
     </section>
     @else
@@ -68,7 +69,7 @@
         <form method="POST" action="{{ route('bank-settings.authenticate') }}" class="space-y-3">
             @csrf<input type="hidden" name="scope" value="{{ $scope }}">
             <label class="block"><input type="checkbox" name="confirm_contact" value="1" required> Confirmo que deseo contactar el ambiente bancario guardado.</label>
-            <button class="btn-secondary" @disabled(! $effective)>Probar conexión y autenticación</button>
+            <button class="btn-secondary" @disabled(! $effective || $credentialsUnavailable)>Probar conexión y autenticación</button>
         </form>
     </section>
     @endif

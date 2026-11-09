@@ -8,12 +8,13 @@ use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Models\Order;
 use App\Services\OrderPaymentService;
+use App\Services\TakeawayDeliveryTracker;
 use Brick\Math\BigDecimal;
 use DomainException;
 
 class ClosePaidOrderAction
 {
-    public function __construct(private readonly OrderPaymentService $payments) {}
+    public function __construct(private readonly OrderPaymentService $payments, private readonly TakeawayDeliveryTracker $deliveries) {}
 
     public function executeIfEligibleLocked(Order $order): Order
     {
@@ -64,6 +65,7 @@ class ClosePaidOrderAction
             'settled_at' => now(),
         ]);
         $order->forceFill(['status' => OrderStatus::Paid, 'active_restaurant_table_id' => null, 'closed_at' => now()])->save();
+        $this->deliveries->start($order);
 
         return $order->refresh();
     }

@@ -3,6 +3,8 @@
 namespace App\Actions;
 
 use App\Data\DispatchWithPrintResult;
+use App\Enums\KitchenDispatchStatus;
+use App\Enums\OrderType;
 use App\Enums\PrinterPurpose;
 use App\Models\Order;
 use App\Models\PrinterSetting;
@@ -33,7 +35,8 @@ class DispatchOrderToKitchenWithPrintingAction
 
         return new DispatchWithPrintResult(
             $dispatch,
-            $autoPrint ? $this->printing->kitchen($dispatch, $user, false) : null,
+            $autoPrint && ! ($dispatch->order->type === OrderType::Takeaway && $dispatch->status === KitchenDispatchStatus::AwaitingPayment)
+                ? $this->printing->kitchen($dispatch, $user, false) : null,
         );
     }
 }

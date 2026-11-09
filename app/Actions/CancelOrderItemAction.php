@@ -8,6 +8,7 @@ use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\Permission;
 use App\Models\Order;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\CompanyAccessService;
@@ -37,6 +38,9 @@ class CancelOrderItemAction
             if ($order->status !== OrderStatus::Open) {
                 throw new DomainException('Este producto ya no puede cancelarse.');
             }
+            if ($item->status !== OrderItemStatus::Draft && OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->exists()) {
+                throw new DomainException('Anula el producto desde la tanda para conservar el cargo de envío.');
+            }
             if ($item->status !== OrderItemStatus::Draft) {
                 $this->access->ensure($user, $item->company, Permission::CancelOrders);
                 if (blank($reason)) {
@@ -56,8 +60,26 @@ class CancelOrderItemAction
             if ($dispatch && ! $dispatch->items()->whereHas('orderItem', fn ($query) => $query->where('status', '!=', OrderItemStatus::Cancelled->value))->exists()) {
                 $dispatch->forceFill(['status' => KitchenDispatchStatus::Cancelled])->save();
             }
+            $deliveryCleared = false;
+            if ($order->type === OrderType::Takeaway
+                && ! $order->items()->where('status', '!=', OrderItemStatus::Cancelled->value)->exists()) {
+                $charge = OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->whereNull('kitchen_dispatch_id')->lockForUpdate()->first();
+                if ($charge) {
+                    $deliveryCleared = true;
+                    $charge->update(['enabled' => false, 'updated_by' => $user->id]);
+                    DB::table('order_delivery_charge_audits')->insert([
+                        'order_delivery_charge_id' => $charge->id,
+                        'previous_amount' => $charge->amount,
+                        'new_amount' => $charge->amount,
+                        'previous_enabled' => true,
+                        'new_enabled' => false,
+                        'user_id' => $user->id,
+                        'created_at' => now(),
+                    ]);
+                }
+            }
             $order = $this->totals->recalculate($order);
-            if ($order->type === OrderType::Takeaway) {
+            if ($order->type === OrderType::Takeaway && ! $deliveryCleared) {
                 $this->closeOrder->executeIfEligibleLocked($order);
             }
 

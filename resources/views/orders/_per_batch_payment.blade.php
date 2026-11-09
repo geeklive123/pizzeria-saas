@@ -24,6 +24,7 @@
     <div class="mt-4 space-y-2 border-t border-orange-200 pt-3 text-sm">
         <p class="flex justify-between"><span>Subtotal</span><strong>{{ \App\Support\UiFormatter::money($pendingDispatch->gross_subtotal) }}</strong></p>
         <p class="flex justify-between text-red-700"><span>Descuento</span><strong>-{{ \App\Support\UiFormatter::money($pendingDispatch->discount_total) }}</strong></p>
+        @if ($pendingDispatch->financial_snapshot['delivery_enabled'] ?? false)<p class="flex justify-between"><span>Envío</span><strong>{{ \App\Support\UiFormatter::money($pendingDispatch->financial_snapshot['delivery_amount']) }}</strong></p>@endif
         <p class="flex justify-between text-lg"><span>TOTAL</span><strong>{{ \App\Support\UiFormatter::money($pendingDispatch->total) }}</strong></p>
         <p class="flex justify-between"><span>Total pagado</span><strong>{{ \App\Support\UiFormatter::money($pendingPaid) }}</strong></p>
         <p class="flex justify-between font-semibold"><span>Saldo</span><strong>{{ \App\Support\UiFormatter::money($pendingBalance) }}</strong></p>

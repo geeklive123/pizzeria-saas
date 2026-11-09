@@ -4,8 +4,11 @@ namespace Tests\Feature;
 
 use App\Actions\AddOrderItemAction;
 use App\Actions\ApplyInventoryMovementAction;
+use App\Actions\CancelKitchenDispatchAction;
 use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\CancelOrderItemAction;
+use App\Actions\CancelPaidOrderAction;
+use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\DynamicQrAction;
@@ -15,7 +18,9 @@ use App\Actions\OpenCashSessionAction;
 use App\Actions\OpenTableOrderAction;
 use App\Actions\RegisterMixedPaymentAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\ReversePaymentAction;
+use App\Actions\UpdateOrderDeliveryChargeAction;
 use App\Enums\InventoryMovementType;
 use App\Enums\InventoryReservationStatus;
 use App\Enums\KitchenDispatchStatus;
@@ -42,8 +47,11 @@ use App\Models\ProductVariant;
 use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
+use App\Printing\Renderers\CustomerTicketRenderer;
 use App\Services\OrderFinancialService;
 use App\Services\OrderPaymentService;
+use App\Services\ReportDateRangeService;
+use App\Services\SalesReportService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithBankQr;
@@ -390,6 +398,204 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
         $this->assertNull($order->active_restaurant_table_id);
         $this->assertSame(OrderItemStatus::Ready, $firstItem->refresh()->status);
+    }
+
+    public function test_takeaway_delivery_is_included_once_in_the_batch_and_cash_payment(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant, $inventory] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $this->assertSame('17.00', $order->refresh()->total);
+        $this->assertSame(1, DB::table('order_delivery_charge_audits')->count());
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $this->assertSame('17.00', $dispatch->total);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-cash', '17.00', dispatch: $dispatch);
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+        $this->assertSame('9.000', $this->stock($branch, $inventory));
+        $ticket = app(CustomerTicketRenderer::class)->renderDispatch($dispatch->refresh(), $owner);
+        $this->assertStringContainsString('ENVIO', $ticket->bytes);
+        $report = app(SalesReportService::class)->data($company, $branch, app(ReportDateRangeService::class)->from(['preset' => 'today']));
+        $this->assertSame('5.00', $report['delivery_total']);
+        $this->assertSame('12.00', $report['products_total']);
+        $this->assertSame('17.00', $report['sales_total']);
+    }
+
+    public function test_free_delivery_is_distinct_from_no_delivery_and_is_assigned(): void
+    {
+        [$company, $branch, $owner, , $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '0.00', true);
+        $this->assertTrue($order->deliveryCharge()->firstOrFail()->enabled);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $this->assertSame($dispatch->id, $order->deliveryCharge()->firstOrFail()->kitchen_dispatch_id);
+        $this->assertSame('12.00', $dispatch->total);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '0.00', false);
+        $this->assertFalse($order->deliveryCharge()->firstOrFail()->enabled);
+    }
+
+    public function test_takeaway_qr_simulation_uses_the_delivery_included_balance(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $payment = $this->confirmBankQr($order->refresh(), $session, $owner, 'delivery-qr', $dispatch);
+        $this->assertSame('17.00', $payment->amount);
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+    }
+
+    public function test_delivery_cannot_change_after_a_partial_cash_payment(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '3.00', $owner, 'partial-delivery', '3.00', dispatch: $dispatch);
+        $this->expectException(DomainException::class);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order->refresh(), $owner, '1.00');
+    }
+
+    public function test_paid_takeaway_delivery_is_reversed_with_its_batch(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-reversal', '17.00', dispatch: $dispatch);
+        app(CancelSettledKitchenDispatchAction::class)->execute($dispatch->refresh(), $owner, 'Prueba de anulación');
+        $this->assertFalse($order->deliveryCharge()->firstOrFail()->enabled);
+        $this->assertSame('0.00', $order->refresh()->total);
+        $this->assertSame('0.00', app(OrderPaymentService::class)->paid($order));
+    }
+
+    public function test_disabled_delivery_from_reversed_paid_batch_still_blocks_paid_order_restoration(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        app(AddOrderItemAction::class)->execute($order->refresh(), $variant, '1.000', $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::Cash, '17.00', $owner, 'historical-delivery-first', '17.00', dispatch: $first);
+        $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
+        app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::Cash, '12.00', $owner, 'historical-delivery-second', '12.00', dispatch: $second);
+        app(CancelSettledKitchenDispatchAction::class)->execute($first->refresh(), $owner, 'Reversión de primera tanda');
+        $this->assertFalse($order->deliveryCharge()->firstOrFail()->enabled);
+        app(CancelPaidOrderAction::class)->execute($order->refresh(), $owner, 'Anulación del resto');
+        $count = Payment::query()->count();
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($order->refresh(), $owner, 'Restauración');
+            $this->fail('El historial de envío debe bloquear la restauración.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('verificar la devolución', $exception->getMessage());
+        }
+        $this->assertSame($count, Payment::query()->count());
+        $this->assertSame(OrderStatus::Cancelled, $order->refresh()->status);
+    }
+
+    public function test_delivery_is_assigned_only_to_the_first_takeaway_batch(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        app(AddOrderItemAction::class)->execute($order->refresh(), $variant, '1.000', $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order->refresh(), $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-first-batch', '17.00', dispatch: $first);
+        $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
+        $this->assertSame('17.00', $first->refresh()->total);
+        $this->assertSame('12.00', $second->total);
+        $this->assertSame('29.00', $order->refresh()->total);
+        $this->assertSame($first->id, $order->deliveryCharge()->firstOrFail()->kitchen_dispatch_id);
+    }
+
+    public function test_delivery_can_be_reassigned_after_cancelling_an_unpaid_batch(): void
+    {
+        [$company, $branch, $owner, , $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $first = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        app(AddOrderItemAction::class)->execute($order->refresh(), $variant, '1.000', $owner);
+        app(CancelKitchenDispatchAction::class)->execute($first, $owner, 'Cancelar tanda pendiente');
+        $this->assertNull($order->deliveryCharge()->firstOrFail()->kitchen_dispatch_id);
+        $this->assertSame('0.00', $first->refresh()->total);
+        $this->assertFalse($first->financial_snapshot['delivery_enabled']);
+        $second = app(DispatchOrderToKitchenAction::class)->execute($order->refresh(), $owner);
+        $this->assertSame($second->id, $order->deliveryCharge()->firstOrFail()->kitchen_dispatch_id);
+        $this->assertSame('17.00', $second->total);
+        $this->assertSame('17.00', $order->refresh()->total);
+        $this->assertSame(1, $order->deliveryCharge()->count());
+    }
+
+    public function test_cancelling_the_last_draft_item_disables_the_unassigned_delivery(): void
+    {
+        [$company, $branch, $owner, , $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $item = app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        app(CancelOrderItemAction::class)->execute($item, $owner);
+        $this->assertFalse($order->deliveryCharge()->firstOrFail()->enabled);
+        $this->assertSame('0.00', $order->refresh()->total);
+        $this->assertSame(OrderStatus::Open, $order->status);
+    }
+
+    public function test_mixed_delivery_qr_charges_only_the_remaining_balance(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $payment = $this->confirmBankQr($order->refresh(), $session, $owner, 'delivery-mixed', $dispatch, '7.00');
+        $this->assertSame('10.00', $payment->amount);
+        $this->assertSame('17.00', app(OrderPaymentService::class)->paid($order));
+        $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+    }
+
+    public function test_paid_delivery_restore_fails_closed_without_refund_verification(): void
+    {
+        [$company, $branch, $owner, $register, $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '5.00');
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '17.00', $owner, 'delivery-restore-guard', '17.00', dispatch: $dispatch);
+        app(CancelPaidOrderAction::class)->execute($order->refresh(), $owner, 'Anulación');
+        $count = Payment::query()->count();
+        try {
+            app(RestoreCancelledPaidOrderAction::class)->execute($order->refresh(), $owner, 'Restauración');
+            $this->fail('La restauración debe exigir verificación financiera.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('verificar la devolución', $exception->getMessage());
+        }
+        $this->assertSame($count, Payment::query()->count());
+        $this->assertSame(OrderStatus::Cancelled, $order->refresh()->status);
     }
 
     public function test_takeaway_waits_for_payment_then_consumes_and_finishes(): void

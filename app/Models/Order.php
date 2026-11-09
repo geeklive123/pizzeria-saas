@@ -13,11 +13,22 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 #[Fillable(['company_id', 'branch_id', 'restaurant_table_id', 'active_restaurant_table_id', 'order_number', 'operational_number', 'type', 'charge_mode', 'status', 'customer_name', 'customer_phone', 'notes', 'subtotal', 'pizza_base_subtotal', 'extras_subtotal', 'other_subtotal', 'discount_percentage', 'discount_total', 'total', 'financial_snapshot', 'opened_at', 'closed_at', 'cancellation_reason', 'cancelled_at', 'cancelled_by', 'created_by'])]
 class Order extends Model
 {
     use BelongsToCompany, HasFactory, HasUlids;
+
+    public function deliveryCharge(): HasOne
+    {
+        return $this->hasOne(OrderDeliveryCharge::class);
+    }
+
+    public function takeawayDelivery(): HasOne
+    {
+        return $this->hasOne(TakeawayDelivery::class);
+    }
 
     public function uniqueIds(): array
     {

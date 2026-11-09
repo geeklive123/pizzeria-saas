@@ -53,6 +53,7 @@ class BankQrDiagnosticAction
                 throw new DomainException('Falta la configuración bancaria activa de la empresa.');
             }
 
+            $setting->readableCredentials();
             $record = BankQrDiagnostic::query()->create([
                 'company_id' => $company->id, 'active_company_id' => $company->id,
                 'bank_qr_setting_id' => $setting->id, 'user_id' => $user->id,

@@ -11,6 +11,15 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     let polls = 0;
     let nextCheck = 0;
     let summary = null;
+    let refreshing = false;
+    let otherFormEdited = false;
+    document.addEventListener('input', (event) => {
+        if (!box.contains(event.target)) otherFormEdited = true;
+    });
+    document.addEventListener('change', (event) => {
+        if (!box.contains(event.target)) otherFormEdited = true;
+    });
+    el('refresh').addEventListener('click', () => window.location.reload());
     const cents = (value) => {
         if (!/^\d{1,14}(?:\.\d{1,2})?$/.test(value)) return null;
         const [whole, decimal = ''] = value.split('.');
@@ -28,6 +37,23 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     const render = (data) => {
         intent = data.intent;
         summary = data.summary ?? summary;
+        const otherDispatch = intent && (intent.dispatch_ulid || '') !== (box.dataset.dispatch || '');
+        const expired = intent?.expired === true;
+        const active = intent && !['paid', 'cancelled'].includes(intent.status);
+        el('open').hidden = !!active;
+        el('open-mixed').hidden = !!active;
+        el('reopen').hidden = !active;
+        el('reopen').textContent = otherDispatch ? 'Ver QR de otra tanda' : 'Reabrir QR';
+        el('indicator').hidden = !intent || intent.status === 'cancelled';
+        el('indicator-balance').hidden = !intent || !summary || !!otherDispatch;
+        if (intent) {
+            const label = intent.status === 'paid' ? 'Pago confirmado'
+                : ['generation_unknown', 'reconciliation_required'].includes(intent.status) ? 'Requiere conciliación'
+                    : intent.status === 'failed' ? 'No se generó el QR'
+                    : expired ? 'QR vencido' : 'QR pendiente';
+            el('indicator').textContent = `${label}${otherDispatch ? ' · otra tanda' : ''}`;
+            if (summary && !otherDispatch) el('indicator-balance').textContent = `Pagado: BOB ${summary.paid} · Saldo: BOB ${summary.balance}`;
+        }
         if (summary) {
             el('cash-paid').textContent = `Efectivo registrado: BOB ${summary.cash_paid}`;
             el('paid').textContent = `Total pagado confirmado: BOB ${summary.paid}`;
@@ -38,14 +64,12 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
             : `QR pendiente: BOB ${intent?.status === 'pending' ? intent.amount : '0.00'}`;
         if (!intent) return;
         el('mixed-form').hidden = true;
-        const otherDispatch = (intent.dispatch_ulid || '') !== (box.dataset.dispatch || '');
         if (otherDispatch) {
             el('cash-paid').textContent = '';
             el('paid').textContent = '';
             el('balance').textContent = '';
             el('qr-pending').textContent = '';
         }
-        const expired = intent.expires_at && Date.parse(intent.expires_at) <= Date.now();
         el('amount').textContent = otherDispatch ? '' : `${intent.currency} ${intent.amount}`;
         el('reference').textContent = otherDispatch ? '' : `Referencia: ${intent.commercial_reference}`;
         el('expiry').textContent = otherDispatch || !intent.expires_at ? '' : `Vigencia: ${new Date(intent.expires_at).toLocaleString('es-BO', { timeZone: 'America/La_Paz' })}`;
@@ -67,19 +91,31 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
         el('generate').hidden = otherDispatch || intent.status !== 'cancelled' || !enabled;
         if (intent.status === 'paid' && !otherDispatch) {
             clearTimeout(timer);
-            setTimeout(() => window.location.assign(intent.redirect_url), 1200);
+            if (!refreshing) {
+                refreshing = true;
+                const refreshWhenSafe = () => {
+                    if (otherFormEdited) {
+                        el('indicator-balance').textContent += ' · Actualiza el pedido después de guardar tus cambios.';
+                        el('refresh').hidden = false;
+                    } else {
+                        window.location.reload();
+                    }
+                };
+                if (otherFormEdited) refreshWhenSafe();
+                else setTimeout(refreshWhenSafe, 2500);
+            }
         }
     };
 
     const request = async (url, body = null, loading = '') => {
         if (busy) return false;
         busy = true;
-        [el('open'), el('open-mixed'), el('mixed-submit'), el('check'), el('cancel'), el('generate')].forEach((button) => { button.disabled = true; });
+        [el('open'), el('open-mixed'), el('reopen'), el('mixed-submit'), el('check'), el('cancel'), el('generate')].forEach((button) => { button.disabled = true; });
         el('error').textContent = '';
         if (loading) el('status').textContent = loading;
         try {
             const response = await fetch(url, {
-                method: body === null ? 'GET' : 'POST', credentials: 'same-origin',
+                method: body === null ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
                 signal: AbortSignal.timeout(45000),
                 headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': token },
                 ...(body !== null ? { body: JSON.stringify(body) } : {}),
@@ -94,25 +130,28 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
             return false;
         } finally {
             busy = false;
-            [el('open'), el('open-mixed'), el('mixed-submit'), el('check'), el('cancel'), el('generate')].forEach((button) => { button.disabled = false; });
+            [el('open'), el('open-mixed'), el('reopen'), el('mixed-submit'), el('check'), el('cancel'), el('generate')].forEach((button) => { button.disabled = false; });
         }
     };
 
     const poll = () => {
         clearTimeout(timer);
-        if (!modal.open || !intent || terminal.includes(intent.status) || (intent.dispatch_ulid || '') !== (box.dataset.dispatch || '')) return;
-        if (polls >= 100) {
-            el('status').textContent = 'Consulta automática pausada. Usa «Consultar estado».';
-            return;
-        }
+        if (refreshing) return;
         timer = setTimeout(async () => {
-            if (!document.hidden && modal.open) {
-                polls++;
-                nextCheck = Date.now() + 6500;
-                await request(intent.check_url, {}, 'Consultando banco…');
+            if (!document.hidden && !busy) {
+                const matching = intent && (intent.dispatch_ulid || '') === (box.dataset.dispatch || '');
+                if (modal.open && matching && !terminal.includes(intent.status) && polls < 100) {
+                    polls++;
+                    nextCheck = Date.now() + 6500;
+                    await request(intent.check_url, {}, 'Consultando banco…');
+                } else if (!modal.open || !matching || polls >= 100) {
+                    const track = intent && intent.status !== 'cancelled' && !(intent.status === 'paid' && !matching);
+                    const url = track ? `${box.dataset.currentUrl}${box.dataset.currentUrl.includes('?') ? '&' : '?'}intent=${encodeURIComponent(intent.ulid)}` : box.dataset.currentUrl;
+                    await request(url);
+                }
             }
             poll();
-        }, 6500);
+        }, modal.open ? 6500 : 10000);
     };
 
     const generate = async (cash = null) => {
@@ -123,7 +162,6 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
             ...(cash ?? {}),
         }, 'Generando QR…');
         if (ok) createUncertain = false;
-        polls = 0;
         poll();
     };
 
@@ -164,6 +202,7 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     };
     el('open').addEventListener('click', () => open(false));
     el('open-mixed').addEventListener('click', () => open(true));
+    el('reopen').addEventListener('click', () => open(false));
     el('cash').addEventListener('input', updateEstimate);
     el('received').addEventListener('input', updateEstimate);
     el('mixed-submit').addEventListener('click', async () => {
@@ -186,7 +225,7 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
         el('image').hidden = true;
         el('error').textContent = 'No se pudo cargar la imagen QR. Verifica la sesión o consulta al responsable.';
     });
-    modal.addEventListener('close', () => { clearTimeout(timer); el('open').focus(); });
+    modal.addEventListener('close', () => { poll(); (el('reopen').hidden ? el('open') : el('reopen')).focus(); });
     el('generate').addEventListener('click', async () => {
         if (busy || !intent || intent.status !== 'cancelled') return;
         box.dataset.key = crypto.randomUUID();
@@ -204,4 +243,5 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
         await request(intent.cancel_url, {}, 'Consultando banco…');
         poll();
     });
+    request(box.dataset.currentUrl).then(poll);
 });

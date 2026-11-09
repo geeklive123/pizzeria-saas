@@ -23,7 +23,13 @@ class BancoEconomicoSettingsController extends Controller
         $scope = $request->query('scope') === 'branch' ? 'branch' : 'company';
         $setting = $this->setting($scope);
         $effective = $setting ?? ($scope === 'branch' ? $this->setting('company') : null);
-        $credentials = $effective?->credentials ?? [];
+        $credentialsUnavailable = false;
+        try {
+            $credentials = $effective?->readableCredentials() ?? [];
+        } catch (DomainException) {
+            $credentials = [];
+            $credentialsUnavailable = true;
+        }
         $configured = [];
         foreach (['username', 'password', 'aes_key', 'account_credit'] as $key) {
             $configured[$key] = is_string($credentials[$key] ?? null) && trim($credentials[$key]) !== '';
@@ -39,7 +45,7 @@ class BancoEconomicoSettingsController extends Controller
         $blocked = BankQrDiagnostic::query()->forCompany($this->company())->where(fn ($query) => $query->whereNotNull('active_company_id')->orWhere('status', 'generation_unknown'))->exists()
             || DynamicQrIntent::query()->forCompany($this->company())->whereIn('status', ['generation_unknown', 'reconciliation_required'])->exists();
 
-        return response()->view('bank-settings.index', compact('setting', 'effective', 'configured', 'scope', 'url', 'environment', 'blocked', 'branchCode', 'tab', 'complete', 'authAvailable', 'qrVerified'))
+        return response()->view('bank-settings.index', compact('setting', 'effective', 'configured', 'scope', 'url', 'environment', 'blocked', 'branchCode', 'tab', 'complete', 'authAvailable', 'qrVerified', 'credentialsUnavailable'), $credentialsUnavailable && ! (app()->environment('local') && ! config('baneco.enabled')) ? 503 : 200)
             ->header('Cache-Control', 'private, no-store, no-cache, max-age=0, must-revalidate');
     }
 
@@ -92,7 +98,11 @@ class BancoEconomicoSettingsController extends Controller
         }
         $scope = $request->input('scope');
         $setting = $scope === 'branch' ? BankQrSetting::forBranch($this->company(), $this->branch()) : $this->setting($scope);
-        $credentials = $setting?->credentials ?? [];
+        try {
+            $credentials = $setting?->readableCredentials() ?? [];
+        } catch (DomainException $exception) {
+            return back()->withErrors(['authentication' => $exception->getMessage()]);
+        }
         if (! $setting || collect(['username', 'password', 'aes_key'])->contains(fn ($key) => ! is_string($credentials[$key] ?? null) || trim($credentials[$key]) === '') || strlen($credentials['aes_key']) !== 32) {
             return back()->withErrors(['authentication' => 'Completa las credenciales antes de probar autenticación.']);
         }

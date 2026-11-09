@@ -11,6 +11,7 @@ use App\Enums\Permission;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderCancellationAudit;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\CompanyAccessService;
@@ -66,8 +67,18 @@ class RestoreCancelledKitchenDispatchItemAction
             if ($audit->restored_at !== null) {
                 throw new DomainException('Esta anulación ya fue restaurada.');
             }
+            if ($audit->snapshot['settled_dispatch_reversal'] ?? false) {
+                throw new DomainException('La restauración de una tanda pagada requiere verificar la devolución antes de restaurar sus productos.');
+            }
 
             $dispatch = KitchenDispatch::query()->lockForUpdate()->findOrFail($audit->kitchen_dispatch_id);
+            if ($audit->snapshot['delivery_unassigned'] ?? false) {
+                $charge = OrderDeliveryCharge::query()->where('order_id', $order->id)->lockForUpdate()->first();
+                if ($charge && $charge->kitchen_dispatch_id !== null && (int) $charge->kitchen_dispatch_id !== (int) $dispatch->id) {
+                    throw new DomainException('El envío ya fue asignado a otra tanda; no se puede restaurar esta tanda.');
+                }
+                $charge?->update(['kitchen_dispatch_id' => $dispatch->id]);
+            }
             $createdMovements = $this->restoreInventory->execute($audit, $item, $user);
             $previousStatus = OrderItemStatus::tryFrom((string) ($audit->snapshot['previous_status'] ?? ''));
             if (! $previousStatus || $previousStatus === OrderItemStatus::Cancelled) {

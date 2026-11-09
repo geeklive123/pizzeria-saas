@@ -92,6 +92,23 @@ class PrintAgentQueueTest extends TestCase
         $this->withToken($tokenA)->postJson('/api/print-agent/jobs/claim')->assertNoContent();
     }
 
+    public function test_customer_ticket_is_not_automatically_reclaimed_after_failure_or_expired_claim(): void
+    {
+        [$company, $branch] = $this->context();
+        [, $token] = $this->agent($company, $branch);
+        $job = $this->job($company, $branch);
+        $job->update(['purpose' => PrinterPurpose::CustomerTicket]);
+        $claim = $this->withToken($token)->postJson('/api/print-agent/jobs/claim')->assertOk();
+        $job->update(['claim_expires_at' => now()->subSecond()]);
+        $this->withToken($token)->postJson('/api/print-agent/jobs/claim')->assertNoContent();
+        $this->withToken($token)->postJson('/api/print-agent/jobs/'.$job->ulid.'/failed', [
+            'claim_token' => $claim->json('job.claim_token'), 'error' => 'Resultado incierto',
+        ])->assertOk();
+        $this->travel(2)->seconds();
+        $this->withToken($token)->postJson('/api/print-agent/jobs/claim')->assertNoContent();
+        $this->assertSame(1, $job->refresh()->attempts);
+    }
+
     public function test_failed_job_retries_and_stale_claim_is_recovered_atomically(): void
     {
         [$company, $branch] = $this->context();

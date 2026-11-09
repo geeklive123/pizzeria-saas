@@ -13,6 +13,13 @@
     $activeBranch = request()->attributes->get('branch');
     $membership = app(\App\Support\CompanyContext::class)->membership();
 @endphp
+@if($activeBranch)
+    @can('create', \App\Models\Payment::class)
+        @can('viewAny', \App\Models\Order::class)
+            <div data-qr-notifications data-url="{{ route('dynamic-qr.notifications.index') }}" data-ack-url="{{ route('dynamic-qr.notifications.acknowledge', ['intent' => '00000000000000000000000000']) }}" data-scope="{{ hash('sha256', $activeCompany->id.':'.$activeBranch->id.':'.auth()->id()) }}" class="fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2" aria-live="polite" aria-relevant="additions"></div>
+        @endcan
+    @endcan
+@endif
 <div class="min-h-screen lg:flex">
     <div id="sidebar-backdrop" class="fixed inset-0 z-30 hidden bg-stone-950/40 lg:hidden"></div>
     <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 flex w-64 max-w-[calc(100vw-2rem)] -translate-x-full flex-col bg-[#141b2a] text-stone-100 shadow-2xl shadow-slate-950/20 transition-transform lg:static lg:translate-x-0" tabindex="-1" aria-label="Menú principal">

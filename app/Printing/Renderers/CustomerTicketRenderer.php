@@ -65,6 +65,7 @@ class CustomerTicketRenderer
             ->line($this->amountLine('TOPPINGS / EXTRAS', $order->extras_subtotal))
             ->line($this->amountLine('OTROS', $order->other_subtotal))
             ->line($this->amountLine('DESCUENTO', $order->discount_total))
+            ->line($this->amountLine('ENVIO', $order->financial_snapshot['delivery_amount'] ?? '0.00'))
             ->bold()->line($this->amountLine('TOTAL', $order->total))->bold(false)->line();
 
         if ($completedPayments->isNotEmpty()) {
@@ -113,6 +114,7 @@ class CustomerTicketRenderer
             ->line($this->amountLine('TOPPINGS / EXTRAS', $dispatch->extras_subtotal))
             ->line($this->amountLine('OTROS', $dispatch->other_subtotal))
             ->line($this->amountLine('DESCUENTO PIZZAS', $dispatch->discount_total))
+            ->line($this->amountLine('ENVIO', $dispatch->financial_snapshot['delivery_amount'] ?? '0.00'))
             ->bold()->line($this->amountLine('TOTAL', $dispatch->total))->bold(false)->line();
         foreach ($payments as $payment) {
             $builder->line($this->amountLine(mb_strtoupper(UiFormatter::paymentMethod($payment->method)), $payment->amount));

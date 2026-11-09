@@ -37,6 +37,10 @@ class PaidOrderHistoryService
             return true;
         }
 
+        if ($order->status === OrderStatus::Paid && $order->takeawayDelivery()->whereNull('delivered_at')->exists()) {
+            return true;
+        }
+
         if ($order->closed_at === null) {
             return false;
         }

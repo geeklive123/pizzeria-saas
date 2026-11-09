@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Enums\InternalConsumptionStatus;
+use App\Enums\KitchenDispatchStatus;
+use App\Enums\OrderType;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
 use App\Models\InternalConsumption;
@@ -32,6 +34,9 @@ class ThermalPrintingService
 
     public function kitchen(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
     {
+        if ($dispatch->status === KitchenDispatchStatus::AwaitingPayment && $dispatch->order->type === OrderType::Takeaway) {
+            throw new DomainException('La comanda requiere el pago previo de la tanda.');
+        }
         $dispatch->loadMissing('order');
         $setting = $this->setting($dispatch->company_id, $dispatch->branch_id, PrinterPurpose::Kitchen);
 
@@ -173,6 +178,32 @@ class ThermalPrintingService
 
             throw $exception;
         }
+    }
+
+    public function retryNeverQueuedTicket(PrintAttempt $attempt): PrintAttempt
+    {
+        return DB::transaction(function () use ($attempt): PrintAttempt {
+            $attempt = PrintAttempt::query()->whereKey($attempt)->lockForUpdate()->firstOrFail();
+            if ($attempt->purpose !== PrinterPurpose::CustomerTicket || $attempt->status !== PrintAttemptStatus::Failed
+                || $attempt->attempts !== 0 || $attempt->claimed_by_agent_id !== null
+                || $attempt->error_message !== 'La impresora lógica no está activa.') {
+                return $attempt;
+            }
+            $setting = $this->setting($attempt->company_id, $attempt->branch_id, PrinterPurpose::CustomerTicket);
+            if (! $setting?->is_active) {
+                return $attempt;
+            }
+            $attempt->update([
+                'printer_setting_id' => $setting->getKey(),
+                'windows_printer_name' => $setting->windows_printer_name,
+                'copies' => $setting->copies ?? 1,
+                'status' => PrintAttemptStatus::Pending,
+                'available_at' => now(),
+                'error_message' => null,
+            ]);
+
+            return $attempt->refresh();
+        });
     }
 
     public function retry(PrintAttempt $attempt): PrintAttempt

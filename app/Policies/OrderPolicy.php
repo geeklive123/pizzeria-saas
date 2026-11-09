@@ -37,6 +37,12 @@ class OrderPolicy
         return $user->canForCompany(Permission::ManageOrders, $order->company_id);
     }
 
+    public function deliverTakeaway(User $user, Order $order): bool
+    {
+        return $user->canForCompany(Permission::ManageOrders, $order->company_id)
+            && ($this->paidHistory->allows($user, $order) || $order->takeawayDelivery()->exists());
+    }
+
     public function cancel(User $user, Order $order): bool
     {
         $membership = $user->membershipFor($order->company_id);

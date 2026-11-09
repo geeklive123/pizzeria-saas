@@ -16,6 +16,7 @@ use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Order;
 use App\Models\OrderCancellationAudit;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
@@ -146,6 +147,11 @@ class CancelKitchenDispatchItemAction
                 ->whereHas('orderItem', fn ($query) => $query->where('status', '!=', OrderItemStatus::Cancelled->value))
                 ->exists();
             if (! $hasActiveItems) {
+                $charge = OrderDeliveryCharge::query()->where('order_id', $order->id)->where('kitchen_dispatch_id', $dispatch->id)->lockForUpdate()->first();
+                if ($charge) {
+                    $charge->update(['kitchen_dispatch_id' => null]);
+                    $this->financials->recalculateDispatchFromActiveItems($dispatch);
+                }
                 $dispatch->forceFill([
                     'status' => KitchenDispatchStatus::Cancelled,
                     'cancelled_at' => $cancelledAt,
@@ -158,6 +164,7 @@ class CancelKitchenDispatchItemAction
                 ...$audit->snapshot,
                 'inventory_reversals' => $inventoryReversals,
                 'dispatch_auto_cancelled' => ! $hasActiveItems,
+                'delivery_unassigned' => isset($charge) && $charge !== null,
             ]])->save();
 
             $this->totals->recalculate($order);

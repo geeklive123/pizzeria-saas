@@ -12,6 +12,7 @@ use App\Http\Controllers\CheckoutController;
 use App\Http\Controllers\ContextController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DynamicQrController;
+use App\Http\Controllers\DynamicQrNotificationController;
 use App\Http\Controllers\ExpenseCategoryController;
 use App\Http\Controllers\ExpenseController;
 use App\Http\Controllers\IngredientController;
@@ -72,6 +73,8 @@ Route::middleware('auth')->group(function (): void {
 
         Route::middleware(['branch.context', 'user.access'])->group(function (): void {
             Route::get('/dashboard', DashboardController::class)->name('dashboard');
+            Route::get('/dynamic-qr/notifications', [DynamicQrNotificationController::class, 'index'])->name('dynamic-qr.notifications.index');
+            Route::post('/dynamic-qr/notifications/{intent}/acknowledge', [DynamicQrNotificationController::class, 'acknowledge'])->whereUlid('intent')->name('dynamic-qr.notifications.acknowledge');
             Route::get('/administracion/banco-economico', [BancoEconomicoSettingsController::class, 'index'])->name('bank-settings.index');
             Route::post('/administracion/banco-economico', [BancoEconomicoSettingsController::class, 'store'])->name('bank-settings.store');
             Route::post('/administracion/banco-economico/autenticacion', [BancoEconomicoSettingsController::class, 'authenticate'])->middleware('throttle:5,1')->name('bank-settings.authenticate');
@@ -98,9 +101,11 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');
             Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
+            Route::post('/orders/{order}/delivered', [OrderController::class, 'deliverTakeaway'])->name('orders.delivered');
             Route::get('/orders/{order}/cash-session-transfer', [CashSessionTransferController::class, 'create'])->name('orders.cash-session-transfer.create');
             Route::post('/orders/{order}/cash-session-transfer', [CashSessionTransferController::class, 'store'])->name('orders.cash-session-transfer.store');
             Route::put('/orders/{order}/customer', [OrderController::class, 'updateCustomer'])->name('orders.customer.update');
+            Route::put('/orders/{order}/delivery-charge', [OrderController::class, 'updateDeliveryCharge'])->name('orders.delivery-charge.update');
             Route::post('/orders/{order}/items', [OrderController::class, 'addItem'])->name('orders.items.store');
             Route::post('/orders/{order}/promotions', [OrderController::class, 'addPromotion'])->name('orders.promotions.store');
             Route::post('/orders/{order}/dispatch', [OrderController::class, 'dispatch'])->name('orders.dispatch');

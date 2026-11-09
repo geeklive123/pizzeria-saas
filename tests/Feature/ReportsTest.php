@@ -51,12 +51,12 @@ use App\Services\SalesReportService;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
 
 class ReportsTest extends TestCase
 {
-    use RefreshDatabase;
+    use IsolatedSqliteCommits;
 
     public function test_sales_today_range_partial_orders_and_branch_scope_are_correct(): void
     {

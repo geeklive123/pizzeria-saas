@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Enums\OrderStatus;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -58,6 +60,11 @@ class OrderFinancialService
     {
         $dispatch->loadMissing('items.orderItem.sections');
         $snapshot = $this->preview($dispatch->items->map->orderItem, $percentage);
+        $deliveryCharge = OrderDeliveryCharge::query()->where('order_id', $dispatch->order_id)->where('kitchen_dispatch_id', $dispatch->id)->where('enabled', true)->first();
+        $delivery = $deliveryCharge?->amount ?? '0.00';
+        $snapshot['delivery'] = $delivery;
+        $snapshot['delivery_enabled'] = $deliveryCharge !== null;
+        $snapshot['total'] = $this->money(BigDecimal::of($snapshot['total'])->plus($delivery));
         foreach ($dispatch->items as $dispatchItem) {
             $line = $snapshot['lines'][$dispatchItem->order_item_id] ?? null;
             if ($line === null) {
@@ -137,7 +144,13 @@ class OrderFinancialService
         $snapshot = $this->preview($order->items);
         $discount = $this->sum($order->kitchenDispatches()->where('status', '!=', 'cancelled')->get(), 'discount_total');
         $snapshot['discount'] = $this->money($discount);
-        $snapshot['total'] = $this->money(BigDecimal::of($snapshot['gross'])->minus($discount));
+        $deliveryCharge = $order->status === OrderStatus::Cancelled
+            ? null
+            : OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->first();
+        $delivery = $deliveryCharge?->amount ?? '0.00';
+        $snapshot['delivery'] = $delivery;
+        $snapshot['delivery_enabled'] = $deliveryCharge !== null;
+        $snapshot['total'] = $this->money(BigDecimal::of($snapshot['gross'])->minus($discount)->plus($delivery));
 
         return $this->fillOrder($order, $snapshot, false);
     }
@@ -153,7 +166,9 @@ class OrderFinancialService
         $extras = $this->sum($activeItems, 'extras_total');
         $other = $this->sum($activeItems, 'other_total');
         $discount = $this->sum($activeItems, 'discount_total');
-        $total = $this->sum($activeItems, 'net_total');
+        $deliveryCharge = OrderDeliveryCharge::query()->where('order_id', $dispatch->order_id)->where('kitchen_dispatch_id', $dispatch->id)->where('enabled', true)->first();
+        $delivery = $deliveryCharge?->amount ?? '0.00';
+        $total = $this->sum($activeItems, 'net_total')->plus($delivery);
 
         $dispatch->forceFill([
             'gross_subtotal' => (string) $gross,
@@ -170,6 +185,8 @@ class OrderFinancialService
                 'other_subtotal' => (string) $other,
                 'discount_percentage' => $dispatch->discount_percentage,
                 'discount_total' => (string) $discount,
+                'delivery_amount' => $delivery,
+                'delivery_enabled' => $deliveryCharge !== null,
                 'total' => (string) $total,
             ],
         ])->save();
@@ -238,7 +255,7 @@ class OrderFinancialService
 
     private function snapshot(array $values): array
     {
-        return ['version' => 1, 'gross_subtotal' => $values['gross'], 'pizza_base_subtotal' => $values['pizza_base'], 'extras_subtotal' => $values['extras'], 'other_subtotal' => $values['other'], 'discount_percentage' => $values['discount_percentage'], 'discount_total' => $values['discount'], 'total' => $values['total']];
+        return ['version' => 1, 'gross_subtotal' => $values['gross'], 'pizza_base_subtotal' => $values['pizza_base'], 'extras_subtotal' => $values['extras'], 'other_subtotal' => $values['other'], 'discount_percentage' => $values['discount_percentage'], 'discount_total' => $values['discount'], 'delivery_amount' => $values['delivery'] ?? '0.00', 'delivery_enabled' => $values['delivery_enabled'] ?? false, 'total' => $values['total']];
     }
 
     private function sum(iterable $rows, string $key): BigDecimal

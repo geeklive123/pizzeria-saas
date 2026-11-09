@@ -55,6 +55,8 @@ class OrderHistoryService
                     'sequence' => $dispatch->sequence_number,
                     'time' => $dispatch->dispatched_at,
                     'total' => $dispatch->total,
+                    'delivery_amount' => $dispatch->financial_snapshot['delivery_amount'] ?? '0.00',
+                    'delivery_enabled' => $dispatch->financial_snapshot['delivery_enabled'] ?? false,
                     'balance' => $this->payments->dispatchBalance($dispatch),
                     'status' => $this->status($dispatch->status, $settledReversal),
                     'payment' => $this->paymentSummary($dispatch->payments),

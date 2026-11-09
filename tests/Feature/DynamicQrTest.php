@@ -14,6 +14,9 @@ use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
 use App\Enums\PaymentMethod;
+use App\Enums\PaymentStatus;
+use App\Enums\PrintAttemptStatus;
+use App\Enums\PrinterPurpose;
 use App\Enums\TableChargeMode;
 use App\Models\BankQrDiagnostic;
 use App\Models\BankQrSetting;
@@ -29,6 +32,7 @@ use App\Models\Membership;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
+use App\Models\PrinterSetting;
 use App\Models\RestaurantTable;
 use App\Models\User;
 use App\Services\BancoEconomicoGateway;
@@ -466,6 +470,20 @@ class DynamicQrTest extends TestCase
         $intent = $this->generate();
         $this->assertSame('generated', $intent->fresh()->generation_phase);
         $this->assertSame(1, $this->generations);
+    }
+
+    public function test_unreadable_credentials_block_generation_before_payment_or_bank_contact(): void
+    {
+        DB::table('bank_qr_settings')->where('id', $this->setting->id)->update(['credentials' => 'incompatible']);
+        try {
+            $this->generate('30.00');
+            $this->fail('Expected unreadable credentials to block generation.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('no están disponibles para descifrado', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('dynamic_qr_intents', 0);
+        $this->assertDatabaseCount('payments', 0);
+        Http::assertNothingSent();
     }
 
     public function test_generation_uses_exact_fixed_single_use_amount_and_encrypted_configuration(): void
@@ -1061,9 +1079,44 @@ class DynamicQrTest extends TestCase
         $this->assertNull($intent->ticket_enqueued_at);
         $this->assertDatabaseCount('payments', 1);
         $this->app->forgetInstance(ThermalPrintingService::class);
+        PrinterSetting::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'purpose' => PrinterPurpose::CustomerTicket, 'windows_printer_name' => 'Ticket', 'is_active' => true]);
         $this->artisan('baneco:reconcile', ['--inline' => true])->assertSuccessful();
         $this->assertDatabaseCount('print_attempts', 1);
         $this->assertNotNull($intent->refresh()->ticket_enqueued_at);
+    }
+
+    public function test_inactive_ticket_printer_is_not_marked_enqueued_and_can_be_retried_without_duplicates(): void
+    {
+        $setting = PrinterSetting::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'purpose' => PrinterPurpose::CustomerTicket, 'windows_printer_name' => 'Ticket', 'is_active' => false]);
+        $intent = $this->generate();
+        $this->paid();
+        $this->check($intent);
+        $this->assertNull($intent->refresh()->ticket_enqueued_at);
+        $attempt = $this->order->printAttempts()->sole();
+        $this->assertSame(PrintAttemptStatus::Failed, $attempt->status);
+        $setting->update(['is_active' => true]);
+        app(DynamicQrAction::class)->print($intent->refresh());
+        $this->assertSame(PrintAttemptStatus::Pending, $attempt->refresh()->status);
+        $this->assertNotNull($intent->refresh()->ticket_enqueued_at);
+        app(DynamicQrAction::class)->print($intent->refresh());
+        $this->assertSame(1, $this->order->printAttempts()->count());
+    }
+
+    public function test_failed_ticket_after_agent_claim_is_not_automatically_retried(): void
+    {
+        $intent = $this->generate();
+        $this->paid();
+        $this->check($intent);
+        $attempt = $this->order->printAttempts()->sole();
+        $attempt->update(['attempts' => 1, 'error_message' => 'Impresión incierta']);
+        PrinterSetting::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'purpose' => PrinterPurpose::CustomerTicket, 'windows_printer_name' => 'Ticket', 'is_active' => true]);
+        app(DynamicQrAction::class)->print($intent->refresh());
+        $this->assertSame(PrintAttemptStatus::Failed, $attempt->refresh()->status);
+        $this->assertNull($intent->refresh()->ticket_enqueued_at);
+        $this->assertSame(1, $this->order->printAttempts()->count());
     }
 
     public function test_cancelled_order_or_expired_qr_is_not_paid_automatically(): void
@@ -1096,6 +1149,212 @@ class DynamicQrTest extends TestCase
         $this->assertDatabaseCount('payments', 0);
         $this->assertNotSame(OrderStatus::Paid, $this->order->refresh()->status);
         $this->getJson(route('orders.dynamic-qr.show', $this->order->ulid))->assertOk()->assertJsonPath('intent.status', 'pending');
+    }
+
+    public function test_read_only_tracking_recovers_pending_expired_and_confirmed_attempts(): void
+    {
+        $intent = $this->generate();
+        $this->login();
+        $url = route('orders.dynamic-qr.show', ['order' => $this->order->ulid, 'intent' => $intent->ulid]);
+        $this->getJson($url)->assertOk()->assertJsonPath('intent.ulid', $intent->ulid)
+            ->assertJsonPath('intent.status', 'pending')->assertJsonPath('intent.expired', false);
+        $this->assertDatabaseCount('payments', 0);
+        $this->paid();
+        $this->check($intent);
+        $this->getJson($url)->assertOk()->assertJsonPath('intent.status', 'paid')
+            ->assertJsonPath('summary.balance', '0.00');
+        $this->getJson($url)->assertOk()->assertJsonPath('intent.status', 'paid');
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertSame(1, $this->generations);
+    }
+
+    public function test_cashier_on_another_order_receives_one_confirmed_qr_notice_without_bank_calls(): void
+    {
+        $otherOrder = Order::factory()->for($this->branch)->create([
+            'company_id' => $this->company->id, 'created_by' => $this->user->id,
+            'type' => OrderType::Takeaway, 'status' => OrderStatus::Open,
+        ]);
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-order-a'])
+            ->assertOk()->assertJsonPath('intent.status', 'pending');
+        $intent = DynamicQrIntent::query()->sole();
+        $this->get(route('orders.show', $otherOrder->ulid))->assertOk()->assertSee('data-qr-notifications', false);
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $ack = route('dynamic-qr.notifications.acknowledge', $intent->ulid);
+        $this->postJson($ack)->assertNotFound();
+        $this->paid();
+        $this->check($intent);
+        $requests = Http::recorded()->count();
+
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(1, 'notifications')
+            ->assertJsonPath('notifications.0.id', $intent->ulid)
+            ->assertJsonPath('notifications.0.order_number', $this->order->refresh()->formattedOperationalNumber())
+            ->assertJsonPath('notifications.0.amount', '100.00')
+            ->assertJsonPath('notifications.0.status', 'Pago confirmado')
+            ->assertJsonPath('notifications.0.order_url', route('orders.show', $this->order->ulid));
+        // A lost response leaves the notification pending for either tab or a later session.
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonPath('notifications.0.id', $intent->ulid);
+        $this->assertDatabaseHas('dynamic_qr_notifications', ['intent_id' => $intent->id, 'delivered_at' => null]);
+        $this->postJson($ack)->assertOk()->assertJsonPath('acknowledged', true);
+        $delivered = DB::table('dynamic_qr_notifications')->where('intent_id', $intent->id)->value('delivered_at');
+        $this->travel(5)->seconds();
+        $this->postJson($ack)->assertOk()->assertJsonPath('acknowledged', true);
+        $this->assertSame($delivered, DB::table('dynamic_qr_notifications')->where('intent_id', $intent->id)->value('delivered_at'));
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $this->assertSame($requests, Http::recorded()->count());
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertSame(OrderStatus::Open, $otherOrder->refresh()->status);
+    }
+
+    public function test_qr_notice_respects_branch_and_never_reports_uncertain_or_late_payment(): void
+    {
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-scope'])->assertOk();
+        $intent = DynamicQrIntent::query()->sole();
+        foreach ([DynamicQrStatus::GenerationUnknown, DynamicQrStatus::ReconciliationRequired, DynamicQrStatus::Pending] as $status) {
+            $intent->update(['status' => $status]);
+            $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        }
+        $intent->update(['status' => DynamicQrStatus::Pending]);
+        $this->paid();
+        $this->check($intent);
+        $intent->refresh();
+        $intent->payment->update(['status' => PaymentStatus::Reversed]);
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $intent->payment->update(['status' => PaymentStatus::Completed]);
+        $intent->update(['confirmed_at' => $intent->expires_at->addSecond()]);
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $intent->update(['confirmed_at' => now()]);
+        $otherBranch = Branch::factory()->for($this->company)->create();
+        $this->withSession(['active_branch_id' => $otherBranch->id])->getJson(route('dynamic-qr.notifications.index'))
+            ->assertOk()->assertJsonCount(0, 'notifications');
+        $this->withSession(['active_branch_id' => $this->branch->id])->getJson(route('dynamic-qr.notifications.index'))
+            ->assertOk()->assertJsonCount(1, 'notifications');
+    }
+
+    public function test_historical_qr_payment_does_not_create_a_new_notice_on_retry(): void
+    {
+        $intent = $this->generate(key: 'historical-notice');
+        $this->paid();
+        $this->check($intent);
+        $this->travel(2)->seconds();
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'historical-notice'])->assertOk();
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+    }
+
+    public function test_qr_notice_identifies_an_open_order_without_an_operational_number(): void
+    {
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'notice-number'])->assertOk();
+        $this->paid();
+        $this->check(DynamicQrIntent::query()->sole());
+        $this->order->update(['status' => OrderStatus::Open, 'operational_number' => null]);
+        $number = 'Ref. interna #'.str_pad((string) $this->order->order_number, 6, '0', STR_PAD_LEFT);
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonPath('notifications.0.order_number', $number);
+    }
+
+    public function test_qr_notice_is_private_to_the_user_and_requires_payment_permission(): void
+    {
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), ['idempotency_key' => 'private-notice'])->assertOk();
+        $this->paid();
+        $intent = DynamicQrIntent::query()->sole();
+        $this->check($intent);
+        $ack = route('dynamic-qr.notifications.acknowledge', $intent->ulid);
+        $other = User::factory()->create();
+        Membership::factory()->for($this->company)->for($other)->owner()->create();
+        $this->actingAs($other)->withSession(['active_company_id' => $this->company->id, 'active_branch_id' => $this->branch->id])
+            ->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $this->postJson($ack)->assertNotFound();
+        $foreignCompany = Company::factory()->create();
+        $foreignBranch = Branch::factory()->for($foreignCompany)->create();
+        Membership::factory()->for($foreignCompany)->for($this->user)->owner()->create();
+        $this->actingAs($this->user)->withSession(['active_company_id' => $foreignCompany->id, 'active_branch_id' => $foreignBranch->id])
+            ->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(0, 'notifications');
+        $this->postJson($ack)->assertNotFound();
+        $waiter = User::factory()->create();
+        Membership::factory()->for($this->company)->for($waiter)->create(['role' => MembershipRole::Waiter]);
+        $this->actingAs($waiter)->withSession(['active_company_id' => $this->company->id, 'active_branch_id' => $this->branch->id])
+            ->getJson(route('dynamic-qr.notifications.index'))->assertForbidden();
+        $this->postJson($ack)->assertForbidden();
+        $this->login()->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonCount(1, 'notifications');
+    }
+
+    public function test_takeaway_qr_confirmation_while_cashier_is_on_another_order_tracks_delivery_and_prints_once(): void
+    {
+        $this->order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch,
+            'restaurant_table_id' => null, 'active_restaurant_table_id' => null, 'status' => OrderStatus::Open])->save();
+        $this->user->memberships()->where('company_id', $this->company->id)->update(['role' => MembershipRole::Cashier->value]);
+        foreach ([PrinterPurpose::Kitchen, PrinterPurpose::CustomerTicket] as $purpose) {
+            PrinterSetting::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+                'purpose' => $purpose, 'windows_printer_name' => 'Test printer', 'is_active' => true,
+                'auto_print' => true, 'copies' => 1, 'paper_width_mm' => 80]);
+        }
+        $dispatch = KitchenDispatch::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'order_id' => $this->order->id, 'sequence_number' => 1, 'status' => KitchenDispatchStatus::AwaitingPayment,
+            'dispatched_at' => now(), 'dispatched_by' => $this->user->id, 'total' => '100.00', 'gross_subtotal' => '100.00']);
+        $item = $this->order->items()->first();
+        $item->update(['status' => OrderItemStatus::PendingPayment, 'requires_preparation' => true]);
+        KitchenDispatchItem::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
+            'kitchen_dispatch_id' => $dispatch->id, 'order_item_id' => $item->id, 'gross_total' => '100.00', 'net_total' => '100.00']);
+        $tableB = RestaurantTable::factory()->for($this->branch)->create(['company_id' => $this->company->id]);
+        $orderB = Order::factory()->for($this->branch)->create(['company_id' => $this->company->id, 'created_by' => $this->user->id,
+            'type' => OrderType::DineIn, 'restaurant_table_id' => $tableB->id, 'active_restaurant_table_id' => $tableB->id, 'status' => OrderStatus::Open]);
+        $this->login()->postJson(route('orders.dynamic-qr.store', $this->order->ulid), [
+            'idempotency_key' => 'takeaway-global-qr', 'kitchen_dispatch' => $dispatch->ulid,
+        ])->assertOk()->assertJsonPath('intent.status', 'pending');
+        $this->get(route('orders.show', $orderB->ulid))->assertOk()->assertSee('data-qr-notifications', false);
+        $this->assertSame(0, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->paid();
+        $this->artisan('baneco:reconcile', ['--inline' => true])->assertSuccessful();
+        $this->assertSame(OrderStatus::Paid, $this->order->refresh()->status);
+        $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
+        $this->assertSame(OrderItemStatus::Sent, $item->refresh()->status);
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->artisan('baneco:reconcile', ['--inline' => true])->assertSuccessful();
+        $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonPath('notifications.0.order_url', route('orders.show', $this->order->ulid));
+        $this->get(route('orders.index'))->assertOk()->assertSee('Pendientes de entrega')->assertSee(route('orders.delivered', $this->order->ulid));
+        $this->get(route('orders.show', $this->order->ulid))->assertOk()->assertSee('Pendiente de entrega');
+        $this->order->forceFill(['closed_at' => now()->subDays(3)])->save();
+        $this->get(route('orders.index'))->assertOk()->assertSee(route('orders.delivered', $this->order->ulid));
+        $this->get(route('orders.show', $this->order->ulid))->assertOk()->assertSee('Pendiente de entrega');
+        $kitchenUser = User::factory()->create();
+        Membership::factory()->for($this->company)->for($kitchenUser)->create(['role' => MembershipRole::Kitchen]);
+        $this->actingAs($kitchenUser)->withSession(['active_company_id' => $this->company->id, 'active_branch_id' => $this->branch->id])
+            ->post(route('orders.delivered', $this->order->ulid))->assertForbidden();
+        $this->login();
+        $anotherBranch = Branch::factory()->for($this->company)->create();
+        $this->withSession(['active_branch_id' => $anotherBranch->id])->post(route('orders.delivered', $this->order->ulid))->assertNotFound();
+        $this->withSession(['active_branch_id' => $this->branch->id]);
+        $this->post(route('orders.delivered', $this->order->ulid))->assertRedirect(route('orders.index'));
+        $delivery = $this->order->takeawayDelivery()->firstOrFail();
+        $this->assertNotNull($delivery->delivered_at);
+        $this->assertSame($this->user->id, $delivery->delivered_by);
+        // Idempotent even after the first response is lost.
+        $this->post(route('orders.delivered', $this->order->ulid))->assertRedirect();
+        $this->assertEquals($delivery->delivered_at, $delivery->refresh()->delivered_at);
+        $this->assertSame(OrderStatus::Paid, $this->order->refresh()->status);
+        $this->assertSame(OrderStatus::Open, $orderB->refresh()->status);
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_historical_takeaway_is_not_automatically_marked_pending_delivery(): void
+    {
+        $this->user->memberships()->where('company_id', $this->company->id)->update(['role' => MembershipRole::Cashier->value]);
+        $historical = Order::factory()->for($this->branch)->create(['company_id' => $this->company->id, 'created_by' => $this->user->id,
+            'type' => OrderType::Takeaway, 'status' => OrderStatus::Paid, 'closed_at' => now()->subDays(3), 'customer_name' => 'Histórico ajeno']);
+        $this->login()->get(route('orders.index'))->assertOk()->assertDontSee('Histórico ajeno');
+        $this->assertDatabaseMissing('takeaway_deliveries', ['order_id' => $historical->id]);
+        $this->post(route('orders.delivered', $historical->ulid))->assertForbidden();
+    }
+
+    public function test_tracking_reports_expiry_without_releasing_or_replacing_the_attempt(): void
+    {
+        $intent = $this->generate();
+        $this->travel(3)->days();
+        $this->login()->getJson(route('orders.dynamic-qr.show', ['order' => $this->order->ulid, 'intent' => $intent->ulid]))
+            ->assertOk()->assertJsonPath('intent.status', 'pending')->assertJsonPath('intent.expired', true);
+        $this->assertSame($intent->id, $this->generate(key: 'still-active')->id);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertSame(1, $this->generations);
     }
 
     public function test_qr_checkout_uses_actual_forty_boliviano_balance_without_recording_cash(): void

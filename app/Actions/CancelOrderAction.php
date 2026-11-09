@@ -2,14 +2,17 @@
 
 namespace App\Actions;
 
+use App\Enums\DynamicQrStatus;
 use App\Enums\InventoryMovementType;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
 use App\Enums\OrderStatus;
 use App\Enums\PaymentStatus;
 use App\Enums\Permission;
+use App\Models\DynamicQrIntent;
 use App\Models\InventoryMovement;
 use App\Models\Order;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\CompanyAccessService;
@@ -35,6 +38,10 @@ class CancelOrderAction
 
         return DB::transaction(function () use ($order, $user, $reason): Order {
             $order = Order::query()->with(['company', 'branch', 'items.productVariant'])->lockForUpdate()->findOrFail($order->id);
+            if (OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->exists()
+                && DynamicQrIntent::query()->where('order_id', $order->id)->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhereIn('status', [DynamicQrStatus::GenerationUnknown->value, DynamicQrStatus::ReconciliationRequired->value]))->exists()) {
+                throw new DomainException('Resuelve el QR bancario antes de anular el pedido con envío.');
+            }
             if ($order->payments()->where('status', PaymentStatus::Completed->value)->exists()) {
                 throw new DomainException('El pedido tiene pagos vigentes. Revierte primero los pagos antes de anularlo.');
             }

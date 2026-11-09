@@ -19,14 +19,18 @@
     data-key="{{ (string) \Illuminate\Support\Str::ulid() }}">
     <h4 class="font-bold">Banco Económico · QR</h4>
     <p class="mt-1 text-sm">Cobra el saldo pendiente con QR.</p>
+    <p class="mt-2 font-semibold" data-qr-indicator role="status" aria-live="polite" hidden></p>
+    <p class="mt-1 text-sm" data-qr-indicator-balance hidden></p>
+    <button type="button" class="btn-secondary mt-2" data-qr-refresh hidden>Actualizar pedido</button>
     @if(! config('baneco.enabled'))<p class="mt-2 font-semibold text-red-700">Banco Económico no habilitado</p>@endif
     <button type="button" class="btn-primary mt-3 w-full" data-qr-open>Cobrar con QR</button>
     <button type="button" class="btn-secondary mt-2 w-full" data-qr-open-mixed>Pago mixto: efectivo + QR</button>
+    <button type="button" class="btn-primary mt-3 w-full" data-qr-reopen hidden>Reabrir QR</button>
     <dialog data-qr-modal aria-labelledby="qr-title-{{ $qrDispatch?->ulid ?? $order->ulid }}" class="m-auto max-h-[90vh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-2xl bg-white p-0 shadow-xl backdrop:bg-black/60">
         <div class="p-5 sm:p-7">
             <div class="flex items-start justify-between gap-4">
                 <div><h4 id="qr-title-{{ $qrDispatch?->ulid ?? $order->ulid }}" class="text-xl font-bold">Banco Económico</h4><p class="text-sm text-stone-600">Pedido {{ $order->operational_number ?? $order->ulid }}@if($qrDispatch) · Tanda {{ $qrDispatch->sequence_number }}@endif</p></div>
-                <button type="button" class="btn-secondary" data-qr-close aria-label="Cerrar ventana de QR">Cerrar</button>
+                <button type="button" class="btn-secondary" data-qr-close>Ocultar QR y seguir trabajando</button>
             </div>
             <div class="mt-4 rounded-xl bg-stone-50 p-3 text-sm space-y-1">
                 <p data-qr-cash-paid>Efectivo registrado: Bs 0,00</p>
@@ -49,10 +53,10 @@
             <p class="text-center text-sm text-stone-600" data-qr-expiry></p>
             <p class="mt-4 text-center font-semibold" data-qr-status role="status" aria-live="polite"></p>
             <p class="mt-2 text-center text-sm text-red-700" data-qr-error role="alert"></p>
-            <p class="mt-2 text-center text-xs text-stone-600">El cobro se registra solo cuando el banco confirma el pago.</p>
+            <p class="mt-2 text-center text-xs text-stone-600">Ocultar conserva el cobro pendiente. Cancelar cobro solicita su anulación al banco. El pago se registra solo cuando el banco lo confirma.</p>
             <div class="mt-5 flex flex-wrap justify-center gap-2">
                 <button type="button" class="btn-secondary" data-qr-check hidden>Consultar estado</button>
-                <button type="button" class="btn-secondary" data-qr-cancel hidden>Solicitar cancelación</button>
+                <button type="button" class="btn-secondary" data-qr-cancel hidden>Cancelar cobro</button>
                 <button type="button" class="btn-primary" data-qr-generate hidden>Generar nuevo QR</button>
             </div>
         </div>

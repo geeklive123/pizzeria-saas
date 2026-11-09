@@ -30,6 +30,19 @@
         <p class="mt-3 hidden text-sm text-slate-500" data-order-empty-filter>No hay pedidos que coincidan con la búsqueda y el filtro.</p>
     </section>
 
+    <section class="mb-5 rounded-2xl border border-blue-200 bg-white p-5" aria-label="Pendientes de entrega">
+        <h2 class="text-lg font-bold">Pendientes de entrega</h2>
+        @forelse($pendingDeliveries as $deliveryOrder)
+            <div class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-3">
+                <div><a class="link font-bold" href="{{ route('orders.show', $deliveryOrder->ulid) }}">{{ $deliveryOrder->formattedOperationalNumber() }}</a> · {{ $deliveryOrder->customer_name ?: 'Para llevar' }} <span class="text-sm text-stone-600">· Pagado</span></div>
+                @can('deliverTakeaway', $deliveryOrder)
+                    <form method="POST" action="{{ route('orders.delivered', $deliveryOrder->ulid) }}">@csrf<button class="btn-primary">Marcar entregado</button></form>
+                @endcan
+            </div>
+        @empty
+            <p class="mt-2 text-sm text-stone-500">No hay pedidos pendientes de entrega.</p>
+        @endforelse
+    </section>
     <section class="overflow-hidden rounded-2xl border border-orange-200 bg-white shadow-sm">
         <div class="flex items-center justify-between gap-4 border-b border-orange-100 bg-orange-50/60 px-4 py-4 sm:px-5">
             <div class="flex min-w-0 items-center gap-3">

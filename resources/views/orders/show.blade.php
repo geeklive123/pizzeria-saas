@@ -5,6 +5,14 @@
 @section('main-class', '!max-w-none')
 
 @section('content')
+@if($order->type === \App\Enums\OrderType::Takeaway && $order->status === \App\Enums\OrderStatus::Paid && $order->takeawayDelivery && ! $order->takeawayDelivery->delivered_at)
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4">
+        <strong>Pagado · Pendiente de entrega</strong>
+        @can('deliverTakeaway', $order)
+            <form method="POST" action="{{ route('orders.delivered', $order->ulid) }}">@csrf<button class="btn-primary">Marcar entregado</button></form>
+        @endcan
+    </div>
+@endif
 @if($order->status === \App\Enums\OrderStatus::Paid)
     <div class='mb-4 flex flex-wrap justify-end gap-2'>
         @can('transferPayments', $order)
@@ -421,6 +429,18 @@
             </div>
         </div>
         @unless($isAtEndCheckout)
+        @if($order->type === \App\Enums\OrderType::Takeaway)
+            @php($deliveryCharge = $order->deliveryCharge)
+            <div class="border-b border-stone-100 p-4">
+                <form method="POST" action="{{ route('orders.delivery-charge.update', $order->ulid) }}" data-delivery-charge>
+                    @csrf @method('PUT')
+                    <input type="hidden" name="enabled" value="0">
+                    <label class="flex items-center gap-2 font-semibold"><input type="checkbox" name="enabled" value="1" @checked($deliveryCharge?->enabled ?? false) data-delivery-toggle> Envío a domicilio</label>
+                    <label class="mt-2 block" data-delivery-amount><span class="label">Importe de envío (Bs)</span><input class="input" name="amount" inputmode="decimal" value="{{ $deliveryCharge?->amount ?? '' }}"></label>
+                    @can('update', $order)<button class="btn-secondary mt-2" type="submit">Guardar envío</button>@endcan
+                </form>
+            </div>
+        @endif
         <div class="space-y-3 p-4">
             @forelse ($visibleItems as $item)
                 <article class="rounded-2xl border {{ $item->status === \App\Enums\OrderItemStatus::Draft ? 'border-orange-300 bg-orange-50/20' : 'border-stone-200 bg-white' }} p-4 shadow-sm {{ $item->status === \App\Enums\OrderItemStatus::Cancelled ? 'opacity-50' : '' }}">
@@ -605,6 +625,13 @@
         @endunless
         @include('orders._per_batch_payment')
         @include('orders._at_end_payment')
+        @if(! $isPerBatch && $order->type === \App\Enums\OrderType::Takeaway && $pendingDispatch && $cashSession)
+            @can('create', $paymentClass)
+                <div class="border-t border-orange-200 bg-orange-50 p-5">
+                    @include('orders._dynamic_qr', ['qrDispatch' => $pendingDispatch, 'qrBalance' => $pendingBalance])
+                </div>
+            @endcan
+        @endif
         @if(! ($isPerBatch && $pendingDispatch) && ! (! $isPerBatch && $order->type === \App\Enums\OrderType::DineIn && $order->status === \App\Enums\OrderStatus::ReadyForPayment))
         <div class="border-t border-stone-100 bg-white p-5">
             @if($isPerBatch)
@@ -614,12 +641,15 @@
                     <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Extras</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($draftFinancial['extras']) }}</strong></p>
                     <p class="flex justify-between gap-4 text-sm text-slate-700"><span>Otros</span><strong class="text-slate-900">{{ \App\Support\UiFormatter::money($draftFinancial['other']) }}</strong></p>
                     <p class="flex justify-between gap-4 text-sm text-red-600"><span>Descuento</span><strong>-{{ \App\Support\UiFormatter::money($draftFinancial['discount']) }}</strong></p>
+                    @if($order->type === \App\Enums\OrderType::Takeaway && $deliveryCharge?->enabled && $deliveryCharge->kitchen_dispatch_id === null)
+                        <p class="flex justify-between gap-4 text-sm"><span>Envío</span><strong>{{ \App\Support\UiFormatter::money($deliveryCharge->amount) }}</strong></p>
+                    @endif
                     @can(\App\Enums\Permission::ApplyOrderDiscounts->value)
                         @if($draftFinancial['eligible'])
                             <label class="block pt-2"><span class="label">Descuento pizzas</span><span class="flex items-center gap-2"><input class="input" name="discount_percentage" inputmode="decimal" placeholder="Ej. 10"><span>%</span></span></label>
                         @endif
                     @endcan
-                    <p class="flex items-end justify-between gap-4 border-t border-stone-300 pt-4 text-xl font-bold text-slate-900"><span>TOTAL</span><strong class="text-2xl">{{ \App\Support\UiFormatter::money($draftFinancial['total']) }}</strong></p>
+                    <p class="flex items-end justify-between gap-4 border-t border-stone-300 pt-4 text-xl font-bold text-slate-900"><span>TOTAL</span><strong class="text-2xl">{{ \App\Support\UiFormatter::money((string) \Brick\Math\BigDecimal::of($draftFinancial['total'])->plus(($order->type === \App\Enums\OrderType::Takeaway && $deliveryCharge?->enabled && $deliveryCharge->kitchen_dispatch_id === null) ? $deliveryCharge->amount : '0')) }}</strong></p>
                     <p class="rounded-xl border border-orange-100 bg-orange-50/70 p-3 text-xs leading-5 text-slate-600"><span class="mr-1 font-bold text-orange-600">ⓘ</span> Cobrar registra pagos. El pedido se finaliza y la mesa se libera únicamente cuando el saldo es cero y todos los productos están servidos.</p>
                     @if($hasDraft)<button class="btn-primary mt-2 min-h-14 w-full bg-gradient-to-r from-orange-600 to-orange-500 text-base shadow-md shadow-orange-200 hover:from-orange-700 hover:to-orange-600">COBRAR Y CONFIRMAR TANDA</button>@endif
                 </form>

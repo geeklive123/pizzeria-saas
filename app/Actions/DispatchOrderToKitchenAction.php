@@ -11,6 +11,7 @@ use App\Enums\TableChargeMode;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Order;
+use App\Models\OrderDeliveryCharge;
 use App\Models\User;
 use App\Services\CompanyAccessService;
 use App\Services\OrderFinancialService;
@@ -76,6 +77,13 @@ class DispatchOrderToKitchenAction
                 'dispatched_by' => $user->getKey(),
                 'released_at' => $requiresPayment ? null : now(),
             ]);
+
+            if ($order->type === OrderType::Takeaway) {
+                $charge = OrderDeliveryCharge::query()->where('order_id', $order->id)->lockForUpdate()->first();
+                if ($charge && $charge->kitchen_dispatch_id === null && $charge->enabled) {
+                    $charge->update(['kitchen_dispatch_id' => $dispatch->id]);
+                }
+            }
 
             foreach ($items as $item) {
                 KitchenDispatchItem::query()->create([

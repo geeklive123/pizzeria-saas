@@ -45,7 +45,7 @@ class SaveBancoEconomicoSettingAction
             $scope = $company->id.':'.($branch?->id ?? 'company');
             $existing = BankQrSetting::query()->forCompany($company)->where('active_scope', $scope)->lockForUpdate()->first();
             $inherited = $branch && ! $existing ? BankQrSetting::query()->forCompany($company)->where('active_scope', $company->id.':company')->first() : null;
-            $credentials = ($existing ?? $inherited)?->credentials ?? [];
+            $credentials = ($existing ?? $inherited)?->readableCredentials() ?? [];
             foreach (['username', 'password', 'aes_key', 'account_credit'] as $key) {
                 if (isset($input[$key]) && is_string($input[$key]) && trim($input[$key]) !== '') {
                     $credentials[$key] = $input[$key];

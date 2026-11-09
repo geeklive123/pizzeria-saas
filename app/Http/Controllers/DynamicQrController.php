@@ -13,6 +13,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Services\BankQrImageInspection;
 use App\Services\CurrentCashSessionService;
+use App\Services\DynamicQrNotifications;
 use App\Services\OrderPaymentService;
 use Brick\Math\BigDecimal;
 use DomainException;
@@ -24,7 +25,7 @@ class DynamicQrController extends Controller
 {
     public function __construct(private readonly OrderPaymentService $balances) {}
 
-    public function store(Request $request, string $order, DynamicQrAction $action, CurrentCashSessionService $sessions): JsonResponse
+    public function store(Request $request, string $order, DynamicQrAction $action, CurrentCashSessionService $sessions, DynamicQrNotifications $notifications): JsonResponse
     {
         $order = $this->order($order);
         Gate::authorize('create', Payment::class);
@@ -47,7 +48,11 @@ class DynamicQrController extends Controller
             return response()->json(['message' => 'Abre tu turno de caja antes de cobrar.'], 422);
         }
         try {
-            return $this->payload($action->generate($order, $session, $request->user(), $data['idempotency_key'], $dispatch, $data['cash_amount'] ?? '0.00', $data['received_amount'] ?? null));
+            $startedAt = now()->startOfSecond();
+            $intent = $action->generate($order, $session, $request->user(), $data['idempotency_key'], $dispatch, $data['cash_amount'] ?? '0.00', $data['received_amount'] ?? null);
+            $notifications->watch($intent, $request->user(), $startedAt);
+
+            return $this->payload($intent);
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
@@ -57,6 +62,13 @@ class DynamicQrController extends Controller
     {
         $order = $this->order($order);
         Gate::authorize('create', Payment::class);
+        $data = $request->validate(['dispatch' => ['nullable', 'ulid'], 'intent' => ['nullable', 'ulid']]);
+        if (! empty($data['intent'])) {
+            $tracked = DynamicQrIntent::query()->forCompany($order->company_id)->where('branch_id', $order->branch_id)
+                ->where('order_id', $order->id)->where('ulid', $data['intent'])->firstOrFail();
+
+            return $this->payload($tracked);
+        }
         $intent = DynamicQrIntent::query()->forCompany($order->company_id)->where('branch_id', $order->branch_id)
             ->where('order_id', $order->id)
             ->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhere('status', DynamicQrStatus::ReconciliationRequired))
@@ -65,10 +77,10 @@ class DynamicQrController extends Controller
         if ($intent) {
             return $this->payload($intent);
         }
-        $requestDispatch = $request->validate(['dispatch' => ['nullable', 'ulid']])['dispatch'] ?? null;
+        $requestDispatch = $data['dispatch'] ?? null;
         $dispatch = $requestDispatch ? $order->kitchenDispatches()->where('ulid', $requestDispatch)->firstOrFail() : null;
 
-        return response()->json(['intent' => null, 'summary' => $this->summary($order, $dispatch)]);
+        return response()->json(['intent' => null, 'summary' => $this->summary($order, $dispatch)])->header('Cache-Control', 'no-store');
     }
 
     public function check(string $order, string $intent, DynamicQrAction $action): JsonResponse
@@ -136,6 +148,7 @@ class DynamicQrController extends Controller
             'image_url' => $intent->qr_image ? route('orders.dynamic-qr.image', [$order->ulid, $intent->ulid]) : null,
             'message' => $message, 'issue' => $intent->issue_code,
             'expires_at' => $intent->expires_at->toIso8601String(),
+            'expired' => $intent->expires_at->isPast(),
             'check_url' => route('orders.dynamic-qr.check', [$order->ulid, $intent->ulid]),
             'cancel_url' => route('orders.dynamic-qr.cancel', [$order->ulid, $intent->ulid]),
             'redirect_url' => $redirect,

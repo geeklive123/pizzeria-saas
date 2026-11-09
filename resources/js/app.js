@@ -1,4 +1,5 @@
 import './dynamic-qr';
+import './dynamic-qr-notifications';
 import './bank-qr-diagnostic';
 
 const sidebar = document.querySelector('#sidebar');
@@ -325,6 +326,14 @@ document.querySelectorAll('[data-promotion-pizza]').forEach((pizza) => {
         });
     };
     count?.addEventListener('change', refresh);
+    refresh();
+});
+
+document.querySelectorAll('[data-delivery-charge]').forEach((form) => {
+    const toggle = form.querySelector('[data-delivery-toggle]');
+    const field = form.querySelector('[data-delivery-amount]');
+    const refresh = () => { field.hidden = !toggle.checked; };
+    toggle.addEventListener('change', refresh);
     refresh();
 });
 

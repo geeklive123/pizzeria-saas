@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Enums\KitchenDispatchStatus;
+use App\Enums\OrderType;
 use App\Enums\PrintAttemptStatus;
+use App\Enums\PrinterPurpose;
 use App\Models\PrintAgent;
 use App\Models\PrintAttempt;
 use DomainException;
@@ -20,12 +23,20 @@ class PrintAgentQueueService
                 ->where('company_id', $agent->company_id)
                 ->where('branch_id', $agent->branch_id)
                 ->whereNotNull('document_payload')
+                ->where(fn ($query) => $query->where('purpose', '!=', PrinterPurpose::Kitchen->value)
+                    ->orWhereNull('kitchen_dispatch_id')
+                    ->orWhereHas('kitchenDispatch', fn ($dispatch) => $dispatch
+                        ->where(fn ($query) => $query->whereNotIn('status', [KitchenDispatchStatus::AwaitingPayment->value, KitchenDispatchStatus::Cancelled->value])
+                            ->orWhereHas('order', fn ($order) => $order->where('type', '!=', OrderType::Takeaway->value)))))
                 ->where(function ($query) use ($now): void {
                     $query->where(function ($available) use ($now): void {
                         $available->whereIn('status', [PrintAttemptStatus::Pending->value, PrintAttemptStatus::Failed->value])
+                            ->where(fn ($safe) => $safe->where('purpose', '!=', PrinterPurpose::CustomerTicket->value)
+                                ->orWhere('status', PrintAttemptStatus::Pending->value))
                             ->whereNotNull('available_at')->where('available_at', '<=', $now);
                     })->orWhere(function ($stale) use ($now): void {
                         $stale->where('status', PrintAttemptStatus::Claimed->value)
+                            ->where('purpose', '!=', PrinterPurpose::CustomerTicket->value)
                             ->whereNotNull('claim_expires_at')->where('claim_expires_at', '<=', $now);
                     });
                 })

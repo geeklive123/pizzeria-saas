@@ -39,12 +39,13 @@ class KitchenCommandRenderer
             $builder->line('Tel: '.$order->customer_phone);
         }
         if ($order->notes) {
-            $builder->line('OBS PEDIDO:')->line(mb_strtoupper($order->notes));
+            $builder->line()->bold()->line('OBSERVACIONES DEL PEDIDO:')->bold(false)->line($order->notes)->line();
         }
 
         foreach ($dispatch->items as $dispatchItem) {
             $item = $dispatchItem->orderItem;
             $builder->line(str_repeat('-', 48))->bold()->line($this->itemTitle($item))->bold(false);
+            $this->itemNotes($builder, $item);
 
             if ($item->sections->isNotEmpty()) {
                 foreach ($item->sections as $section) {
@@ -57,9 +58,6 @@ class KitchenCommandRenderer
             $builder->line()->bold()->line($item->fulfillment_type === OrderType::Takeaway ? '    PARA LLEVAR' : '    COMER AQUÍ')->bold(false);
             $this->modifiers($builder, $item, ModifierOptionType::Add, 'EXTRAS:', '+ ');
             $this->modifiers($builder, $item, ModifierOptionType::Remove, 'QUITAR:', '- ');
-            if ($item->notes) {
-                $builder->line()->bold()->line('OBS:')->bold(false)->line(mb_strtoupper($item->notes));
-            }
         }
 
         $footer = $reprint
@@ -93,11 +91,12 @@ class KitchenCommandRenderer
             $builder->line('Tel: '.$order->customer_phone);
         }
         if ($order->notes) {
-            $builder->line('OBS PEDIDO:')->line(mb_strtoupper($order->notes));
+            $builder->line()->bold()->line('OBSERVACIONES DEL PEDIDO:')->bold(false)->line($order->notes)->line();
         }
 
         foreach ($order->items->where('status', '!=', OrderItemStatus::Cancelled) as $item) {
             $builder->line(str_repeat('-', 48))->bold()->line($this->itemTitle($item))->bold(false);
+            $this->itemNotes($builder, $item);
 
             if ($item->sections->isNotEmpty()) {
                 foreach ($item->sections as $section) {
@@ -110,13 +109,33 @@ class KitchenCommandRenderer
             $builder->line()->bold()->line($item->fulfillment_type === OrderType::Takeaway ? '    PARA LLEVAR' : '    COMER AQUÍ')->bold(false);
             $this->modifiers($builder, $item, ModifierOptionType::Add, 'EXTRAS:', '+ ');
             $this->modifiers($builder, $item, ModifierOptionType::Remove, 'QUITAR:', '- ');
-            if ($item->notes) {
-                $builder->line()->bold()->line('OBS:')->bold(false)->line(mb_strtoupper($item->notes));
-            }
         }
 
         return $builder->line(str_repeat('-', 48))->alignCenter()->bold()
             ->line('REIMPRESION HISTORICA · PEDIDO COMPLETO')->bold(false)->finish();
+    }
+
+    private function itemNotes(EscPosDocumentBuilder $builder, OrderItem $item): void
+    {
+        if (! $item->notes) {
+            return;
+        }
+
+        // El agente transmite RAW y no anuncia capacidades: no se usa vídeo inverso.
+        // 16 columnas en doble ancho caben incluso en una impresora de 58 mm.
+        $notes = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', str_replace(["\r\n", "\r", "\t"], ["\n", "\n", ' '], $item->notes));
+        $builder->line()->bold()->doubleSize()->line('!! OBSERVACIONES !!');
+        foreach (explode("\n", $notes ?? '') as $line) {
+            if ($line === '') {
+                $builder->line();
+
+                continue;
+            }
+            foreach (mb_str_split($line, 16) as $part) {
+                $builder->line($part);
+            }
+        }
+        $builder->doubleSize(false)->bold(false)->line();
     }
 
     private function itemTitle(OrderItem $item): string

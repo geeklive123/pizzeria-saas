@@ -11,9 +11,11 @@ use App\Models\Company;
 use App\Models\Membership;
 use App\Models\User;
 use App\Services\BancoEconomicoGateway;
+use Illuminate\Encryption\Encrypter;
 use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
@@ -46,6 +48,54 @@ class BancoEconomicoSettingsTest extends TestCase
             'due_days' => '2', 'enabled' => '1', 'technical_logging' => '1', 'branch_code' => 'E0001',
             'replace_username' => '1', 'username' => 'user-private', 'replace_password' => '1', 'password' => 'password-private',
             'replace_aes_key' => '1', 'aes_key' => str_repeat('a', 32), 'replace_account_credit' => '1', 'account_credit' => 'account-private'];
+    }
+
+    public function test_local_disabled_panel_handles_unreadable_credentials_without_changing_them(): void
+    {
+        $this->withoutMiddleware(PreventRequestForgery::class);
+        $this->post(route('bank-settings.store'), $this->data())->assertSessionHasNoErrors();
+        $setting = BankQrSetting::query()->sole();
+        $ciphertext = (new Encrypter(str_repeat('x', 32), 'AES-256-CBC'))->encrypt(json_encode(['password' => 'foreign-secret']));
+        DB::table('bank_qr_settings')->where('id', $setting->id)->update(['credentials' => $ciphertext]);
+        $originalEnvironment = app()->environment();
+        app()->instance('env', 'local');
+        config(['baneco.enabled' => false]);
+        try {
+            foreach (['company', 'branch'] as $scope) {
+                $this->get(route('bank-settings.index', ['scope' => $scope]))->assertOk()
+                    ->assertSee('Las credenciales bancarias existentes no están disponibles para descifrado en este entorno')
+                    ->assertSee('Configuración no disponible')->assertDontSee('foreign-secret')->assertDontSee($ciphertext);
+            }
+            $this->post(route('bank-settings.store'), $this->data())->assertSessionHasErrors('configuration');
+            $this->post(route('bank-settings.authenticate'), ['scope' => 'branch', 'confirm_contact' => '1'])->assertSessionHasErrors('authentication');
+            $this->assertSame($ciphertext, $setting->refresh()->getRawOriginal('credentials'));
+            $this->assertDatabaseCount('bank_qr_settings', 1);
+            Http::assertNothingSent();
+        } finally {
+            app()->instance('env', $originalEnvironment);
+        }
+    }
+
+    public function test_unreadable_credentials_are_reported_when_enabled_or_in_production(): void
+    {
+        $this->withoutMiddleware(PreventRequestForgery::class);
+        $this->post(route('bank-settings.store'), $this->data())->assertSessionHasNoErrors();
+        $setting = BankQrSetting::query()->sole();
+        DB::table('bank_qr_settings')->where('id', $setting->id)->update(['credentials' => 'incompatible']);
+        $originalEnvironment = app()->environment();
+        try {
+            app()->instance('env', 'local');
+            config(['baneco.enabled' => true]);
+            $this->get(route('bank-settings.index'))->assertStatus(503)->assertSee('no están disponibles para descifrado');
+            $this->post(route('bank-settings.authenticate'), ['scope' => 'company', 'confirm_contact' => '1'])->assertSessionHasErrors('authentication');
+            app()->instance('env', 'production');
+            config(['baneco.enabled' => false]);
+            $this->get(route('bank-settings.index'))->assertStatus(503)->assertSee('no están disponibles para descifrado');
+            $this->assertSame('incompatible', $setting->refresh()->getRawOriginal('credentials'));
+            Http::assertNothingSent();
+        } finally {
+            app()->instance('env', $originalEnvironment);
+        }
     }
 
     public function test_save_edit_and_versions_preserve_encrypted_secrets(): void

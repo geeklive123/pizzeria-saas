@@ -33,7 +33,7 @@ class SalesReportService
             ->when($filters['category_id'] ?? null, fn (Builder $query, int $category) => $query->whereHas('items.productVariant.product', fn (Builder $products) => $products->where('category_id', $category)))
             ->when($filters['product_id'] ?? null, fn (Builder $query, int $product) => $query->whereHas('items.productVariant', fn (Builder $variants) => $variants->where('product_id', $product)))
             ->when($filters['variant_id'] ?? null, fn (Builder $query, int $variant) => $query->whereHas('items', fn (Builder $items) => $items->where('product_variant_id', $variant)))
-            ->get(['id', 'subtotal', 'discount_total', 'total', 'type', 'closed_at', 'created_by']);
+            ->get(['id', 'subtotal', 'discount_total', 'total', 'type', 'closed_at', 'created_by', 'financial_snapshot']);
         $batchDispatches = KitchenDispatch::query()->forCompany($company)->forBranch($branch)
             ->where('status', KitchenDispatchStatus::Settled->value)
             ->whereBetween('settled_at', [$range->fromUtc(), $range->toUtc()])
@@ -41,6 +41,7 @@ class SalesReportService
             ->when($filters['payment_method'] ?? null, fn (Builder $query, string $method) => $query->whereHas('payments', fn (Builder $payments) => $payments->where('status', PaymentStatus::Completed->value)->where('method', $method)))
             ->with('order:id,type,closed_at,created_by')->get();
         $salesTotal = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'total'))->plus($this->sum($batchDispatches, 'total')));
+        $deliveryTotal = $this->decimal->money((string) $orders->reduce(fn (BigDecimal $sum, Order $order): BigDecimal => $sum->plus($order->financial_snapshot['delivery_amount'] ?? '0'), BigDecimal::zero()));
         $grossSales = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'subtotal'))->plus($this->sum($batchDispatches, 'gross_subtotal')));
         $discountTotal = $this->decimal->money((string) BigDecimal::of($this->sum($orders, 'discount_total'))->plus($this->sum($batchDispatches, 'discount_total')));
         $payments = Payment::query()->forCompany($company)->where('branch_id', $branch->id)
@@ -65,6 +66,8 @@ class SalesReportService
 
         return [
             'sales_total' => $salesTotal,
+            'delivery_total' => $deliveryTotal,
+            'products_total' => $this->decimal->money((string) BigDecimal::of($salesTotal)->minus($deliveryTotal)),
             'gross_sales' => $grossSales,
             'discount_total' => $discountTotal,
             'orders_paid' => $orders->count() + $batchDispatches->count(),

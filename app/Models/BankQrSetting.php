@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Models\Concerns\BelongsToCompany;
+use DomainException;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Model;
 
 class BankQrSetting extends Model
@@ -16,6 +18,15 @@ class BankQrSetting extends Model
     protected function casts(): array
     {
         return ['credentials' => 'encrypted:array', 'enabled' => 'boolean', 'technical_logging' => 'boolean', 'due_days' => 'integer'];
+    }
+
+    public function readableCredentials(): array
+    {
+        try {
+            return $this->credentials ?? [];
+        } catch (DecryptException) {
+            throw new DomainException('Las credenciales bancarias existentes no están disponibles para descifrado en este entorno.');
+        }
     }
 
     public static function forOrder(Order $order): ?self

@@ -13,6 +13,7 @@ use App\Actions\CancelOrderItemAction;
 use App\Actions\CancelPaidOrderAction;
 use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\CreateTakeawayOrderAction;
+use App\Actions\DeliverTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\FinalizePerBatchTableAction;
 use App\Actions\MarkOrderItemServedAction;
@@ -24,6 +25,7 @@ use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\UpdateConfiguredPizzaAction;
 use App\Actions\UpdateKitchenDispatchDiscountAction;
 use App\Actions\UpdateOrderCustomerAction;
+use App\Actions\UpdateOrderDeliveryChargeAction;
 use App\Actions\UpdateOrderItemQuantityAction;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderItemStatus;
@@ -44,6 +46,7 @@ use App\Http\Requests\OrderHistoryFilterRequest;
 use App\Http\Requests\RestoreCancellationRequest;
 use App\Http\Requests\TakeawayOrderRequest;
 use App\Http\Requests\UpdateKitchenDispatchDiscountRequest;
+use App\Http\Requests\UpdateOrderDeliveryChargeRequest;
 use App\Http\Requests\UpdateOrderItemRequest;
 use App\Models\KitchenDispatch;
 use App\Models\ModifierOption;
@@ -83,7 +86,25 @@ class OrderController extends Controller
             ->paginate(50, ['*'], 'paid_page')
             ->appends($canFilterPaidOrders ? $paidOrderRange->query() : []);
 
-        return view('orders.index', compact('orders', 'paidOrders', 'paidOrderRange', 'canFilterPaidOrders'));
+        $pendingDeliveries = Order::query()->forCompany($this->company())->forBranch($this->branch())
+            ->where('status', OrderStatus::Paid)->where('type', OrderType::Takeaway)
+            ->whereHas('takeawayDelivery', fn ($query) => $query->whereNull('delivered_at'))
+            ->orderBy('closed_at')->get();
+
+        return view('orders.index', compact('orders', 'paidOrders', 'paidOrderRange', 'canFilterPaidOrders', 'pendingDeliveries'));
+    }
+
+    public function deliverTakeaway(string $order, DeliverTakeawayOrderAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('deliverTakeaway', $order);
+        try {
+            $action->execute($order, request()->user());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['order' => $exception->getMessage()]);
+        }
+
+        return redirect()->route('orders.index')->with('success', 'Entrega registrada.');
     }
 
     public function createTakeaway(): View
@@ -147,6 +168,19 @@ class OrderController extends Controller
         $action->execute($order, $request->user(), $request->validated('customer_name'));
 
         return back()->with('success', 'Cliente actualizado.');
+    }
+
+    public function updateDeliveryCharge(UpdateOrderDeliveryChargeRequest $request, string $order, UpdateOrderDeliveryChargeAction $action): RedirectResponse
+    {
+        $order = $this->order($order);
+        Gate::authorize('update', $order);
+        try {
+            $action->execute($order, $request->user(), $request->boolean('enabled') ? $request->validated('amount') : '0.00', $request->boolean('enabled'));
+        } catch (DomainException $exception) {
+            return back()->withErrors(['delivery' => $exception->getMessage()]);
+        }
+
+        return back()->with('success', 'Envío actualizado.');
     }
 
     public function addPromotion(AddPromotionRequest $request, string $order, AddPromotionToOrderAction $action): RedirectResponse
@@ -292,7 +326,11 @@ class OrderController extends Controller
         Gate::authorize('update', $order);
         $dispatch = KitchenDispatch::query()->forCompany($this->company())->forBranch($this->branch())
             ->where('order_id', $order->getKey())->where('ulid', $dispatch)->firstOrFail();
-        $attempt = $action->execute($dispatch, request()->user());
+        try {
+            $attempt = $action->execute($dispatch, request()->user());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['printing' => $exception->getMessage()]);
+        }
 
         return $attempt->status === PrintAttemptStatus::Failed
             ? back()->with('warning', 'No se pudo poner la comanda en cola. Revisa la configuración e inténtalo nuevamente.')

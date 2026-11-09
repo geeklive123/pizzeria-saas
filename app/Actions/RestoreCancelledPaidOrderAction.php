@@ -14,6 +14,7 @@ use App\Models\CashSession;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\OrderCancellationAudit;
+use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
@@ -57,6 +58,18 @@ class RestoreCancelledPaidOrderAction
             if ($order->status !== OrderStatus::Cancelled) {
                 throw new DomainException('Este pedido no está anulado o ya fue restaurado.');
             }
+            if (OrderDeliveryCharge::query()->where('order_id', $order->getKey())
+                ->where(function ($query): void {
+                    $query->where('enabled', true)->orWhereExists(function ($audit): void {
+                        $audit->selectRaw('1')->from('order_delivery_charge_audits')
+                            ->whereColumn('order_delivery_charge_audits.order_delivery_charge_id', 'order_delivery_charges.id')
+                            ->where(function ($history): void {
+                                $history->where('previous_enabled', true)->orWhere('new_enabled', true);
+                            });
+                    });
+                })->exists()) {
+                throw new DomainException('La restauración de un pedido con envío requiere verificar la devolución antes de restaurar sus pagos.');
+            }
             $audit = OrderCancellationAudit::query()->lockForUpdate()->findOrFail($knownAudit->getKey());
             if ($audit->restored_at !== null) {
                 throw new DomainException('Esta anulación ya fue restaurada.');
@@ -83,6 +96,9 @@ class RestoreCancelledPaidOrderAction
                     || (int) $reversal->reversal_of_id !== (int) $original->getKey()
                     || (int) $original->order_id !== (int) $order->getKey()) {
                     throw new DomainException('La evidencia de reversión de pagos es inconsistente.');
+                }
+                if ($original->method === PaymentMethod::Qr) {
+                    throw new DomainException('La restauración de un pago QR requiere verificar la devolución bancaria antes de restaurar sus pagos.');
                 }
                 if ($sessions->get($original->cash_session_id)?->status !== CashSessionStatus::Open) {
                     throw new DomainException('No se puede restaurar la venta porque la caja original está cerrada.');
