@@ -1,4 +1,5 @@
 import './dynamic-qr';
+import './financial-recovery';
 import './dynamic-qr-notifications';
 import './bank-qr-diagnostic';
 

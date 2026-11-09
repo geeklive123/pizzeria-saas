@@ -161,6 +161,37 @@ class FinancialPaymentCoordinatorTest extends TestCase
         $this->assertDatabaseCount('payments', 0);
     }
 
+    public function test_http_status_recovers_only_the_requested_confirmed_payment_without_creating_another(): void
+    {
+        [$order, $session, $user] = $this->fixture();
+        app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '10.00', $user, 'recover-confirmed', '10.00');
+        $this->actingAs($user)->withSession(['active_company_id' => $order->company_id, 'active_branch_id' => $order->branch_id]);
+
+        $this->getJson(route('orders.financial-attempt.show', [$order->ulid, 'key' => 'recover-confirmed']))
+            ->assertOk()->assertJsonPath('attempt.status', 'confirmed')->assertJsonPath('attempt.idempotency_key', 'recover-confirmed')
+            ->assertJsonPath('balance', '20.00')->assertJsonPath('financial_version', $order->fresh()->financial_version);
+        $this->getJson(route('orders.financial-attempt.show', [$order->ulid, 'key' => 'different-key']))
+            ->assertOk()->assertJsonPath('attempt', null);
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_another_cashier_sees_the_block_without_receiving_the_original_identity(): void
+    {
+        [$order, $session, $user] = $this->fixture();
+        $attempt = FinancialPaymentAttempt::query()->create([
+            'company_id' => $order->company_id, 'branch_id' => $order->branch_id, 'order_id' => $order->id,
+            'active_order_id' => $order->id, 'cash_session_id' => $session->id, 'user_id' => $user->id,
+            'idempotency_key' => 'private-key', 'method' => 'cash', 'amount' => '10.00', 'received_amount' => '20.00', 'status' => 'pending',
+        ]);
+        $other = User::factory()->create();
+        Membership::factory()->for($order->company)->for($other)->owner()->create();
+        $this->actingAs($other)->withSession(['active_company_id' => $order->company_id, 'active_branch_id' => $order->branch_id]);
+        $this->getJson(route('orders.financial-attempt.show', $order->ulid))->assertOk()
+            ->assertJsonPath('attempt.ulid', $attempt->ulid)->assertJsonPath('attempt.active', true)
+            ->assertJsonPath('attempt.owned_by_current_user', false)->assertJsonPath('attempt.idempotency_key', null)
+            ->assertJsonPath('attempt.received_amount', null);
+    }
+
     public function test_unprotected_payment_inside_an_existing_transaction_is_rejected(): void
     {
         [$order, $session, $user] = $this->fixture();

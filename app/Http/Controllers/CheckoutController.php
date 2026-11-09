@@ -7,6 +7,7 @@ use App\Actions\PrintOrderTicketAction;
 use App\Actions\RegisterMixedPaymentAction;
 use App\Actions\RegisterPaymentAction;
 use App\Actions\ReversePaymentAction;
+use App\Enums\DynamicQrStatus;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderStatus;
 use App\Enums\OrderType;
@@ -18,6 +19,7 @@ use App\Exceptions\FinancialVersionConflict;
 use App\Http\Requests\PaymentRequest;
 use App\Http\Requests\PrepareCheckoutRequest;
 use App\Http\Requests\ReversePaymentRequest;
+use App\Models\DynamicQrIntent;
 use App\Models\FinancialPaymentAttempt;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
@@ -37,15 +39,27 @@ use Illuminate\View\View;
 
 class CheckoutController extends Controller
 {
-    public function financialAttempt(string $order): JsonResponse
+    public function financialAttempt(string $order, OrderPaymentService $payments): JsonResponse
     {
         $order = $this->order($order);
         Gate::authorize('create', Payment::class);
-        $attempt = FinancialPaymentAttempt::query()->forCompany($this->company())
-            ->where('branch_id', $this->branch()->id)->where('order_id', $order->id)
-            ->orderByRaw('active_order_id IS NULL')->orderByDesc('id')->first();
+        $data = request()->validate(['key' => ['nullable', 'string', 'max:64'], 'dispatch' => ['nullable', 'ulid']]);
+        $query = FinancialPaymentAttempt::query()->forCompany($this->company())
+            ->where('branch_id', $this->branch()->id)->where('order_id', $order->id);
+        if (! empty($data['key'])) {
+            $query->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhere(fn ($query) => $query
+                ->where('idempotency_key', $data['key'])->where('user_id', request()->user()->id)));
+        } else {
+            $query->whereNotNull('active_order_id');
+        }
+        $attempt = $query->orderByRaw('active_order_id IS NULL')->orderByDesc('id')->first();
+        $dispatch = $this->dispatch($order, $data['dispatch'] ?? null);
+        $qrBlocked = DynamicQrIntent::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+            ->where('order_id', $order->id)->where(fn ($query) => $query->whereNotNull('active_order_id')
+            ->orWhere('status', DynamicQrStatus::ReconciliationRequired))->exists();
 
-        return response()->json(['attempt' => $attempt ? $this->attemptPayload($attempt) : null, 'financial_version' => $order->financial_version])->header('Cache-Control', 'no-store');
+        return response()->json(['attempt' => $attempt ? $this->attemptPayload($attempt, $order) : null, 'financial_version' => $order->financial_version,
+            'balance' => $dispatch ? $payments->dispatchBalance($dispatch) : $payments->balance($order), 'qr_blocked' => $qrBlocked])->header('Cache-Control', 'no-store');
     }
 
     public function reconcileFinancialAttempt(string $order, string $attempt, FinancialPaymentCoordinator $coordinator): JsonResponse
@@ -56,16 +70,19 @@ class CheckoutController extends Controller
             ->where('order_id', $order->id)->where('ulid', $attempt)->firstOrFail();
         $attempt = $coordinator->reconcile($attempt, request()->user());
 
-        return response()->json(['attempt' => $this->attemptPayload($attempt), 'financial_version' => $order->fresh()->financial_version])->header('Cache-Control', 'no-store');
+        return response()->json(['attempt' => $this->attemptPayload($attempt, $order), 'financial_version' => $order->fresh()->financial_version])->header('Cache-Control', 'no-store');
     }
 
-    private function attemptPayload(FinancialPaymentAttempt $attempt): array
+    private function attemptPayload(FinancialPaymentAttempt $attempt, Order $order): array
     {
         return [
             'ulid' => $attempt->ulid, 'status' => $attempt->status, 'method' => $attempt->method,
             'amount' => $attempt->amount, 'payment_ulid' => $attempt->payment_id ? Payment::query()->whereKey($attempt->payment_id)->value('ulid') : null,
             'owned_by_current_user' => $attempt->user_id === request()->user()->id,
             'idempotency_key' => $attempt->user_id === request()->user()->id ? $attempt->idempotency_key : null,
+            'received_amount' => $attempt->user_id === request()->user()->id ? $attempt->received_amount : null,
+            'dispatch_ulid' => $attempt->kitchen_dispatch_id ? KitchenDispatch::query()->whereKey($attempt->kitchen_dispatch_id)->value('ulid') : null,
+            'reconcile_url' => route('orders.financial-attempt.reconcile', [$order->ulid, $attempt->ulid]),
             'active' => $attempt->active_order_id !== null,
             'message' => $attempt->active_order_id ? FinancialPaymentCoordinator::UNCERTAIN : null,
         ];

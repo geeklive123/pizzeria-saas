@@ -6,12 +6,12 @@ import test from 'node:test';
 const source = await readFile(new URL('../../resources/js/dynamic-qr.js', import.meta.url), 'utf8');
 const bankIntent = (status = 'pending', overrides = {}) => ({
     ulid: 'intent-one', status, amount: '40.00', currency: 'BOB', image_url: '/image', bank_qr_id: 'bank-1',
-    commercial_reference: 'reference-1', dispatch_ulid: null, expires_at: '2099-10-30T00:00:00Z',
+    commercial_reference: 'reference-1', dispatch_ulid: null, idempotency_key: 'original-key', expires_at: '2099-10-30T00:00:00Z',
     message: status === 'paid' ? 'Pago confirmado' : 'Esperando pago', issue: null,
     check_url: '/check', cancel_url: '/cancel', redirect_url: '/orders', ...overrides,
 });
 
-async function harness(enabled = '1', initial = { intent: null }) {
+async function harness(enabled = '1', initial = { intent: null }, savedKey = null) {
     const elements = new Map();
     for (const name of ['open', 'open-mixed', 'reopen', 'indicator', 'indicator-balance', 'refresh', 'mixed-form', 'mixed-submit', 'cash', 'received', 'confirm-cash', 'estimate', 'change', 'cash-paid', 'paid', 'balance', 'qr-pending', 'close', 'modal', 'generate', 'status', 'amount', 'image', 'reference', 'identifier', 'expiry', 'check', 'cancel', 'error']) {
         elements.set(name, { hidden: false, disabled: false, checked: false, value: '', textContent: '',
@@ -24,12 +24,14 @@ async function harness(enabled = '1', initial = { intent: null }) {
     const box = { dataset: { enabled, createUrl: '/create', currentUrl: '/current', dispatch: '', key: 'original-key', financialVersion: '7' },
         querySelector(selector) { return elements.get(selector.match(/data-qr-(.+)]/)[1]); }, contains: () => false };
     const requests = [], responses = [initial], timers = new Map(), redirects = [];
+    const saved = new Map(savedKey ? [['qr-generation:', savedKey]] : []);
     const events = {};
     let sequence = 0;
     runInNewContext(source, {
         document: { hidden: false, querySelectorAll: () => [box], querySelector: () => ({ content: 'csrf-test' }), addEventListener: (event, handler) => { events[event] = handler; } },
         window: { location: { reload: () => redirects.push('reload') } },
         crypto: { randomUUID: () => 'fresh-key' }, Date, JSON, Error, AbortSignal,
+        localStorage: { getItem: (key) => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value), removeItem: (key) => saved.delete(key) },
         setTimeout(callback, delay) { timers.set(++sequence, { callback, delay }); return sequence; },
         clearTimeout(id) { timers.delete(id); },
         async fetch(url, options) {
@@ -108,6 +110,14 @@ test('uncertain generation or a connection loss does not generate another QR', a
     ui.responses.push({ intent: null });
     await ui.elements.get('open').click();
     assert.equal(ui.requests.filter((r) => r.url === '/create').length, 1);
+    assert.match(ui.elements.get('status').textContent, /No se confirmó/);
+});
+
+test('reloading after an uncertain generation does not create a second QR', async () => {
+    const ui = await harness('1', { intent: null }, 'original-key');
+    ui.responses.push({ intent: null });
+    await ui.elements.get('open').click();
+    assert.equal(ui.requests.filter((r) => r.url === '/create').length, 0);
     assert.match(ui.elements.get('status').textContent, /No se confirmó/);
 });
 

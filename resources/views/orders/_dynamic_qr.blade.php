@@ -1,3 +1,11 @@
+<div data-financial-recovery data-status-url="{{ route('orders.financial-attempt.show', $order->ulid) }}" data-order="{{ $order->ulid }}" data-dispatch="{{ $qrDispatch?->ulid }}" data-version="{{ $order->financial_version }}" data-financial-blocked="1">
+<div class="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3" data-financial-notice role="status" aria-live="polite">
+    <p data-financial-message>Consultando el estado del cobro…</p>
+    <button type="button" class="btn-secondary mt-2" data-financial-check>Consultar estado</button>
+    <button type="button" class="btn-secondary mt-2" data-financial-reconcile hidden>Verificar intento</button>
+    <button type="button" class="btn-secondary mt-2" data-financial-retry hidden>Preparar el mismo cobro</button>
+    <button type="button" class="btn-secondary mt-2" data-financial-refresh hidden>Revisar saldo actualizado</button>
+</div>
 <details class="mt-3 rounded-xl border border-stone-200 bg-white p-4" open>
 <summary class="cursor-pointer font-bold">Efectivo</summary>
 <form class="mt-3 space-y-3" method="POST" action="{{ route('orders.payments.store', $order->ulid) }}" data-cash-payment>
@@ -9,10 +17,11 @@
     <label class="block"><span class="label">Monto aplicado en efectivo</span><input class="input" name="amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
     <label class="block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
     <p class="text-sm">Cambio: <strong data-cash-change>Bs 0,00</strong></p>
-    <button class="btn-secondary w-full" type="submit">Registrar efectivo</button>
+    <button class="btn-secondary w-full" type="submit" disabled>Registrar efectivo</button>
 </form>
 </details>
 <section class="mt-3 rounded-xl border border-orange-300 bg-orange-50 p-4" data-dynamic-qr
+    data-order="{{ $order->ulid }}"
     data-enabled="{{ config('baneco.enabled') ? '1' : '0' }}"
     data-financial-version="{{ $order->financial_version }}"
     data-create-url="{{ route('orders.dynamic-qr.store', $order->ulid) }}"
@@ -64,3 +73,4 @@
         </div>
     </dialog>
 </section>
+</div>

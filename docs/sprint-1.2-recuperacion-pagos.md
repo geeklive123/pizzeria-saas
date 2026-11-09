@@ -1,0 +1,22 @@
+# Sprint 1.2: recuperación de pagos
+
+El checkout y los cobros de pedido, mesa al final, por tandas y para llevar comparten el formulario `orders/_dynamic_qr`. Ese formulario consulta el estado financiero antes de habilitar efectivo. Guarda la identidad del intento antes de enviarlo, impide un cobro incompatible mientras el resultado es incierto y permite consultar o reconciliar el intento. Si el servidor lo declara reintentable, el cajero prepara y confirma de nuevo el mismo importe y la misma clave. Un intento de otro cajero no expone su clave ni su importe recibido.
+
+Una respuesta perdida no se presenta como fallo. Si el servidor confirma el pago, se muestra el saldo y se requiere revisar antes de continuar. Si no se encuentra el intento, se mantiene el bloqueo y se indica consultar al responsable: la ausencia de un registro no prueba que una solicitud aún en tránsito no vaya a llegar. Un 409 muestra el saldo y exige una nueva decisión; no reenvía el cobro. QR conserva su identidad de generación ante una respuesta incierta, recupera intentos existentes y permite su consulta. Un QR activo bloquea efectivo; la conciliación bancaria de un QR existente conserva su ruta previa.
+
+## Evidencia
+
+- `php artisan test`: 671 pruebas, 670 aprobadas, una omitida y 5.387 aserciones. La omitida requiere MySQL/InnoDB para verificar bloqueos de reversión; la suite general usa SQLite en memoria.
+- `node --test tests/Frontend/*.test.mjs`: 26 pruebas aprobadas. Incluyen pérdida simulada de respuesta, recuperación, 409, reintento con la misma clave, QR mixto y recarga con generación incierta.
+- `php vendor/bin/pint --test`: aprobado. Vite compiló y cada archivo referenciado por el manifest final coincidió por SHA-256 con la compilación temporal.
+- MariaDB aislada `pizzeria_qr_test_17e94d6c97ee`: el controlador recuperó un pago confirmado, rechazó un parcial obsoleto, aceptó un nuevo parcial con versión vigente y recuperó un intento pendiente. El QR mixto usó banco simulado; el trabajo `ReconcileDynamicQr` confirmó el intento sin una pantalla abierta. Dos pruebas y 23 aserciones en `tmp/audit_backend/Sprint12MariaTest.php`.
+- En esa base, una carrera real de dos cajeros registró un pago y un movimiento de caja; un cajero fue rechazado. Evidencia: `tmp/audit_backend/result-sprint12-version-race.json`.
+- Cortes TCP reales de la conexión MariaDB antes y después del `COMMIT`: una prueba y 12 aserciones para cada corte. El corte posterior conservó un pago y el reintento no duplicó efectos; el anterior dejó el intento reintentable y su recuperación produjo un pago.
+- Un proxy TCP local descartó la respuesta HTTP real después de que el servidor respondió al cobro. La consulta recuperó el pago con saldo 20.00, un reintento conservó la identidad, una versión obsoleta obtuvo 409 y un nuevo parcial vigente dejó saldo 10.00. Evidencia: `tmp/audit_backend/sprint12-http-cut-result.json`.
+- Chrome sin interfaz ejecutó el checkout real contra el controlador y MariaDB aislada, registró un parcial y mostró su confirmación. Otra prueba en Chrome abrió dos pestañas y verificó el bloqueo por el evento de almacenamiento; esa prueba simuló las respuestas del servidor. La prueba aislada de pérdida de respuesta en Chrome también simuló `fetch`; el corte HTTP real se ensayó por separado con el proxy descrito arriba.
+
+Durante la preparación, el primer servidor HTTP temporal se inició desde el directorio incorrecto y no pudo servir Laravel; se corrigió el directorio. Una repetición de la prueba QR en la misma base falló por reutilizar un identificador sintético único del banco; se corrigió el fixture para generar uno nuevo y las dos pruebas pasaron. No se borraron los datos de ensayo ni se cambió la base original.
+
+## Límites operativos
+
+La seguridad entre sesiones depende de las transacciones, restricciones y versiones del servidor; el almacenamiento del navegador facilita recuperar la identidad, no reemplaza esos controles. Si el navegador no puede guardarla, se bloquea el inicio. Si se borran los datos del navegador o no se encuentra un intento incierto, puede ser necesaria una revisión administrativa. La ejecución directa del trabajo de conciliación no verifica el cron ni un worker desplegado. No se probó una caída física completa del servidor MariaDB, el banco real ni una impresora física. La evidencia de Chrome con dos pestañas no reproduce dos dispositivos independientes.

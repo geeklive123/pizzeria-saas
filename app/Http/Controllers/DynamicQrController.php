@@ -149,6 +149,7 @@ class DynamicQrController extends Controller
 
         return response()->json(['summary' => $this->summary($order, $intent->kitchenDispatch), 'intent' => [
             'ulid' => $intent->ulid, 'status' => $intent->status->value, 'amount' => $intent->amount, 'currency' => $intent->currency,
+            'idempotency_key' => $intent->user_id === request()->user()->id ? $intent->idempotency_key : null,
             'commercial_reference' => $intent->commercial_reference, 'dispatch_ulid' => $intent->kitchenDispatch?->ulid,
             'bank_qr_id' => $intent->bank_qr_id,
             'cash_recorded' => $cash?->amount ?? '0.00', 'cash_received' => $cash?->received_amount, 'cash_change' => $cash?->change_amount,

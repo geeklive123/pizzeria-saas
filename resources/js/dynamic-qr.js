@@ -7,6 +7,8 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     let intent = null;
     let busy = false;
     let createUncertain = false;
+    const qrStorageKey = `qr-generation:${box.dataset.order || ''}`;
+    try { createUncertain = Boolean(localStorage.getItem(qrStorageKey)); } catch { createUncertain = true; }
     let timer;
     let polls = 0;
     let nextCheck = 0;
@@ -36,6 +38,13 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
 
     const render = (data) => {
         intent = data.intent;
+        try {
+            if (intent?.idempotency_key && localStorage.getItem(qrStorageKey) === intent.idempotency_key) {
+                localStorage.removeItem(qrStorageKey);
+                createUncertain = false;
+                window.dispatchEvent?.(new Event('financial-qr-change'));
+            }
+        } catch { createUncertain = true; }
         summary = data.summary ?? summary;
         const otherDispatch = intent && (intent.dispatch_ulid || '') !== (box.dataset.dispatch || '');
         const expired = intent?.expired === true;
@@ -123,6 +132,7 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
             const data = await response.json();
             if (!response.ok) {
                 if (response.status === 409 && data.summary) {
+                    try { localStorage.removeItem(qrStorageKey); } catch { /* Keep the operation blocked. */ }
                     summary = data.summary;
                     el('balance').textContent = `Saldo restante: BOB ${summary.balance}`;
                     el('refresh').hidden = false;
@@ -165,7 +175,14 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     };
 
     const generate = async (cash = null) => {
+        if (box.closest?.('[data-financial-recovery]')?.dataset.financialBlocked !== undefined && box.closest('[data-financial-recovery]').dataset.financialBlocked !== '0') return;
+        if (createUncertain) return;
         createUncertain = true;
+        try { localStorage.setItem(qrStorageKey, box.dataset.key); } catch {
+            el('status').textContent = 'No se puede guardar la identidad del cobro. Consulta al responsable.';
+            return;
+        }
+        window.dispatchEvent?.(new Event('financial-qr-change'));
         const ok = await request(box.dataset.createUrl, {
             idempotency_key: box.dataset.key,
             financial_version: box.dataset.financialVersion,
@@ -177,6 +194,7 @@ document.querySelectorAll('[data-dynamic-qr]').forEach((box) => {
     };
 
     const open = async (mixed) => {
+        if (box.closest?.('[data-financial-recovery]')?.dataset.financialBlocked !== undefined && box.closest('[data-financial-recovery]').dataset.financialBlocked !== '0') return;
         if (busy) return;
         modal.showModal();
         el('close').focus();
