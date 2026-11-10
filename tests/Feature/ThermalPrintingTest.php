@@ -8,6 +8,7 @@ use App\Actions\OpenCashSessionAction;
 use App\Actions\PrintKitchenDispatchAction;
 use App\Actions\PrintOrderTicketAction;
 use App\Actions\RegisterPaymentAction;
+use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
 use App\Enums\ModifierOptionType;
 use App\Enums\OrderItemStatus;
@@ -67,6 +68,36 @@ class ThermalPrintingTest extends TestCase
         parent::setUp();
         $this->transport = new RecordingThermalPrinterTransport;
         $this->app->instance(ThermalPrinterTransport::class, $this->transport);
+    }
+
+    public function test_dispatch_ticket_without_setting_keeps_its_purpose_and_retries_the_same_attempt(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $order = $this->order($company, $branch, $owner, null);
+        $dispatch = KitchenDispatch::query()->create([
+            'company_id' => $company->id, 'branch_id' => $branch->id, 'order_id' => $order->id,
+            'sequence_number' => 1, 'status' => KitchenDispatchStatus::Settled,
+            'dispatched_at' => now(), 'dispatched_by' => $owner->id, 'gross_subtotal' => '0.00',
+            'pizza_base_subtotal' => '0.00', 'extras_subtotal' => '0.00', 'other_subtotal' => '0.00',
+            'discount_total' => '0.00', 'total' => '0.00',
+        ]);
+        $service = app(ThermalPrintingService::class);
+        $attempt = $service->dispatchTicket($dispatch, $owner, false);
+
+        $this->assertSame(PrinterPurpose::CustomerTicket, $attempt->purpose);
+        $this->assertSame(PrintAttemptStatus::Failed, $attempt->status);
+        $this->assertNull($attempt->printer_setting_id);
+        $this->assertSame(0, $attempt->refresh()->attempts);
+
+        $this->printer($company, $branch, PrinterPurpose::CustomerTicket);
+        $same = $service->dispatchTicket($dispatch, $owner, false);
+        $retried = $service->retryNeverQueuedTicket($same);
+
+        $this->assertSame($attempt->id, $same->id);
+        $this->assertSame($attempt->id, $retried->id);
+        $this->assertSame(PrinterPurpose::CustomerTicket, $retried->purpose);
+        $this->assertSame(PrintAttemptStatus::Pending, $retried->status);
+        $this->assertSame(1, $dispatch->printAttempts()->count());
     }
 
     public function test_each_dispatch_prints_only_its_new_lines_and_reprint_does_not_duplicate_domain_state(): void

@@ -109,6 +109,7 @@ class ThermalPrintingService
             $dispatch,
             $dispatch->order,
             $reprint ? 'customer_ticket:dispatch:'.$dispatch->ulid.':reprint:'.Str::ulid() : 'customer_ticket:dispatch:'.$dispatch->ulid.':original',
+            PrinterPurpose::CustomerTicket,
         );
     }
 
