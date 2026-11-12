@@ -11,7 +11,7 @@ class EnqueuePaidKitchenPrintsCommand extends Command
 {
     protected $signature = 'kitchen:enqueue-paid';
 
-    protected $description = 'Reintenta encolar comandas pagadas pendientes';
+    protected $description = 'Reintenta encolar comandas para llevar pendientes';
 
     public function handle(DeferredKitchenPrinting $printing): int
     {

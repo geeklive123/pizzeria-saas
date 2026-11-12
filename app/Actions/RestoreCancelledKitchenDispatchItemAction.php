@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Services\CompanyAccessService;
 use App\Services\OrderFinancialService;
 use App\Services\OrderTotalsService;
+use App\Services\ThermalPrintingService;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
@@ -28,6 +29,7 @@ class RestoreCancelledKitchenDispatchItemAction
         private readonly OrderFinancialService $financials,
         private readonly OrderTotalsService $totals,
         private readonly CompanyAccessService $access,
+        private readonly ThermalPrintingService $printing,
     ) {}
 
     public function execute(
@@ -105,6 +107,7 @@ class RestoreCancelledKitchenDispatchItemAction
             ])->save();
             $this->financials->recalculateDispatchFromActiveItems($dispatch);
             $this->totals->recalculate($order);
+            $this->printing->refreshQueuedTakeawayKitchenDocuments($dispatch);
 
             return $item->refresh();
         }, attempts: 3);

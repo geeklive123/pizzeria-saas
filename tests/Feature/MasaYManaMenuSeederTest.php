@@ -19,24 +19,25 @@ use App\Models\Recipe;
 use App\Models\RecipeItem;
 use App\Services\OrderPosCatalogService;
 use Database\Seeders\DatabaseSeeder;
-use Database\Seeders\MasaYManaMenuSeeder;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\Concerns\SeedsMasaYManaMenuFixture;
 use Tests\TestCase;
 
 class MasaYManaMenuSeederTest extends TestCase
 {
     use RefreshDatabase;
+    use SeedsMasaYManaMenuFixture;
 
-    public function test_real_menu_import_is_complete_idempotent_and_does_not_invent_inventory_or_recipes(): void
+    public function test_menu_import_is_complete_idempotent_and_does_not_invent_inventory_or_recipes(): void
     {
         $this->seed(DatabaseSeeder::class);
         $beforeInventory = $this->inventoryCounts();
 
-        $this->seed(MasaYManaMenuSeeder::class);
+        $this->seedMasaYManaMenuFixture();
         $firstCounts = $this->menuCounts();
         $afterFirstInventory = $this->inventoryCounts();
-        $this->seed(MasaYManaMenuSeeder::class);
+        $this->seedMasaYManaMenuFixture();
 
         $this->assertSame($firstCounts, $this->menuCounts());
         $this->assertSame(['products' => 32, 'variants' => 66, 'categories' => 5], $firstCounts);
@@ -59,7 +60,7 @@ class MasaYManaMenuSeederTest extends TestCase
 
         $this->assertDatabaseMissing('products', [
             'company_id' => $company->id,
-            'name' => 'VINO DE ESPECIALIDAD(CONSULTAR LA ELECCION DE TEMPORADA)',
+            'name' => 'Producto de prueba 33',
         ]);
         $this->assertDatabaseHas('products', [
             'company_id' => $company->id,
@@ -76,7 +77,7 @@ class MasaYManaMenuSeederTest extends TestCase
     public function test_personal_is_single_flavor_while_mediana_and_familiar_allow_one_to_four_without_fictitious_inventory(): void
     {
         $this->seed(DatabaseSeeder::class);
-        $this->seed(MasaYManaMenuSeeder::class);
+        $this->seedMasaYManaMenuFixture();
         $company = $this->company();
         $branch = Branch::query()->where('company_id', $company->id)
             ->where('name', 'Principal')->firstOrFail();

@@ -34,7 +34,7 @@ class ThermalPrintingService
 
     public function kitchen(KitchenDispatch $dispatch, User $user, bool $reprint): PrintAttempt
     {
-        if ($dispatch->status === KitchenDispatchStatus::AwaitingPayment && $dispatch->order->type === OrderType::Takeaway) {
+        if ($dispatch->status === KitchenDispatchStatus::AwaitingPayment && $dispatch->order->type === OrderType::Takeaway && $dispatch->released_at === null) {
             throw new DomainException('La comanda requiere el pago previo de la tanda.');
         }
         $dispatch->loadMissing('order');
@@ -65,6 +65,24 @@ class ThermalPrintingService
             'kitchen_order:'.$order->ulid.':reprint:'.Str::ulid(),
             PrinterPurpose::Kitchen,
         );
+    }
+
+    /** Refresh only jobs that have not been claimed; an in-flight print cannot be recalled. */
+    public function refreshQueuedTakeawayKitchenDocuments(KitchenDispatch $dispatch): void
+    {
+        if ($dispatch->order->type !== OrderType::Takeaway || $dispatch->released_at === null) {
+            return;
+        }
+
+        $dispatch->unsetRelation('items');
+        $attempts = $dispatch->printAttempts()
+            ->where('purpose', PrinterPurpose::Kitchen->value)
+            ->whereIn('status', [PrintAttemptStatus::Pending->value, PrintAttemptStatus::Failed->value])
+            ->orderBy('id')->lockForUpdate()->get();
+        foreach ($attempts as $attempt) {
+            $document = $this->kitchenRenderer->render($dispatch, $attempt->is_reprint);
+            $attempt->update(['document_payload' => base64_encode($document->bytes)]);
+        }
     }
 
     public function ticket(Order $order, User $user, bool $reprint): PrintAttempt

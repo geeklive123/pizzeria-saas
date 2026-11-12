@@ -30,7 +30,15 @@ class InitializeMasaYManaCommandTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_first_execution_initializes_exact_real_business_data_without_fictitious_operations(): void
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // The importer reads from base_path(); keep tests independent of the real menu.
+        $this->app->setBasePath(__DIR__.'/../Fixtures');
+    }
+
+    public function test_first_execution_initializes_business_data_without_fictitious_operations(): void
     {
         $this->app->detectEnvironment(static fn (): string => 'production');
         [$company, $branch] = $this->business();
@@ -64,7 +72,7 @@ class InitializeMasaYManaCommandTest extends TestCase
         $this->assertMenuCounts($company);
         $this->assertDatabaseMissing('products', [
             'company_id' => $company->id,
-            'name' => 'VINO DE ESPECIALIDAD(CONSULTAR LA ELECCION DE TEMPORADA)',
+            'name' => 'Producto de prueba 33',
         ]);
 
         $juiceCategory = Category::query()->forCompany($company)->where('name', 'Jugos naturales')->firstOrFail();

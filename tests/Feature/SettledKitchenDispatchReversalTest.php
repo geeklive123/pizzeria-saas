@@ -46,6 +46,7 @@ use App\Services\ReportDateRangeService;
 use App\Services\SalesReportService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Process\Process;
 use Tests\Concerns\InteractsWithBankQr;
 use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
@@ -535,5 +536,42 @@ class SettledKitchenDispatchReversalTest extends TestCase
         $this->assertSame(1, $f['first']->payments()->whereNotNull('reversal_of_id')->where('method', 'cash')->count());
         $this->assertSame(1, CashMovement::query()->where('type', CashMovementType::Reversal)->count());
         $this->assertSame(1, InventoryMovement::query()->where('type', InventoryMovementType::Reversal)->count());
+    }
+
+    public function test_mysql_reversal_waits_for_a_concurrent_order_lock(): void
+    {
+        $nonce = getenv('REVERSAL_MYSQL_TEST_NONCE');
+        if (DB::connection()->getDriverName() !== 'mysql' || ! is_string($nonce) || ! preg_match('/^[a-f0-9]{12}$/D', $nonce)) {
+            $this->markTestSkipped('This concurrent lock assertion requires the isolated MySQL runner.');
+        }
+
+        $f = $this->fixture(['cash' => '10.00', 'qr' => '14.00']);
+        $marker = sys_get_temp_dir().DIRECTORY_SEPARATOR.'reversal-lock-'.$nonce;
+        $worker = new Process([
+            PHP_BINARY, base_path('tests/Concurrency/reversal_lock_worker.php'), DB::connection()->getDatabaseName(), $nonce,
+            (string) $f['first']->order_id, $marker,
+        ], base_path());
+        $worker->setTimeout(30);
+        $worker->start();
+        try {
+            $deadline = microtime(true) + 15;
+            while (! is_file($marker) && $worker->isRunning() && microtime(true) < $deadline) {
+                usleep(10000);
+            }
+            $this->assertFileExists($marker, $worker->getErrorOutput());
+            $start = microtime(true);
+            app(CancelSettledKitchenDispatchAction::class)->execute($f['first'], $f['owner'], 'Concurrencia InnoDB');
+            $elapsed = microtime(true) - $start;
+            $worker->wait();
+            $this->assertTrue($worker->isSuccessful(), $worker->getErrorOutput());
+            $this->assertGreaterThan(0.5, $elapsed, 'La reversión no esperó al bloqueo concurrente.');
+            $this->assertSame(KitchenDispatchStatus::Cancelled, $f['first']->refresh()->status);
+            $this->assertSame(1, CashMovement::query()->where('company_id', $f['company']->id)->where('type', CashMovementType::Reversal)->count());
+        } finally {
+            $worker->stop(1);
+            if (is_file($marker)) {
+                unlink($marker);
+            }
+        }
     }
 }

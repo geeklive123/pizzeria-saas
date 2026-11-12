@@ -32,7 +32,7 @@ document.querySelectorAll('[data-financial-recovery]').forEach((box) => {
             const params = new URLSearchParams();
             if (savedKey) params.set('key', savedKey);
             if (box.dataset.dispatch) params.set('dispatch', box.dataset.dispatch);
-            const response = await fetch(`${box.dataset.statusUrl}?${params}`, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } });
+            const response = await fetch(`${box.dataset.statusUrl}?${params}`, { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json' } });
             if (!response.ok) throw new Error('No se pudo consultar el estado.');
             const data = await response.json();
             attempt = data.attempt;
@@ -74,7 +74,7 @@ document.querySelectorAll('[data-financial-recovery]').forEach((box) => {
         if (!attempt || busy) return;
         busy = true;
         try {
-            const response = await fetch(attempt.reconcile_url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', 'X-CSRF-TOKEN': token } });
+            const response = await fetch(attempt.reconcile_url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(45000), headers: { Accept: 'application/json', 'X-CSRF-TOKEN': token } });
             if (!response.ok) throw new Error('No se pudo verificar.');
             const data = await response.json();
             attempt = data.attempt;
@@ -101,6 +101,7 @@ document.querySelectorAll('[data-financial-recovery]').forEach((box) => {
         form.elements.idempotency_key.value = attempt.idempotency_key;
         form.elements.amount.value = attempt.amount;
         form.elements.received_amount.value = attempt.received_amount || attempt.amount;
+        form.elements.received_amount.dispatchEvent(new Event('input', { bubbles: true }));
         retryPrepared = true;
         find('retry').hidden = true;
         message('El mismo cobro está preparado. Comprueba el importe y pulsa Registrar efectivo para reintentarlo.');
@@ -113,9 +114,11 @@ document.querySelectorAll('[data-financial-recovery]').forEach((box) => {
         try { storage.write(key); } catch { block(true); message('No se puede guardar la identidad del cobro. Consulta al responsable.'); return; }
         busy = true;
         block(true);
+        submit.textContent = 'Registrando efectivo…';
+        submit.setAttribute('aria-busy', 'true');
         message('Procesando cobro. No vuelvas a cobrar hasta verificar el resultado.');
         try {
-            const response = await fetch(form.action, { method: 'POST', credentials: 'same-origin', body: new FormData(form), headers: { Accept: 'text/html' } });
+            const response = await fetch(form.action, { method: 'POST', credentials: 'same-origin', signal: AbortSignal.timeout(45000), body: new FormData(form), headers: { Accept: 'text/html' } });
             conflict = response.status === 409;
         } catch {
             // A lost response does not imply that the payment failed.
@@ -123,6 +126,8 @@ document.querySelectorAll('[data-financial-recovery]').forEach((box) => {
         retryPrepared = false;
         busy = false;
         refreshPending = false;
+        submit.textContent = 'Registrar efectivo';
+        submit.removeAttribute('aria-busy');
         await status();
     });
     window.addEventListener('storage', (event) => { if ([storageKey, `qr-generation:${box.dataset.order}`].includes(event.key)) { retryPrepared = false; status(); } });

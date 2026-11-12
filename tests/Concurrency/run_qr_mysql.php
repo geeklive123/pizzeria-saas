@@ -13,6 +13,7 @@ use App\Models\Branch;
 use App\Models\CashRegister;
 use App\Models\Company;
 use App\Models\DynamicQrIntent;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Membership;
@@ -239,6 +240,13 @@ verify(max(array_map(fn ($worker) => $worker['result']['attempts'] ?? 0, $deadlo
 $results['deadlock'] = $deadlock;
 $f = fixture();
 $cashArgs = ['order' => $f['order']->id, 'session' => $f['sessions'][0]->id, 'user' => $f['users'][0]->id];
+FinancialPaymentAttempt::query()->create([
+    'company_id' => $f['company']->id, 'branch_id' => $f['branch']->id,
+    'order_id' => $f['order']->id, 'active_order_id' => $f['order']->id,
+    'cash_session_id' => $f['sessions'][0]->id, 'user_id' => $f['users'][0]->id,
+    'idempotency_key' => 'deadlock-payment', 'expected_financial_version' => $f['order']->financial_version,
+    'method' => 'cash', 'amount' => '80.00', 'received_amount' => '80.00', 'status' => 'pending', 'revision' => 0,
+]);
 $cashDeadlock = race('deadlock_cash', $database, $nonce, ['a' => ['deadlock_cash', $cashArgs], 'b' => ['deadlock_cash', $cashArgs]]);
 verify(max(array_map(fn ($worker) => $worker['result']['attempts'] ?? 0, $cashDeadlock['workers'])) > 1, 'No se observó reintento del pago tras deadlock.');
 verify(Payment::query()->where('order_id', $f['order']->id)->count() === 1, 'Pago de efectivo duplicado después de deadlock.');

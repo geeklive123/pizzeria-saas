@@ -25,24 +25,25 @@ use App\Models\RestaurantTable;
 use App\Models\User;
 use App\Services\OrderPaymentService;
 use Database\Seeders\DatabaseSeeder;
-use Database\Seeders\MasaYManaMenuSeeder;
 use DomainException;
 use DOMDocument;
 use DOMElement;
 use DOMXPath;
 use Tests\Concerns\InteractsWithBankQr;
 use Tests\Concerns\IsolatedSqliteCommits;
+use Tests\Concerns\SeedsMasaYManaMenuFixture;
 use Tests\TestCase;
 
 class SalesUxAndMixedPaymentsTest extends TestCase
 {
     use InteractsWithBankQr;
     use IsolatedSqliteCommits;
+    use SeedsMasaYManaMenuFixture;
 
     public function test_pos_prioritizes_catalog_and_renders_each_live_flavor_selector_with_one_size_only(): void
     {
         $this->seed(DatabaseSeeder::class);
-        $this->seed(MasaYManaMenuSeeder::class);
+        $this->seedMasaYManaMenuFixture();
         $company = Company::query()->where('name', 'Mi Pizzería')->firstOrFail();
         $branch = Branch::query()->where('company_id', $company->id)->where('name', 'Principal')->firstOrFail();
         $owner = Membership::query()->where('company_id', $company->id)->where('role', MembershipRole::Owner)

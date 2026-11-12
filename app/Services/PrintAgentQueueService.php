@@ -27,7 +27,8 @@ class PrintAgentQueueService
                     ->orWhereNull('kitchen_dispatch_id')
                     ->orWhereHas('kitchenDispatch', fn ($dispatch) => $dispatch
                         ->where(fn ($query) => $query->whereNotIn('status', [KitchenDispatchStatus::AwaitingPayment->value, KitchenDispatchStatus::Cancelled->value])
-                            ->orWhereHas('order', fn ($order) => $order->where('type', '!=', OrderType::Takeaway->value)))))
+                            ->orWhereHas('order', fn ($order) => $order->where('type', '!=', OrderType::Takeaway->value))
+                            ->orWhere(fn ($query) => $query->where('status', KitchenDispatchStatus::AwaitingPayment->value)->whereNotNull('released_at')))))
                 ->where(function ($query) use ($now): void {
                     $query->where(function ($available) use ($now): void {
                         $available->whereIn('status', [PrintAttemptStatus::Pending->value, PrintAttemptStatus::Failed->value])

@@ -12,6 +12,7 @@ use App\Models\Branch;
 use App\Models\CashRegister;
 use App\Models\Company;
 use App\Models\DynamicQrIntent;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\Membership;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -121,9 +122,17 @@ Http::fake(function ($request) use (&$bankCalls) {
 
 $results = [];
 $f = fixtureCommit();
+FinancialPaymentAttempt::query()->create([
+    'company_id' => $f['company']->id, 'branch_id' => $f['branch']->id,
+    'order_id' => $f['order']->id, 'active_order_id' => $f['order']->id,
+    'cash_session_id' => $f['session']->id, 'user_id' => $f['user']->id,
+    'idempotency_key' => 'rollback-cash', 'method' => 'cash', 'amount' => '30.00',
+    'received_amount' => '30.00', 'status' => 'pending', 'revision' => 0,
+    'expected_financial_version' => $f['order']->financial_version,
+]);
 try {
     DB::transaction(function () use ($f): void {
-        app(RegisterPaymentAction::class)->execute($f['order'], $f['session'], PaymentMethod::Cash, '30.00', $f['user'], 'rollback-cash', '30.00');
+        app(RegisterPaymentAction::class)->execute($f['order'], $f['session'], PaymentMethod::Cash, '30.00', $f['user'], 'rollback-cash', '30.00', attemptRevision: 0);
         throw new RuntimeException('fallo previo al commit');
     });
 } catch (RuntimeException $e) {

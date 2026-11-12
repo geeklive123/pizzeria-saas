@@ -40,7 +40,7 @@ class SettleKitchenDispatchAction
                 throw new DomainException('La tanda todavía tiene saldo pendiente.');
             }
             $needsDeferredPrint = $dispatch->status === KitchenDispatchStatus::AwaitingPayment
-                && $dispatch->order->type === OrderType::Takeaway;
+                && $dispatch->order->type === OrderType::Takeaway && $dispatch->released_at === null;
 
             foreach ($dispatch->items as $dispatchItem) {
                 $item = $dispatchItem->orderItem;
@@ -51,7 +51,7 @@ class SettleKitchenDispatchAction
                 $status = $item->requires_preparation ? OrderItemStatus::Sent : OrderItemStatus::Ready;
                 $item->forceFill(['status' => $status, 'sent_at' => now(), 'ready_at' => $status === OrderItemStatus::Ready ? now() : null])->save();
             }
-            $dispatch->forceFill(['status' => KitchenDispatchStatus::Settled, 'released_at' => now(), 'settled_at' => now()])->save();
+            $dispatch->forceFill(['status' => KitchenDispatchStatus::Settled, 'released_at' => $dispatch->released_at ?? now(), 'settled_at' => now()])->save();
             if ($needsDeferredPrint) {
                 $this->printing->request($dispatch, $user);
             }

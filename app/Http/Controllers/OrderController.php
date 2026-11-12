@@ -277,11 +277,12 @@ class OrderController extends Controller
             return back()->withErrors(['order' => $exception->getMessage()]);
         }
 
+        if ($result->printAttempt?->status === PrintAttemptStatus::Failed
+            || ($result->dispatch?->auto_kitchen_print_requested_at && ! $result->dispatch->auto_kitchen_print_enqueued_at)) {
+            return back()->with('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
+        }
         if ($result->dispatch?->status === KitchenDispatchStatus::AwaitingPayment) {
             return redirect()->route('orders.show', $order->ulid)->with('success', "Tanda #{$result->dispatch->sequence_number} enviada a cocina. Registra el pago en este panel.");
-        }
-        if ($result->printAttempt?->status === PrintAttemptStatus::Failed) {
-            return back()->with('warning', 'El pedido fue enviado a cocina, pero no se pudo imprimir la comanda.');
         }
 
         return back()->with('success', $result->dispatch ? "Tanda #{$result->dispatch->sequence_number} enviada." : 'No hay productos nuevos para enviar.');

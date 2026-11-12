@@ -11,6 +11,7 @@ use App\Actions\CancelPaidOrderAction;
 use App\Actions\CancelSettledKitchenDispatchAction;
 use App\Actions\CreateTakeawayOrderAction;
 use App\Actions\DispatchOrderToKitchenAction;
+use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\DynamicQrAction;
 use App\Actions\FinalizePerBatchTableAction;
 use App\Actions\MarkOrderReadyForPaymentAction;
@@ -18,6 +19,7 @@ use App\Actions\OpenCashSessionAction;
 use App\Actions\OpenTableOrderAction;
 use App\Actions\RegisterMixedPaymentAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\RestoreCancelledKitchenDispatchItemAction;
 use App\Actions\RestoreCancelledPaidOrderAction;
 use App\Actions\ReversePaymentAction;
 use App\Actions\UpdateOrderDeliveryChargeAction;
@@ -425,6 +427,97 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('17.00', $report['sales_total']);
     }
 
+    public function test_pos_pizza_delivery_cash_fields_and_partial_payment_use_the_actual_balance(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::AtEnd);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $this->financialItem($order, $company, $owner, '38.00', '38.00', true);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '20.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner)->dispatch;
+        app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $context = ['active_company_id' => $company->id, 'active_branch_id' => $branch->id];
+
+        $this->assertSame('58.00', $dispatch->total);
+        $this->actingAs($owner)->withSession($context)->get(route('orders.show', $order->ulid))
+            ->assertOk()->assertSee('name="amount" value="58.00"', false)->assertSee('name="received_amount" value="58.00"', false);
+        $this->actingAs($owner)->withSession($context)->post(route('orders.payments.store', $order->ulid), [
+            'financial_version' => $order->fresh()->financial_version, 'method' => 'cash', 'amount' => '20.00',
+            'received_amount' => '20.00', 'idempotency_key' => 'delivery-partial-pos', 'kitchen_dispatch' => $dispatch->ulid,
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('38.00', app(OrderPaymentService::class)->dispatchBalance($dispatch));
+        $this->actingAs($owner)->withSession($context)->get(route('orders.show', $order->ulid))
+            ->assertOk()->assertSee('name="amount" value="38.00"', false)->assertSee('name="received_amount" value="38.00"', false);
+        $this->actingAs($owner)->withSession($context)->post(route('orders.payments.store', $order->ulid), [
+            'financial_version' => $order->fresh()->financial_version, 'method' => 'cash', 'amount' => '38.00',
+            'received_amount' => '40.00', 'idempotency_key' => 'delivery-remainder-pos', 'kitchen_dispatch' => $dispatch->ulid,
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('58.00', app(OrderPaymentService::class)->paid($order));
+        $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order->refresh()));
+        $this->assertSame('2.00', Payment::query()->where('idempotency_key', 'delivery-remainder-pos')->sole()->change_amount);
+    }
+
+    public function test_pos_pizza_delivery_can_be_paid_in_full_in_cash(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::AtEnd);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $this->financialItem($order, $company, $owner, '38.00', '38.00', true);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '20.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner)->dispatch;
+        app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
+            ->post(route('orders.payments.store', $order->ulid), [
+                'financial_version' => $order->fresh()->financial_version, 'method' => 'cash', 'amount' => '58.00',
+                'received_amount' => '58.00', 'idempotency_key' => 'delivery-full-pos', 'kitchen_dispatch' => $dispatch->ulid,
+            ])->assertSessionHasNoErrors();
+        $this->assertSame('58.00', app(OrderPaymentService::class)->paid($order));
+        $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order->refresh()));
+        $this->assertSame(OrderStatus::Paid, $order->status);
+        $this->assertSame(1, $order->payments()->count());
+    }
+
+    public function test_pos_delivery_with_pizza_extras_discount_and_promotion_is_paid_in_cash_and_qr(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context(TableChargeMode::AtEnd);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $this->financialItem($order, $company, $owner, '100.00', '110.00', true);
+        $promotion = $this->financialItem($order, $company, $owner, '43.00', '43.00', false);
+        $promotion->update(['configuration_snapshot' => [
+            'type' => 'promotion', 'promotion' => ['name' => 'Promo', 'base_price' => '38.00', 'unit_price' => '43.00', 'extras_price' => '5.00'],
+            'pizzas' => [['size_key' => 'personal', 'sections' => [], 'modifiers' => []]],
+        ]]);
+        app(UpdateOrderDeliveryChargeAction::class)->execute($order, $owner, '20.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner, '10')->dispatch;
+        $this->assertSame('153.00', $dispatch->gross_subtotal);
+        $this->assertSame('15.00', $dispatch->extras_subtotal);
+        $this->assertSame('10.00', $dispatch->discount_total);
+        $this->assertSame('163.00', $dispatch->total);
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $qr = $this->confirmBankQr($order->refresh(), $session, $owner, 'pos-promotion-mixed', $dispatch, '20.00');
+        $this->assertSame('143.00', $qr->amount);
+        $this->assertSame('163.00', app(OrderPaymentService::class)->paid($order));
+        $this->assertSame('0.00', app(OrderPaymentService::class)->balance($order->refresh()));
+        $this->assertSame(2, $order->payments()->count());
+    }
+
+    public function test_pos_takeaway_consumes_when_sent_and_cancellation_and_restoration_reverse_the_ledger(): void
+    {
+        [$company, $branch, $owner, , $unit] = $this->context(TableChargeMode::AtEnd);
+        [$variant, $inventory] = $this->directVariant($company, $branch, $owner, $unit);
+        $order = app(CreateTakeawayOrderAction::class)->execute($company, $branch, $owner);
+        $item = app(AddOrderItemAction::class)->execute($order, $variant, '1.000', $owner);
+        $this->assertSame('10.000', $this->stock($branch, $inventory));
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order->refresh(), $owner)->dispatch;
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->status);
+        $this->assertSame('9.000', $this->stock($branch, $inventory));
+        $this->assertSame(InventoryReservationStatus::Consumed, $item->reservations()->firstOrFail()->status);
+        app(CancelOrderItemAction::class)->execute($item->refresh(), $owner, 'Cambio de pedido');
+        $this->assertSame('10.000', $this->stock($branch, $inventory));
+        app(RestoreCancelledKitchenDispatchItemAction::class)->execute($item->refresh(), $owner, 'Restaurar pedido');
+        $this->assertSame('9.000', $this->stock($branch, $inventory));
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->refresh()->status);
+        $this->assertSame(0, $order->payments()->count());
+    }
+
     public function test_free_delivery_is_distinct_from_no_delivery_and_is_assigned(): void
     {
         [$company, $branch, $owner, , $unit] = $this->context(TableChargeMode::AtEnd);
@@ -728,7 +821,8 @@ class SalesFlowRedesignTest extends TestCase
         $this->assertSame('90.00', $dispatch->pizza_base_subtotal);
         $this->assertSame('22.50', $dispatch->discount_total);
         $this->assertSame('97.50', $dispatch->total);
-        $this->assertSame(OrderItemStatus::PendingPayment, $pizza->refresh()->status);
+        $this->assertSame(OrderItemStatus::Sent, $pizza->refresh()->status);
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->status);
 
         $threshold = Order::factory()->for($branch)->create(['company_id' => $company->id, 'created_by' => $owner->id]);
         $this->financialItem($threshold, $company, $owner, '80.00', '80.00', true);

@@ -3,26 +3,39 @@
 namespace App\Actions;
 
 use App\Data\DispatchWithPrintResult;
-use App\Enums\KitchenDispatchStatus;
 use App\Enums\OrderType;
 use App\Enums\PrinterPurpose;
 use App\Models\Order;
 use App\Models\PrinterSetting;
 use App\Models\User;
+use App\Services\DeferredKitchenPrinting;
 use App\Services\ThermalPrintingService;
+use Illuminate\Support\Facades\DB;
 
 class DispatchOrderToKitchenWithPrintingAction
 {
     public function __construct(
         private readonly DispatchOrderToKitchenAction $dispatch,
         private readonly ThermalPrintingService $printing,
+        private readonly DeferredKitchenPrinting $deferred,
     ) {}
 
     public function execute(Order $order, User $user, int|string|null $discountPercentage = null): DispatchWithPrintResult
     {
-        $dispatch = $this->dispatch->execute($order, $user, $discountPercentage);
+        $dispatch = DB::transaction(function () use ($order, $user, $discountPercentage) {
+            $dispatch = $this->dispatch->execute($order, $user, $discountPercentage, true);
+            if ($dispatch && $dispatch->order->type === OrderType::Takeaway) {
+                $this->deferred->request($dispatch, $user);
+            }
+
+            return $dispatch;
+        });
         if (! $dispatch) {
             return new DispatchWithPrintResult(null, null);
+        }
+
+        if ($dispatch->order->type === OrderType::Takeaway) {
+            return new DispatchWithPrintResult($dispatch->refresh(), $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->where('is_reprint', false)->first());
         }
 
         $autoPrint = PrinterSetting::query()
@@ -35,8 +48,7 @@ class DispatchOrderToKitchenWithPrintingAction
 
         return new DispatchWithPrintResult(
             $dispatch,
-            $autoPrint && ! ($dispatch->order->type === OrderType::Takeaway && $dispatch->status === KitchenDispatchStatus::AwaitingPayment)
-                ? $this->printing->kitchen($dispatch, $user, false) : null,
+            $autoPrint ? $this->printing->kitchen($dispatch, $user, false) : null,
         );
     }
 }

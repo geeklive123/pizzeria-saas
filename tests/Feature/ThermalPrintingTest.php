@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Actions\CancelKitchenDispatchItemAction;
 use App\Actions\DispatchOrderToKitchenAction;
 use App\Actions\DispatchOrderToKitchenWithPrintingAction;
 use App\Actions\OpenCashSessionAction;
 use App\Actions\PrintKitchenDispatchAction;
 use App\Actions\PrintOrderTicketAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\RestoreCancelledKitchenDispatchItemAction;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
 use App\Enums\ModifierOptionType;
@@ -205,7 +207,7 @@ class ThermalPrintingTest extends TestCase
         $this->assertSame(0, $order->payments()->count());
     }
 
-    public function test_takeaway_cash_payment_queues_one_kitchen_command_after_commit(): void
+    public function test_takeaway_cash_payment_does_not_queue_a_second_kitchen_command(): void
     {
         [$company, $branch, $owner] = $this->context();
         $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
@@ -213,18 +215,24 @@ class ThermalPrintingTest extends TestCase
         $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
         $this->simpleItem($order, $owner, 'Pizza', 'Mediana', '45.00');
         $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
-        $this->assertSame(0, $dispatch->printAttempts()->count());
-        $this->actingInContext($owner, $company, $branch)->post(route('orders.kitchen.print', [$order->ulid, $dispatch->ulid]))
-            ->assertSessionHasErrors('printing');
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->status);
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
+        $this->assertSame(0, $order->payments()->count());
+        $agent = PrintAgent::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Cocina', 'token_hash' => hash('sha256', 'immediate-agent'), 'is_active' => true]);
+        $this->assertSame($dispatch->id, app(PrintAgentQueueService::class)->claim($agent)['job']->kitchen_dispatch_id);
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '45.00', $owner, 'cash-takeaway-print', '45.00', dispatch: $dispatch);
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '20.00', $owner, 'cash-takeaway-print-partial', '20.00', dispatch: $dispatch);
+        $this->assertSame('25.00', app(OrderPaymentService::class)->dispatchBalance($dispatch));
+        $this->assertSame(KitchenDispatchStatus::AwaitingPayment, $dispatch->refresh()->status);
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
+        app(RegisterPaymentAction::class)->execute($order->fresh(), $session, PaymentMethod::Cash, '25.00', $owner, 'cash-takeaway-print', '25.00', dispatch: $dispatch);
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
     }
 
-    public function test_takeaway_mixed_payment_does_not_print_until_qr_is_confirmed(): void
+    public function test_takeaway_mixed_payment_does_not_print_again_when_qr_is_confirmed(): void
     {
         [$company, $branch, $owner] = $this->context();
         $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
@@ -235,12 +243,92 @@ class ThermalPrintingTest extends TestCase
         $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
-        $this->assertSame(0, $dispatch->printAttempts()->count());
+        $this->assertSame(1, $dispatch->printAttempts()->count());
         $this->confirmBankQr($order->fresh(), $session, $owner, 'mixed-takeaway-print', $dispatch, '10.00');
         $this->assertSame(2, $order->payments()->count());
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
         $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
+    }
+
+    public function test_takeaway_enqueue_failure_recovers_before_payment_and_manual_reprint_is_separate(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
+        $order = $this->order($company, $branch, $owner);
+        $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
+        $this->simpleItem($order, $owner, 'Pizza', 'Personal', '38.00');
+        $this->mock(ThermalPrintingService::class)->shouldReceive('kitchen')->once()->andThrow(new RuntimeException('simulated enqueue failure'));
+
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $this->assertNull($dispatch->refresh()->auto_kitchen_print_enqueued_at);
+        $this->assertSame(0, $order->payments()->count());
+        $this->app->forgetInstance(ThermalPrintingService::class);
+        $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
+        $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::Kitchen->value)->count());
+        $this->assertNotNull($dispatch->refresh()->auto_kitchen_print_enqueued_at);
+
+        $reprint = app(PrintKitchenDispatchAction::class)->execute($dispatch, $owner);
+        $this->assertTrue($reprint->is_reprint);
+        $this->assertSame(PrinterPurpose::Kitchen, $reprint->purpose);
+        $this->assertSame(2, $dispatch->printAttempts()->count());
+        $this->assertSame(0, $order->payments()->count());
+    }
+
+    public function test_manual_kitchen_print_never_retries_a_failed_customer_ticket(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen);
+        $order = $this->order($company, $branch, $owner);
+        $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
+        $this->simpleItem($order, $owner, 'Pizza', 'Personal', '38.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $ticket = app(ThermalPrintingService::class)->dispatchTicket($dispatch, $owner, false);
+        $this->assertSame(PrintAttemptStatus::Failed, $ticket->status);
+        $kitchen = app(PrintKitchenDispatchAction::class)->execute($dispatch, $owner);
+        $this->assertSame(PrinterPurpose::Kitchen, $kitchen->purpose);
+        $this->assertSame(PrintAttemptStatus::Pending, $kitchen->status);
+        $this->assertFalse($kitchen->is_reprint);
+        $this->assertNotSame($ticket->id, $kitchen->id);
+    }
+
+    public function test_pending_kitchen_command_reflects_cancellation_before_claim(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
+        $order = $this->order($company, $branch, $owner);
+        $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
+        $cancelled = $this->simpleItem($order, $owner, 'Pizza anulada', 'Personal', '38.00');
+        $this->simpleItem($order, $owner, 'Pizza vigente', 'Personal', '45.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        app(CancelKitchenDispatchItemAction::class)->execute($cancelled, $owner, 'Cambio de pedido');
+        $attempt = $dispatch->printAttempts()->sole();
+        $text = $this->decode(base64_decode($attempt->document_payload));
+        $this->assertStringNotContainsString('PIZZA ANULADA', $text);
+        $this->assertStringContainsString('PIZZA VIGENTE', $text);
+        app(RestoreCancelledKitchenDispatchItemAction::class)->execute($cancelled->refresh(), $owner, 'Restaurar');
+        $text = $this->decode(base64_decode($attempt->refresh()->document_payload));
+        $this->assertStringContainsString('PIZZA ANULADA', $text);
+        $this->assertSame(1, $dispatch->printAttempts()->count());
+    }
+
+    public function test_cancelling_does_not_mutate_a_kitchen_job_already_claimed_by_an_agent(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $this->printer($company, $branch, PrinterPurpose::Kitchen, auto: true);
+        $order = $this->order($company, $branch, $owner);
+        $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
+        $cancelled = $this->simpleItem($order, $owner, 'Pizza anulada', 'Personal', '38.00');
+        $this->simpleItem($order, $owner, 'Pizza vigente', 'Personal', '45.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $agent = PrintAgent::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Cocina', 'token_hash' => hash('sha256', 'claimed-agent'), 'is_active' => true]);
+        $claim = app(PrintAgentQueueService::class)->claim($agent);
+        $before = $claim['job']->document_payload;
+        app(CancelKitchenDispatchItemAction::class)->execute($cancelled, $owner, 'Cambio de pedido');
+        $this->assertSame($before, $claim['job']->refresh()->document_payload);
+        $this->assertSame(PrintAttemptStatus::Claimed, $claim['job']->status);
+        $this->assertSame(1, $dispatch->printAttempts()->count());
     }
 
     public function test_deferred_kitchen_enqueue_is_retried_without_reversing_payment(): void
@@ -250,7 +338,7 @@ class ThermalPrintingTest extends TestCase
         $order = $this->order($company, $branch, $owner, null);
         $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
         $this->simpleItem($order, $owner, 'Pizza', 'Mediana', '45.00');
-        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         $this->mock(ThermalPrintingService::class)->shouldReceive('kitchen')->once()->andThrow(new RuntimeException('simulated enqueue failure'));
@@ -270,7 +358,7 @@ class ThermalPrintingTest extends TestCase
         $order = $this->order($company, $branch, $owner, null);
         $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
         $this->simpleItem($order, $owner, 'Pizza', 'Mediana', '45.00');
-        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $attempt = PrintAttempt::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id,
             'order_id' => $order->id, 'kitchen_dispatch_id' => $dispatch->id, 'purpose' => PrinterPurpose::Kitchen,
             'windows_printer_name' => 'Cocina', 'copies' => 1, 'status' => PrintAttemptStatus::Pending, 'requested_by' => $owner->id,
@@ -293,7 +381,7 @@ class ThermalPrintingTest extends TestCase
         $order = $this->order($company, $branch, $owner, null);
         $order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch])->save();
         $this->simpleItem($order, $owner, 'Pizza', 'Mediana', '45.00');
-        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
         $register = CashRegister::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'name' => 'Caja', 'is_active' => true]);
         $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
         FinancialPaymentAttempt::query()->create([
@@ -462,6 +550,43 @@ class ThermalPrintingTest extends TestCase
 
         $cashPayment->order->items()->first()->productVariant()->update(['price' => '999.00']);
         $this->assertStringContainsString('Bs 90,00', $renderer->render($cashOrder, $owner)->plainText);
+    }
+
+    public function test_ticket_multiplies_promotion_extras_by_quantity(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $order = $this->order($company, $branch, $owner);
+        $item = $this->simpleItem($order, $owner, 'Promoción', 'Personal', '43.00');
+        $item->update([
+            'quantity' => '2.000', 'unit_price' => '43.00', 'line_total' => '86.00',
+            'configuration_snapshot' => [
+                'type' => 'promotion',
+                'promotion' => ['name' => 'Promo', 'base_price' => '38.00', 'unit_price' => '43.00', 'extras_price' => '5.00'],
+                'pizzas' => [['size_key' => 'personal', 'sections' => [], 'modifiers' => []]],
+            ],
+        ]);
+        $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $owner);
+        $text = app(CustomerTicketRenderer::class)->renderDispatch($dispatch, $owner)->plainText;
+        $this->assertMatchesRegularExpression('/^\s+EXTRAS\s+Bs 10,00$/m', $text);
+        $this->assertSame('86.00', $dispatch->total);
+    }
+
+    public function test_dispatch_ticket_excludes_a_cancelled_item(): void
+    {
+        [$company, $branch, $owner] = $this->context();
+        $order = $this->order($company, $branch, $owner);
+        $cancelled = $this->simpleItem($order, $owner, 'Pizza anulada', 'Personal', '38.00');
+        $this->simpleItem($order, $owner, 'Pizza vigente', 'Personal', '45.00');
+        $dispatch = app(DispatchOrderToKitchenWithPrintingAction::class)->execute($order, $owner)->dispatch;
+        app(CancelKitchenDispatchItemAction::class)->execute($cancelled, $owner, 'Prueba');
+        $text = app(CustomerTicketRenderer::class)->renderDispatch($dispatch->refresh(), $owner)->plainText;
+        $this->assertStringNotContainsString('PIZZA ANULADA', $text);
+        $this->assertStringContainsString('PIZZA VIGENTE', $text);
+        $this->assertSame('45.00', $dispatch->total);
+        app(RestoreCancelledKitchenDispatchItemAction::class)->execute($cancelled->refresh(), $owner, 'Restaurar');
+        $text = app(CustomerTicketRenderer::class)->renderDispatch($dispatch->refresh(), $owner)->plainText;
+        $this->assertStringContainsString('PIZZA ANULADA', $text);
+        $this->assertSame('83.00', $dispatch->total);
     }
 
     public function test_ticket_reprint_does_not_create_financial_or_inventory_records_or_change_balance(): void

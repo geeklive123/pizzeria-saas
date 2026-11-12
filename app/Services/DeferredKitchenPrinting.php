@@ -33,7 +33,7 @@ class DeferredKitchenPrinting
         try {
             DB::transaction(function () use ($dispatchId): void {
                 $dispatch = KitchenDispatch::query()->lockForUpdate()->find($dispatchId);
-                if (! $dispatch || $dispatch->status !== KitchenDispatchStatus::Settled || ! $dispatch->auto_kitchen_print_requested_at
+                if (! $dispatch || ! ($dispatch->status === KitchenDispatchStatus::Settled || ($dispatch->status === KitchenDispatchStatus::AwaitingPayment && $dispatch->released_at !== null)) || ! $dispatch->auto_kitchen_print_requested_at
                     || $dispatch->auto_kitchen_print_enqueued_at || ! $dispatch->auto_kitchen_print_user_id
                     || $dispatch->order->type !== OrderType::Takeaway) {
                     return;

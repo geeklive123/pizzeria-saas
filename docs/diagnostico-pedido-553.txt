@@ -1,0 +1,53 @@
+-- Solo lectura. Un administrador debe sustituir :company_id y :branch_id
+-- por la empresa y sucursal correctas en su cliente SQL. 553 es el número
+-- operativo, no necesariamente el identificador interno del pedido.
+-- No incluye cliente, teléfono, notas, referencias bancarias ni documentos.
+
+SELECT o.operational_number, o.status, o.type, o.charge_mode,
+       o.subtotal, o.pizza_base_subtotal, o.extras_subtotal, o.other_subtotal,
+       o.discount_percentage, o.discount_total, o.total, o.financial_snapshot
+FROM orders o
+WHERE o.company_id = :company_id AND o.branch_id = :branch_id AND o.operational_number = 553;
+
+SELECT d.sequence_number, d.status, d.dispatched_at, d.released_at, d.settled_at,
+       d.gross_subtotal, d.pizza_base_subtotal, d.extras_subtotal, d.other_subtotal,
+       d.discount_percentage, d.discount_total, d.total, d.financial_snapshot,
+       c.enabled AS delivery_enabled, c.amount AS delivery_amount
+FROM orders o
+JOIN kitchen_dispatches d ON d.order_id = o.id AND d.company_id = o.company_id AND d.branch_id = o.branch_id
+LEFT JOIN order_delivery_charges c ON c.kitchen_dispatch_id = d.id AND c.order_id = o.id
+WHERE o.company_id = :company_id AND o.branch_id = :branch_id AND o.operational_number = 553
+ORDER BY d.sequence_number;
+
+SELECT d.sequence_number, i.id AS item_id, i.quantity, i.status, i.unit_price, i.line_total,
+       i.promotion_id, JSON_EXTRACT(i.configuration_snapshot, '$.type') AS configuration_type,
+       JSON_EXTRACT(i.configuration_snapshot, '$.promotion.base_price') AS promotion_base_price,
+       JSON_EXTRACT(i.configuration_snapshot, '$.promotion.extras_price') AS promotion_extras_price,
+       di.financial_type, di.gross_total, di.pizza_base_total, di.extras_total,
+       di.discount_total, di.net_total, s.product_name_snapshot, s.variant_name_snapshot,
+       s.unit_price_snapshot, s.fraction_numerator, s.fraction_denominator
+FROM orders o
+JOIN order_items i ON i.order_id = o.id AND i.company_id = o.company_id AND i.branch_id = o.branch_id
+LEFT JOIN kitchen_dispatch_items di ON di.order_item_id = i.id
+LEFT JOIN kitchen_dispatches d ON d.id = di.kitchen_dispatch_id AND d.order_id = o.id
+LEFT JOIN order_item_sections s ON s.order_item_id = i.id
+WHERE o.company_id = :company_id AND o.branch_id = :branch_id AND o.operational_number = 553
+ORDER BY d.sequence_number, i.id, s.position;
+-- Una pizza con varias secciones produce varias filas: no sumar sus importes repetidos.
+
+SELECT d.sequence_number, p.id AS payment_id, p.method, p.status, p.amount,
+       p.received_amount, p.change_amount, p.reversal_of_id, p.paid_at
+FROM orders o
+JOIN payments p ON p.order_id = o.id AND p.company_id = o.company_id AND p.branch_id = o.branch_id
+LEFT JOIN kitchen_dispatches d ON d.id = p.kitchen_dispatch_id
+WHERE o.company_id = :company_id AND o.branch_id = :branch_id AND o.operational_number = 553
+ORDER BY p.paid_at, p.id;
+-- Conciliar según status y reversal_of_id; no sumar ciegamente reversiones.
+
+SELECT d.sequence_number, p.purpose, p.status, p.is_reprint, p.attempted_at,
+       p.available_at, p.printed_at, p.attempts
+FROM orders o
+JOIN print_attempts p ON p.order_id = o.id AND p.company_id = o.company_id AND p.branch_id = o.branch_id
+LEFT JOIN kitchen_dispatches d ON d.id = p.kitchen_dispatch_id
+WHERE o.company_id = :company_id AND o.branch_id = :branch_id AND o.operational_number = 553
+ORDER BY p.attempted_at, p.id;

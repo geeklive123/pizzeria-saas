@@ -17,7 +17,7 @@
     <label class="block"><span class="label">Monto aplicado en efectivo</span><input class="input" name="amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
     <label class="block"><span class="label">Efectivo recibido</span><input class="input" name="received_amount" value="{{ $qrBalance }}" inputmode="decimal" required></label>
     <p class="text-sm">Cambio: <strong data-cash-change>Bs 0,00</strong></p>
-    <button class="btn-secondary w-full" type="submit" disabled>Registrar efectivo</button>
+    <button class="btn-primary w-full" type="submit" disabled>Registrar efectivo</button>
 </form>
 </details>
 <section class="mt-3 rounded-xl border border-orange-300 bg-orange-50 p-4" data-dynamic-qr

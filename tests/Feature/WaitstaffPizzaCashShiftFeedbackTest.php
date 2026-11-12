@@ -28,17 +28,18 @@ use App\Models\User;
 use App\Services\CashSessionSummaryService;
 use App\Services\PizzaCompositionService;
 use Database\Seeders\DatabaseSeeder;
-use Database\Seeders\MasaYManaMenuSeeder;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Tests\Concerns\InteractsWithBankQr;
 use Tests\Concerns\IsolatedSqliteCommits;
+use Tests\Concerns\SeedsMasaYManaMenuFixture;
 use Tests\TestCase;
 
 class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
 {
     use InteractsWithBankQr;
     use IsolatedSqliteCommits;
+    use SeedsMasaYManaMenuFixture;
 
     public function test_personal_rejects_combination_while_mediana_and_familiar_accept_one_to_four_size_compatible_flavors(): void
     {
@@ -264,7 +265,7 @@ class WaitstaffPizzaCashShiftFeedbackTest extends TestCase
     private function menuContext(): array
     {
         $this->seed(DatabaseSeeder::class);
-        $this->seed(MasaYManaMenuSeeder::class);
+        $this->seedMasaYManaMenuFixture();
         $company = Company::query()->where('name', 'Mi Pizzería')->firstOrFail();
         $branch = Branch::query()->where('company_id', $company->id)->where('name', 'Principal')->firstOrFail();
         $owner = Membership::query()->where('company_id', $company->id)->where('role', MembershipRole::Owner)

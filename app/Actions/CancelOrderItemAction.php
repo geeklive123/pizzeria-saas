@@ -23,6 +23,7 @@ class CancelOrderItemAction
         private readonly OrderTotalsService $totals,
         private readonly CompanyAccessService $access,
         private readonly ClosePaidOrderAction $closeOrder,
+        private readonly CancelKitchenDispatchItemAction $cancelDispatchedItem,
     ) {}
 
     public function execute(OrderItem $item, User $user, ?string $reason = null): OrderItem
@@ -37,6 +38,10 @@ class CancelOrderItemAction
             }
             if ($order->status !== OrderStatus::Open) {
                 throw new DomainException('Este producto ya no puede cancelarse.');
+            }
+            if ($order->type === OrderType::Takeaway && $item->status !== OrderItemStatus::Draft
+                && $item->kitchenDispatchItem?->dispatch?->released_at !== null) {
+                return $this->cancelDispatchedItem->execute($item, $user, $reason ?? '');
             }
             if ($item->status !== OrderItemStatus::Draft && OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->exists()) {
                 throw new DomainException('Anula el producto desde la tanda para conservar el cargo de envío.');

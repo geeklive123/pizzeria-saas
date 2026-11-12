@@ -44,6 +44,9 @@ class KitchenCommandRenderer
 
         foreach ($dispatch->items as $dispatchItem) {
             $item = $dispatchItem->orderItem;
+            if ($order->type === OrderType::Takeaway && $item->status === OrderItemStatus::Cancelled) {
+                continue;
+            }
             $builder->line(str_repeat('-', 48))->bold()->line($this->itemTitle($item))->bold(false);
             $this->itemNotes($builder, $item);
 

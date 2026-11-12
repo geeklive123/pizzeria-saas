@@ -162,7 +162,7 @@ try {
                 }
             }
 
-            return app(RegisterPaymentAction::class)->execute(Order::findOrFail($args['order']), CashSession::findOrFail($args['session']), PaymentMethod::Cash, '80.00', User::findOrFail($args['user']), 'deadlock-payment', '80.00');
+            return app(RegisterPaymentAction::class)->execute(Order::findOrFail($args['order']), CashSession::findOrFail($args['session']), PaymentMethod::Cash, '80.00', User::findOrFail($args['user']), 'deadlock-payment', '80.00', attemptRevision: 0);
         }, 3);
         $value = ['attempts' => $attempts, 'payment_id' => $payment->id];
     } else {

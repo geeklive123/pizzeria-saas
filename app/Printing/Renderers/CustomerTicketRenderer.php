@@ -106,6 +106,9 @@ class CustomerTicketRenderer
         }
         $builder->line(str_repeat('-', 48));
         foreach ($dispatch->items as $dispatchItem) {
+            if ($dispatchItem->orderItem->status === OrderItemStatus::Cancelled) {
+                continue;
+            }
             $this->item($builder, $dispatchItem->orderItem, $dispatchItem->gross_total);
         }
         $builder->line(str_repeat('-', 48))->line()
@@ -158,9 +161,10 @@ class CustomerTicketRenderer
         foreach ($snapshot['components'] ?? [] as $component) {
             $builder->line('  '.($component['inventory_item_name'] ?? '').' x '.UiFormatter::inputQuantity($component['quantity_applied'] ?? '0'));
         }
-        $extras = $snapshot['promotion']['extras_price'] ?? '0.00';
-        if (BigDecimal::of($extras)->isGreaterThan(0)) {
-            $builder->line($this->amountLine('  EXTRAS', $extras));
+        $extras = BigDecimal::of($snapshot['promotion']['extras_price'] ?? '0.00')
+            ->multipliedBy($item->quantity)->toScale(2, RoundingMode::HalfUp);
+        if ($extras->isGreaterThan(0)) {
+            $builder->line($this->amountLine('  EXTRAS', (string) $extras));
         }
     }
 
