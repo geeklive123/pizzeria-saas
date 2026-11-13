@@ -112,9 +112,7 @@ img { max-width: 100%; }
 .featured-menu { background: var(--cream); }
 .home-product-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
 .home-product-card { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: white; box-shadow: 0 10px 30px rgba(100,55,32,.06); }
-.product-art { position: relative; min-height: 175px; display: grid; place-items: center; overflow: hidden; background: radial-gradient(circle at 50% 55%, #f9c15c 0 17%, #d96b2d 18% 25%, #7e1718 26% 28%, transparent 29%), linear-gradient(135deg, #fbe0c7, #f7b978); }
-.product-art::before, .product-art::after { content: ""; position: absolute; width: 58px; height: 58px; border-radius: 50%; background: rgba(255,255,255,.16); }.product-art::before { left: 18px; top: 16px; }.product-art::after { right: 25px; bottom: 18px; }
-.product-art > span { position: relative; z-index: 1; color: white; font-family: Georgia, serif; font-size: 54px; font-weight: 800; text-shadow: 0 3px 12px rgba(60,20,10,.25); }
+.product-art { position: relative; overflow: hidden; background: #fff9f0; }
 .product-art small { position: absolute; right: 12px; top: 12px; padding: 5px 8px; border-radius: 999px; background: var(--wine); color: white; font-size: 8px; font-weight: 800; text-transform: uppercase; }
 .home-product-content { padding: 20px; }
 .home-product-content h3 { margin: 0; font-size: 18px; }.home-product-content p { min-height: 62px; margin: 8px 0 16px; color: var(--muted); font-size: 13px; line-height: 1.55; }
@@ -190,7 +188,7 @@ body.cart-open { overflow: hidden; }
 @media (max-width: 760px) {
     .shell { width: min(calc(100% - 28px), var(--shell)); }.header-inner { min-height: 68px; gap: 10px; }.brand-mark { width: 38px; height: 38px; }.brand-copy strong { font-size: 14px; }.brand-copy small { font-size: 7px; }.order-button { padding: 10px; font-size: 0; }.order-button > span:first-child { font-size: 15px; }.order-button .cart-count { font-size: 10px; }.site-nav { top: 68px; right: 14px; left: 14px; }
     .hero-grid { min-height: auto; grid-template-columns: 1fr; padding-block: 48px 30px; }.hero-copy h1 { font-size: clamp(43px, 13vw, 62px); }.hero-art { min-height: 360px; }.pizza-stage { width: min(330px, 85vw); }.hero-note { right: 0; }.hero-facts { justify-content: space-between; }.hero-facts div { min-width: 0; padding: 0 14px; }.hero-facts strong { font-size: 18px; }.hero-facts span { font-size: 7px; }
-    .section { padding: 65px 0; }.section-heading.split { align-items: start; flex-direction: column; }.pillar-grid, .home-product-grid, .product-grid, .option-grid { grid-template-columns: 1fr; }.pillar-grid article.featured { transform: none; }.option-copy { grid-column: auto; }.product-art { min-height: 205px; }
+    .section { padding: 65px 0; }.section-heading.split { align-items: start; flex-direction: column; }.pillar-grid, .home-product-grid, .product-grid, .option-grid { grid-template-columns: 1fr; }.pillar-grid article.featured { transform: none; }.option-copy { grid-column: auto; }
     .menu-hero { padding-top: 38px; }.menu-intro { grid-template-columns: 1fr; gap: 25px; }.menu-intro h1 { font-size: 42px; }.category-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 6px; }.category-tabs button { flex: 0 0 auto; }.size-guide { grid-template-columns: 1fr; padding: 20px; }.size-guide > p { text-align: left; }.size-pills { overflow-x: auto; }.size-pills span { flex: 0 0 auto; }.catalog-heading { align-items: start; flex-direction: column; gap: 10px; }.catalog-heading > p { text-align: left; }.floating-cart button { grid-template-columns: 1fr auto; }.floating-cart strong { display: none; }.floating-cart em { padding: 10px 13px; }
     .checkout-page { padding-top: 25px; }.checkout-steps { margin: 28px 0; }.checkout-grid { grid-template-columns: 1fr; }.checkout-summary { position: static; grid-row: 1; }.fulfillment-grid, .field-grid { grid-template-columns: 1fr; }.field-full { grid-column: auto; }
     .location-hero-grid, .location-grid, .visit-option-grid, .faq-grid { grid-template-columns: 1fr; }.location-hero { padding-top: 38px; }.location-hero-actions { justify-content: start; }.location-main { background: #fffaf6; padding-top: 22px; }.hours-card { min-height: 0; }.location-card-footer { margin-top: 45px; }.delivery-banner p, .delivery-banner h2 { max-width: calc(100% - 60px); }.visit-option-grid p { min-height: 0; }.faq-grid { gap: 35px; }
@@ -202,11 +200,18 @@ body.cart-open { overflow: hidden; }
     *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
 
-/* Product photographs retain their full proportions in each catalog card. */
-.catalog-product-photo { display: block; object-fit: contain; }
-.product-art .catalog-product-photo { width: 100%; height: 175px; position: relative; z-index: 1; }
-.product-art small { z-index: 2; }
-.product-card-top .catalog-product-photo { width: 110px; height: 90px; }
-.promotion-card > .catalog-product-photo { position: relative; width: 100%; height: 145px; margin-top: 18px; }
+/* Full-width photo areas keep the complete product visible. */
+.catalog-product-photo { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; background: #fff9f0; }
+.home-product-card { display: flex; flex-direction: column; }
+.home-product-content { display: flex; flex: 1; flex-direction: column; }
+.home-product-content .add-button { margin-top: auto; }
+.product-art small { z-index: 1; }
+.product-card-top { position: relative; display: block; margin: -20px -20px 0; }
+.product-card-top .product-kind { position: absolute; top: 12px; right: 12px; }
+.promotion-card { background: #fffdf8; }
+.promotion-card:nth-child(3n + 2) { background: #fffdf8; }
+.promotion-card::before { display: none; }
+.promotion-card-top { position: absolute; top: 12px; left: 12px; right: 12px; }
+.promotion-number { display: none; }
+.promotion-card > .catalog-product-photo { order: -1; flex: none; width: calc(100% + 50px); max-width: none; margin: -25px -25px 0; }
 .promotion-card > .catalog-product-photo + h3 { margin-top: 16px; }
-@media (max-width: 760px) { .product-art .catalog-product-photo { height: 205px; } }
