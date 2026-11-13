@@ -36,7 +36,7 @@
                         @php($defaultVariant = $product->variants->first(fn ($variant) => $variantAvailability->get($variant->ulid)?->status !== \App\Enums\MenuAvailabilityStatus::Unavailable))
                         @php($publicDescription = \App\Support\StorefrontCatalogPresenter::description($product->description))
                         <article class="product-card" data-product-card data-product-name="{{ $product->name }}" data-product-search="{{ $product->name }} {{ $publicDescription }}" data-product-category="{{ $category->ulid }}">
-                            <div class="product-card-top"><span class="product-monogram">{{ str($product->name)->substr(0, 1)->upper() }}</span><span class="product-kind">{{ \App\Support\StorefrontCatalogPresenter::kind($product->type) }}</span></div>
+                            <div class="product-card-top">@include('storefront.partials.product-image', ['product' => $product])<span class="product-kind">{{ \App\Support\StorefrontCatalogPresenter::kind($product->type) }}</span></div>
                             <h3>{{ $product->name }}</h3>
                             <p>{{ $publicDescription ?: 'Consulta sus detalles y disponibilidad al confirmar tu pedido.' }}</p>
                             <fieldset class="variant-options">

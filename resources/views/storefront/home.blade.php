@@ -60,7 +60,7 @@
                     @php($defaultVariant = $product->variants->first(fn ($variant) => $variantAvailability->get($variant->ulid)?->status !== \App\Enums\MenuAvailabilityStatus::Unavailable))
                     @php($publicDescription = \App\Support\StorefrontCatalogPresenter::description($product->description))
                     <article class="home-product-card" data-product-card data-product-name="{{ $product->name }}">
-                        <div class="product-art"><span>{{ str($product->name)->substr(0, 1)->upper() }}</span><small>{{ $product->category?->name }}</small></div>
+                        <div class="product-art">@include('storefront.partials.product-image', ['product' => $product])<small>{{ $product->category?->name }}</small></div>
                         <div class="home-product-content">
                             <h3>{{ $product->name }}</h3>
                             <p>{{ $publicDescription ?: 'Preparada al horno con nuestra masa madre artesanal.' }}</p>

@@ -73,6 +73,33 @@ class StorefrontTest extends TestCase
         $this->assertSame($otherCompany->id, $foreignProduct->company_id);
     }
 
+    public function test_catalog_cards_render_product_images_and_fallbacks(): void
+    {
+        [$company, $branch, $category, $product] = $this->storefront('Masa & Ma?a', '+591 70000001');
+        $product->update(['image_path' => 'products/real.jpg']);
+        $first = ProductVariant::factory()->for($product)->create(['name' => 'Mediana']);
+        $second = ProductVariant::factory()->for($product)->create(['name' => 'Familiar']);
+        $missing = Product::factory()->for($category)->create(['name' => 'Sin foto', 'type' => ProductType::Pizza, 'image_path' => null]);
+        ProductVariant::factory()->for($missing)->create();
+        $broken = Product::factory()->for($category)->create(['name' => 'Foto ausente', 'type' => ProductType::Pizza, 'image_path' => 'products/missing.jpg']);
+        ProductVariant::factory()->for($broken)->create();
+        $promotion = $this->storefrontPromotion($company, $category, 'Combo con foto', '55.00');
+        $promotion->productVariant->product->update(['image_path' => 'products/combo.jpg']);
+        $this->configureStorefront($company, $branch);
+
+        foreach (['storefront.home', 'storefront.menu'] as $route) {
+            $response = $this->get(route($route))->assertOk();
+            $response->assertSee($product->image_url)->assertSee($missing->image_url)->assertSee($broken->image_url)
+                ->assertSee('data-fallback-src="'.asset('images/product-placeholder.svg').'"', false)
+                ->assertSee('this.onerror=null;this.src=this.dataset.fallbackSrc', false)
+                ->assertSee($first->ulid)->assertSee($second->ulid);
+        }
+
+        $this->get(route('storefront.promotions'))->assertOk()
+            ->assertSee($promotion->productVariant->product->image_url)
+            ->assertSee('data-fallback-src="'.asset('images/product-placeholder.svg').'"', false);
+    }
+
     public function test_checkout_builds_whatsapp_message_with_server_prices_without_creating_operations(): void
     {
         [$company, $branch, , $product] = $this->storefront('Masa & Maña', '+591 77700001');

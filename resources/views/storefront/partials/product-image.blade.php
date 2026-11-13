@@ -1,0 +1,1 @@
+﻿<img class="catalog-product-photo" src="{{ $product->image_url }}" alt="{{ $product->name }}" loading="lazy" data-fallback-src="{{ asset('images/product-placeholder.svg') }}" onerror="this.onerror=null;this.src=this.dataset.fallbackSrc">

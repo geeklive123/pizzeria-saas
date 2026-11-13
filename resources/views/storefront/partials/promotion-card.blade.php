@@ -12,6 +12,7 @@
         @endif
     </div>
     <span class="promotion-number" aria-hidden="true">{{ str_pad((string) $index, 2, '0', STR_PAD_LEFT) }}</span>
+    @include('storefront.partials.product-image', ['product' => $product])
     <h3>{{ $product->name }}</h3>
     <p>{{ $publicDescription ?: 'Consulta el contenido y la disponibilidad al confirmar tu pedido.' }}</p>
     <div class="promotion-price">
