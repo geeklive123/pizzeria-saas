@@ -6,6 +6,7 @@ use App\Enums\ProductType;
 use App\Models\Product;
 use App\Support\CompanyContext;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -13,7 +14,14 @@ class ProductRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true;
+        if ($this->route('product')) {
+            $product = Product::query()->forCompany(app(CompanyContext::class)->company())
+                ->whereDoesntHave('variants.promotion')->where('ulid', $this->route('product'))->firstOrFail();
+
+            return Gate::allows('update', $product);
+        }
+
+        return Gate::allows('create', Product::class);
     }
 
     protected function prepareForValidation(): void
@@ -39,6 +47,8 @@ class ProductRequest extends FormRequest
             'category_id' => ['nullable', 'integer', Rule::exists('categories', 'id')->where('company_id', $company->getKey())],
             'type' => ['required', Rule::enum(ProductType::class)],
             'description' => ['nullable', 'string', 'max:2000'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'remove_image' => ['nullable', 'boolean', 'prohibits:image'],
             'is_active' => ['required', 'boolean'],
             'variants' => ['required', 'array', 'min:1'],
             'variants.*.ulid' => ['nullable', 'string'],

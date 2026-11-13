@@ -47,6 +47,14 @@ return [
             'report' => false,
         ],
 
+        'product_images' => [
+            'driver' => 'local',
+            'root' => env('PRODUCT_IMAGES_ROOT', public_path('uploads/products')),
+            'url' => env('PRODUCT_IMAGES_URL', rtrim(env('APP_URL', 'http://localhost'), '/').'/uploads/products'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

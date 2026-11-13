@@ -60,8 +60,11 @@ class StorefrontCatalogService
             ->orderBy('sort_order')
             ->orderBy('name');
 
+        $categories = $categories->get();
+        $categories->each(fn (Category $category) => $category->products->each->append('image_url'));
+
         return [
-            'categories' => $categories->get(),
+            'categories' => $categories,
             'variantAvailability' => $variantAvailability,
         ];
     }

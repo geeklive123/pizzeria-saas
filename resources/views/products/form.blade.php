@@ -9,7 +9,7 @@
     </div>
 @endif
 <div class="page-heading"><div><a class="back-link" href="{{ route('products.index') }}">← Volver a productos</a><h1>{{ $product->exists ? 'Editar producto' : 'Nuevo producto' }}</h1><p>Información comercial y opciones que verá el equipo.</p></div></div>
-<form method="POST" action="{{ $product->exists ? route('products.update', $product->ulid) : route('products.store') }}" class="space-y-6">@csrf @if($product->exists)@method('PUT')@endif
+<form method="POST" enctype="multipart/form-data" action="{{ $product->exists ? route('products.update', $product->ulid) : route('products.store') }}" class="space-y-6">@csrf @if($product->exists)@method('PUT')@endif
 <section class="card p-5 sm:p-7"><h2 class="card-title">Información general</h2><div class="form-grid mt-5">
     <div class="sm:col-span-2"><label class="label" for="name">Nombre</label><input class="input" id="name" name="name" value="{{ old('name', $product->name) }}" required></div>
     <div><label class="label" for="category_id">Categoría</label><select class="input" id="category_id" name="category_id"><option value="">Sin categoría</option>@foreach($categories as $category)<option value="{{ $category->id }}" @selected((string)old('category_id', $product->category_id)===(string)$category->id)>{{ $category->name }}</option>@endforeach</select></div>
@@ -17,6 +17,13 @@
     <div class="sm:col-span-2"><label class="label" for="description">Descripción</label><textarea class="input min-h-24" id="description" name="description">{{ old('description', $product->description) }}</textarea></div>
     <label class="sm:col-span-2 flex items-center gap-3 rounded-xl bg-stone-50 p-4"><input class="size-5" type="checkbox" name="is_active" value="1" @checked(old('is_active', $product->is_active ?? true))><span><strong class="block text-sm">Producto activo</strong><span class="text-xs text-stone-500">Disponible para la operación y el catálogo.</span></span></label>
 </div></section>
+<section class="card p-5 sm:p-7"><h2 class="card-title">Fotografía del producto</h2><p class="card-subtitle">La misma imagen se usa para todos los tamaños. JPG, PNG o WEBP; máximo 5 MB.</p>
+<img src="{{ $product->image_url }}" alt="Imagen actual del producto" class="mt-4 h-32 w-32 rounded-xl object-cover">
+<label class="label mt-4" for="image">Subir o reemplazar fotografía</label><input class="input" id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp">
+@error('image')<p class="mt-2 text-sm text-red-700">{{ $message }}</p>@enderror
+@if($product->image_path)<label class="mt-4 flex items-center gap-2"><input type="checkbox" name="remove_image" value="1" @checked(old('remove_image'))> Eliminar fotografía actual</label>@endif
+@error('remove_image')<p class="mt-2 text-sm text-red-700">{{ $message }}</p>@enderror
+</section>
 <section class="card p-5 sm:p-7"><div class="flex items-center justify-between gap-4"><div><h2 class="card-title">Variantes y precios</h2><p class="card-subtitle">Tamaños o presentaciones del producto.</p></div><button class="btn-secondary" type="button" data-add-row="variants">+ Agregar variante</button></div>
 <div id="variants-rows" class="mt-5 space-y-3" data-rows="variants">@foreach(old('variants', $variantRows) as $index => $variant)@include('products.variant-row', ['index'=>$index,'variant'=>$variant])@endforeach</div>
 </section>

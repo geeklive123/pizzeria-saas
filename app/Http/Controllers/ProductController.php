@@ -10,7 +10,9 @@ use App\Models\Product;
 use App\Models\Unit;
 use App\Services\SellableAvailabilityService;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
 
 class ProductController extends Controller
@@ -40,7 +42,7 @@ class ProductController extends Controller
     public function store(ProductRequest $request, SaveProductAction $action): RedirectResponse
     {
         Gate::authorize('create', Product::class);
-        $product = $action->execute($this->company(), $request->validated(), $request->validated('variants'));
+        $product = $this->save($request, $action);
 
         if ($product->type === ProductType::Pizza) {
             return redirect()->route('recipes.create', ['product' => $product->ulid])
@@ -62,9 +64,46 @@ class ProductController extends Controller
     {
         $model = $this->find($product);
         Gate::authorize('update', $model);
-        $action->execute($this->company(), $request->validated(), $request->validated('variants'), $model);
+        $this->save($request, $action, $model);
 
         return back()->with('success', 'Producto actualizado correctamente.');
+    }
+
+    private function save(ProductRequest $request, SaveProductAction $action, ?Product $product = null): Product
+    {
+        $disk = Storage::disk('product_images');
+        $oldPath = $product?->image_path;
+        $newPath = null;
+
+        try {
+            if ($request->hasFile('image')) {
+                $newPath = $request->file('image')->store('', 'product_images');
+                if (! is_string($newPath)) {
+                    throw new \RuntimeException('No se pudo guardar la imagen del producto.');
+                }
+            }
+
+            $saved = DB::transaction(function () use ($request, $action, $product, $newPath): Product {
+                $saved = $action->execute($this->company(), $request->validated(), $request->validated('variants'), $product);
+                if ($newPath || $request->boolean('remove_image')) {
+                    $saved->image_path = $newPath;
+                    $saved->save();
+                }
+
+                return $saved;
+            });
+        } catch (\Throwable $exception) {
+            if ($newPath) {
+                $disk->delete($newPath);
+            }
+            throw $exception;
+        }
+
+        if ($oldPath && ($newPath || $request->boolean('remove_image'))) {
+            $disk->delete($oldPath);
+        }
+
+        return $saved;
     }
 
     private function form(Product $product): View

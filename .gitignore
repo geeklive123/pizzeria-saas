@@ -40,6 +40,7 @@
 /public/fonts-manifest.dev.json
 /public/hot
 /public/storage
+/public/uploads/products/
 /storage/*.key
 /storage/pail
 /storage/print-agent-output/

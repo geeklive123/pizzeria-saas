@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 #[Fillable(['company_id', 'category_id', 'name', 'description', 'type', 'is_active'])]
 class Product extends Model
@@ -47,6 +48,13 @@ class Product extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function getImageUrlAttribute(): string
+    {
+        return $this->image_path
+            ? Storage::disk('product_images')->url($this->image_path)
+            : asset('images/product-placeholder.svg');
     }
 
     public function variants(): HasMany
