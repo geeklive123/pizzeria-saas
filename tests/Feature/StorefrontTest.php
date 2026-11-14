@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Actions\CreateOnlineOrderRequestAction;
 use App\Enums\MembershipRole;
 use App\Enums\ProductType;
 use App\Http\Middleware\ResolveStorefrontContext;
@@ -19,6 +20,7 @@ use App\Models\Promotion;
 use App\Models\PromotionComponent;
 use App\Models\Unit;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -107,80 +109,6 @@ class StorefrontTest extends TestCase
             ->assertSee('data-fallback-src="'.asset('images/product-placeholder.svg').'"', false);
     }
 
-    public function test_checkout_builds_whatsapp_message_with_server_prices_without_creating_operations(): void
-    {
-        [$company, $branch, , $product] = $this->storefront('Masa & Maña', '+591 77700001');
-        $variant = ProductVariant::factory()->for($product)->create([
-            'name' => 'Familiar',
-            'size_key' => 'familiar',
-            'price' => '89.50',
-        ]);
-        $this->configureStorefront($company, $branch);
-        config()->set('storefront.demo_mode', false);
-
-        $response = $this->postJson(route('storefront.checkout.whatsapp'), [
-            'customer_name' => '  Valeria   Méndez  ',
-            'customer_phone' => ' +591 (764) 28910 ',
-            'customer_email' => 'invalid-email-is-ignored',
-            'fulfillment' => 'delivery',
-            'address' => 'Av. Principal 320',
-            'reference' => 'Portón rojo',
-            'notes' => 'Sin picante',
-            'items' => [[
-                'variant_ulid' => $variant->ulid,
-                'quantity' => 2,
-                'price' => '0.01',
-            ]],
-        ]);
-
-        $response->assertOk()
-            ->assertJsonPath('subtotal', '179.00')
-            ->assertJsonPath('item_count', 2);
-
-        $payload = $response->json();
-        $this->assertStringStartsWith('https://wa.me/59157718695?text=', $payload['url']);
-        $this->assertStringContainsString($product->name, $payload['message']);
-        $this->assertStringContainsString('2 × '.$product->name.' (Familiar) — Bs 179', $payload['message']);
-        $this->assertStringContainsString('*Delivery:* Por confirmar', $payload['message']);
-        $this->assertStringNotContainsString('0.01', $payload['message']);
-        $this->assertStringContainsString('*Cliente:* Valeria Méndez', $payload['message']);
-        $this->assertStringContainsString('*Celular:* +59176428910', $payload['message']);
-        $this->assertStringContainsString('*Observaciones:* Sin picante', $payload['message']);
-        $this->assertStringNotContainsString('invalid-email-is-ignored', $payload['message']);
-        $this->assertSame($payload['message'], rawurldecode(parse_url($payload['url'], PHP_URL_QUERY) ? substr(parse_url($payload['url'], PHP_URL_QUERY), 5) : ''));
-
-        $this->assertDatabaseCount('orders', 0);
-        $this->assertDatabaseCount('payments', 0);
-        $this->assertDatabaseCount('inventory_movements', 0);
-        $this->assertDatabaseCount('inventory_reservations', 0);
-    }
-
-    public function test_demo_checkout_validates_the_cart_without_generating_a_whatsapp_link(): void
-    {
-        [$company, $branch, , $product] = $this->storefront('Masa & Maña', null);
-        $variant = ProductVariant::factory()->for($product)->create([
-            'name' => 'Mediana',
-            'price' => '71.00',
-        ]);
-        $this->configureStorefront($company, $branch);
-
-        $response = $this->postJson(route('storefront.checkout.whatsapp'), [
-            'customer_name' => 'Diseñadora',
-            'customer_phone' => '70000000',
-            'fulfillment' => 'pickup',
-            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
-        ]);
-
-        $response->assertOk()
-            ->assertJsonPath('demo', true)
-            ->assertJsonPath('url', null)
-            ->assertJsonPath('subtotal', '71.00');
-        $this->assertStringNotContainsString('wa.me', json_encode($response->json(), JSON_THROW_ON_ERROR));
-        $this->assertDatabaseCount('orders', 0);
-        $this->assertDatabaseCount('payments', 0);
-        $this->assertDatabaseCount('inventory_movements', 0);
-    }
-
     public function test_location_page_uses_only_configured_business_information(): void
     {
         [$company, $branch] = $this->storefront('Masa & Maña', '+591 77700001');
@@ -241,8 +169,10 @@ class StorefrontTest extends TestCase
         [, , , $foreignProduct] = $this->storefront('Otra empresa', '+591 77700002');
         $foreignVariant = ProductVariant::factory()->for($foreignProduct)->create(['price' => '25.00']);
         $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
 
-        $this->postJson(route('storefront.checkout.whatsapp'), [
+        $this->postJson(route('storefront.checkout.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'customer_name' => 'Cliente',
             'customer_phone' => '70000000',
             'fulfillment' => 'pickup',
@@ -313,8 +243,10 @@ class StorefrontTest extends TestCase
         );
         $this->configureStorefront($company, $branch);
         config()->set('storefront.demo_mode', false);
+        config()->set('storefront.demo_mode', false);
 
-        $this->postJson(route('storefront.checkout.whatsapp'), [
+        $this->postJson(route('storefront.checkout.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'customer_name' => 'Cliente',
             'customer_phone' => '70000000',
             'fulfillment' => 'pickup',
@@ -329,20 +261,25 @@ class StorefrontTest extends TestCase
         $this->assertDatabaseCount('inventory_movements', 0);
     }
 
-    public function test_checkout_requires_an_official_configured_whatsapp_number(): void
+    public function test_legacy_whatsapp_checkout_is_gone(): void
     {
-        config()->set('storefront.checkout_whatsapp', null);
-        [$company, $branch, , $product] = $this->storefront('Masa & Maña', null);
+        [$company, $branch] = $this->storefront('Masa y Mana', null);
+        $this->configureStorefront($company, $branch);
+        $this->postJson(route('storefront.checkout.whatsapp'), [])->assertStatus(410);
+        $this->assertDatabaseCount('online_order_requests', 0);
+        $this->assertDatabaseCount('orders', 0);
+    }
+
+    public function test_database_failure_does_not_expose_customer_data_or_sql(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
         $variant = ProductVariant::factory()->for($product)->create();
         $this->configureStorefront($company, $branch);
         config()->set('storefront.demo_mode', false);
-
-        $this->postJson(route('storefront.checkout.whatsapp'), [
-            'customer_name' => 'Cliente',
-            'customer_phone' => '70000000',
-            'fulfillment' => 'pickup',
-            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
-        ])->assertUnprocessable()->assertJsonValidationErrors('storefront');
+        $this->mock(CreateOnlineOrderRequestAction::class)
+            ->shouldReceive('execute')->once()->andThrow(new QueryException('test', 'INSERT secret', ['private'], new \RuntimeException('private')));
+        $this->postJson(route('storefront.checkout.store'), ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente Privado', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]])
+            ->assertStatus(503)->assertDontSee('Cliente Privado')->assertDontSee('INSERT secret')->assertDontSee('private');
     }
 
     public function test_online_request_is_persisted_once_and_recovered_with_historical_prices(): void
@@ -366,6 +303,29 @@ class StorefrontTest extends TestCase
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('inventory_movements', 0);
+    }
+
+    public function test_resolving_an_uncertain_key_fences_late_submission_or_recovers_the_order(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['price' => '12.00']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $payload = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
+        $this->postJson(route('storefront.checkout.resolve'), ['idempotency_key' => $payload['idempotency_key']])->assertOk()->assertJsonPath('created', false);
+        $fence = OnlineOrderRequest::query()->where('idempotency_key', $payload['idempotency_key'])->firstOrFail();
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('idempotency_key');
+        $this->postJson(route('storefront.checkout.resolve'), ['idempotency_key' => $payload['idempotency_key']])->assertOk()->assertJsonPath('created', false);
+        $this->assertDatabaseCount('online_order_request_items', 0);
+        $payload['idempotency_key'] = (string) Str::uuid();
+        $order = $this->postJson(route('storefront.checkout.store'), $payload)->assertOk();
+        $this->postJson(route('storefront.checkout.resolve'), ['idempotency_key' => $payload['idempotency_key']])->assertOk()->assertJsonPath('created', true)->assertJsonPath('code', $order->json('code'));
+        $this->assertDatabaseCount('online_order_request_items', 1);
+        $owner = User::factory()->create();
+        Membership::factory()->for($company)->for($owner)->owner()->create();
+        $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+        $this->get(route('online-orders.index', ['status' => 'cancelled']))->assertOk()->assertDontSee($fence->publicCode());
+        $this->get(route('online-orders.show', $fence->id))->assertNotFound();
     }
 
     public function test_online_request_only_accepts_valid_pickup_and_available_products(): void
@@ -396,12 +356,17 @@ class StorefrontTest extends TestCase
         $data = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
         $this->postJson(route('storefront.checkout.store'), $data)->assertOk();
         $order = OnlineOrderRequest::query()->firstOrFail();
+        $originalName = $product->name;
+        $originalVariant = $variant->name;
+        $product->update(['name' => 'Nombre nuevo']);
+        $variant->update(['name' => 'Nueva variante', 'price' => '99.00']);
         $this->get(route('online-orders.index'))->assertRedirect();
         $owner = User::factory()->create();
         Membership::factory()->for($company)->for($owner)->owner()->create();
         $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
         $this->get(route('online-orders.index', ['status' => 'pending_confirmation']))->assertOk()->assertSee($order->publicCode());
-        $this->get(route('online-orders.show', $order->id))->assertOk()->assertSee('https://wa.me/59170000000?text=', false);
+        $this->get(route('online-orders.show', $order->id))->assertOk()->assertSee('https://wa.me/59170000000?text=', false)
+            ->assertSee($originalName)->assertSee($originalVariant)->assertSee('12.00')->assertDontSee('Nombre nuevo');
         $otherBranch = Branch::factory()->for($company)->create();
         $foreign = OnlineOrderRequest::query()->create(['company_id' => $company->id, 'branch_id' => $otherBranch->id, 'idempotency_key' => (string) Str::uuid(), 'request_hash' => str_repeat('a', 64), 'customer_name' => 'Ajeno', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'status' => 'pending_confirmation', 'subtotal' => '1.00', 'total' => '1.00']);
         $this->get(route('online-orders.show', $foreign->id))->assertNotFound();
@@ -413,6 +378,10 @@ class StorefrontTest extends TestCase
         $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertStatus(409);
         $this->get(route('online-orders.index', ['status' => 'pending_confirmation']))->assertOk()->assertDontSee($order->publicCode());
         $this->get(route('online-orders.index', ['from' => now()->addDay()->format('Y-m-d')]))->assertOk()->assertDontSee($order->publicCode());
+        $order->update(['created_at' => '2026-11-14 02:30:00']);
+        $this->get(route('online-orders.index', ['from' => '2026-11-13', 'to' => '2026-11-13']))->assertOk()->assertSee($order->publicCode());
+        $this->get(route('online-orders.index', ['from' => '2026-11-14', 'to' => '2026-11-14']))->assertOk()->assertDontSee($order->publicCode());
+        $this->get(route('online-orders.index', ['to' => '2026-11-13']))->assertOk()->assertSee($order->publicCode());
     }
 
     public function test_online_request_rejects_unknown_products_and_obeys_demo_mode(): void
@@ -491,44 +460,30 @@ class StorefrontTest extends TestCase
         $variant = ProductVariant::factory()->for($product)->create(['price' => '10.00']);
         $this->configureStorefront($company, $branch);
         config()->set('storefront.demo_mode', false);
-        $payload = ['customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
+        config()->set('storefront.demo_mode', false);
+        $payload = ['idempotency_key' => (string) Str::uuid(),
+            'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
             'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
 
         $this->get(route('storefront.checkout'))->assertOk()->assertDontSee('customer_email')->assertSee('Realizar pedido');
         foreach (['customer_name', 'customer_phone'] as $field) {
-            $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, [$field => '  ']))
+            $this->postJson(route('storefront.checkout.store'), array_replace($payload, [$field => '  ']))
                 ->assertUnprocessable()->assertJsonValidationErrors($field);
         }
-        $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, ['customer_phone' => 'invalid']))
+        $this->postJson(route('storefront.checkout.store'), array_replace($payload, ['customer_phone' => 'invalid']))
             ->assertUnprocessable()->assertJsonValidationErrors('customer_phone');
         foreach ([0, 21] as $quantity) {
-            $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, ['items' => [['variant_ulid' => $variant->ulid, 'quantity' => $quantity]]]))
+            $this->postJson(route('storefront.checkout.store'), array_replace($payload, ['items' => [['variant_ulid' => $variant->ulid, 'quantity' => $quantity]]]))
                 ->assertUnprocessable()->assertJsonValidationErrors('items.0.quantity');
         }
-        $response = $this->postJson(route('storefront.checkout.whatsapp'), $payload)->assertOk();
-        $this->assertStringContainsString('*Modalidad:* Recojo en local', $response->json('message'));
-        $this->assertStringNotContainsString('*Delivery:*', $response->json('message'));
+        $response = $this->postJson(route('storefront.checkout.store'), $payload)->assertOk();
+        $response->assertJsonPath('subtotal', '10.00');
         $product->update(['is_active' => false]);
-        $this->postJson(route('storefront.checkout.whatsapp'), $payload)->assertUnprocessable()->assertJsonValidationErrors('items');
+        $payload['idempotency_key'] = (string) Str::uuid();
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('items');
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('inventory_movements', 0);
-    }
-
-    public function test_checkout_keeps_other_company_destination_and_identity_separate(): void
-    {
-        $this->storefront('Primera tienda', '70000000');
-        [$company, $branch, , $product] = $this->storefront('Otra tienda', '+591 77700001');
-        $variant = ProductVariant::factory()->for($product)->create(['price' => '10.00']);
-        $this->configureStorefront($company, $branch);
-        config()->set('storefront.demo_mode', false);
-        $response = $this->postJson(route('storefront.checkout.whatsapp'), [
-            'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
-            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
-        ])->assertOk();
-        $this->assertStringStartsWith('https://wa.me/59177700001?text=', $response->json('url'));
-        $this->assertStringContainsString('*OTRA TIENDA', $response->json('message'));
-        $this->assertStringNotContainsString('59157718695', $response->json('url'));
     }
 
     public function test_visibility_list_and_active_category_are_required_for_publication(): void
@@ -587,12 +542,14 @@ class StorefrontTest extends TestCase
             'unit_cost' => '4.000000',
         ]);
         $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
 
         $this->get(route('storefront.menu'))
             ->assertOk()
             ->assertSee('Sin stock');
 
-        $this->postJson(route('storefront.checkout.whatsapp'), [
+        $this->postJson(route('storefront.checkout.store'), [
+            'idempotency_key' => (string) Str::uuid(),
             'customer_name' => 'Cliente',
             'customer_phone' => '70000000',
             'fulfillment' => 'pickup',

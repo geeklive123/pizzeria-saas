@@ -14,6 +14,8 @@ return new class extends Migration
             $table->unsignedBigInteger('branch_id');
             $table->uuid('idempotency_key');
             $table->char('request_hash', 64);
+            // Durable fence for an abandoned idempotency key; never shown as an order.
+            $table->boolean('is_fence')->default(false);
             $table->string('customer_name', 120);
             $table->string('customer_phone', 16);
             $table->text('notes')->nullable();

@@ -50,9 +50,15 @@ class StorefrontCheckoutRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'customer_name.required' => 'Indica tu nombre y apellido.',
+            'customer_phone.required' => 'Indica tu teléfono celular.',
+            'customer_phone.regex' => 'Ingresa un número de teléfono válido.',
             'address.required_if' => 'La dirección es obligatoria para delivery.',
             'items.required' => 'Agrega al menos un producto antes de continuar.',
             'items.min' => 'Agrega al menos un producto antes de continuar.',
+            'items.*.quantity.integer' => 'La cantidad debe ser un número entero.',
+            'items.*.quantity.min' => 'La cantidad debe ser al menos 1.',
+            'items.*.quantity.max' => 'La cantidad máxima por producto es 20.',
         ];
     }
 }

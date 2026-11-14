@@ -6,7 +6,8 @@
     <a class="link" href="{{ route('online-orders.index') }}">Volver a pedidos online</a>
     <h1 class="mt-4 text-2xl font-bold">{{ $order->publicCode() }}</h1>
     <p class="mt-2">{{ $order->customer_name }} · {{ $order->customer_phone }}</p>
-    <p>Recojo en local · {{ $order->created_at }} · {{ ['pending_confirmation' => 'Pendiente', 'confirmed' => 'Confirmado', 'cancelled' => 'Cancelado'][$order->status] ?? $order->status }}</p>
+    <p>Recojo en local · {{ \App\Support\UiFormatter::date($order->created_at, true) }} · {{ ['pending_confirmation' => 'Pendiente', 'confirmed' => 'Confirmado', 'cancelled' => 'Cancelado'][$order->status] ?? $order->status }}</p>
+    @if($order->resolved_at)<p>Resuelta por {{ $order->resolvedBy?->name ?? 'Usuario no disponible' }} · {{ \App\Support\UiFormatter::date($order->resolved_at, true) }}</p>@endif
     @if($order->notes)<p class="mt-3">Observaciones: {{ $order->notes }}</p>@endif
     <ul class="my-4 space-y-2">@foreach($order->items as $item)<li>{{ $item->quantity }} × {{ $item->product_name }} ({{ $item->variant_name }}) · Bs {{ $item->unit_price }} · Subtotal Bs {{ $item->subtotal }}</li>@endforeach</ul>
     <p class="font-bold">Total: Bs {{ $order->total }}</p>

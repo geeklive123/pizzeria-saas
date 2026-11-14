@@ -10,7 +10,7 @@
         <div class="checkout-steps" aria-label="Progreso"><span class="done">✓ Carrito</span><i></i><span class="active">2 Datos de recojo</span><i></i><span>3 Confirmación</span></div>
 
         <div class="checkout-grid">
-            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-recover-url="{{ route('storefront.checkout.recover') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
+            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
                 @csrf
                 <section class="checkout-card">
                     <span class="form-step">Modalidad</span>
@@ -26,8 +26,8 @@
                 </section>
 
                 <section class="checkout-card">
-                    <div class="form-section-title"><span>3</span><div><h2>Observaciones</h2><p>Indicaciones para el equipo de cocina o la entrega.</p></div></div>
-                    <label class="field"><span>Notas del pedido <small>(opcional)</small></span><textarea name="notes" rows="4" maxlength="1000" placeholder="Ej.: tocar el timbre, alergia que debamos conocer…"></textarea></label>
+                    <div class="form-section-title"><span>2</span><div><h2>Observaciones</h2><p>Indicaciones para el restaurante.</p></div></div>
+                    <label class="field"><span>Notas del pedido <small>(opcional)</small></span><textarea name="notes" rows="4" maxlength="1000" placeholder="Ej.: alergia que debamos conocer…"></textarea></label>
                 </section>
             </form>
 

@@ -74,10 +74,34 @@ class CreateOnlineOrderRequestAction
 
     private function assertSameRequest(OnlineOrderRequest $request, string $hash): OnlineOrderRequest
     {
-        if (! hash_equals($request->request_hash, $hash)) {
+        if ($request->is_fence || ! hash_equals($request->request_hash, $hash)) {
             throw ValidationException::withMessages(['idempotency_key' => 'La clave ya corresponde a otra solicitud.']);
         }
 
         return $request;
+    }
+
+    /** Atomically fence a key or return the request that won the race. */
+    public function resolve(Company $company, Branch $branch, string $key): OnlineOrderRequest
+    {
+        $existing = $this->find($company, $branch, $key);
+        if ($existing) {
+            return $existing;
+        }
+
+        try {
+            return OnlineOrderRequest::query()->create([
+                'company_id' => $company->id, 'branch_id' => $branch->id,
+                'idempotency_key' => $key, 'request_hash' => str_repeat('0', 64), 'is_fence' => true,
+                'customer_name' => '', 'customer_phone' => '', 'fulfillment' => 'pickup',
+                'status' => 'cancelled', 'subtotal' => '0.00', 'total' => '0.00',
+            ]);
+        } catch (QueryException $exception) {
+            $existing = $this->find($company, $branch, $key);
+            if ($existing) {
+                return $existing;
+            }
+            throw $exception;
+        }
     }
 }

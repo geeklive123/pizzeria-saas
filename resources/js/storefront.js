@@ -219,8 +219,10 @@ const initCheckout = () => {
     const showError = (message) => { if (errors) { errors.textContent = message; errors.hidden = false; } };
     const finish = (result, attempt) => {
         if (!/^WEB-\d{6,}$/.test(result.code ?? '') || !/^\d+\.\d{2}$/.test(result.subtotal ?? '')) throw new Error('No se pudo verificar la respuesta.');
-        if (fingerprint() === attempt.fingerprint) { cart = []; saveCart(); }
-        localStorage.removeItem(pendingKey);
+        if (pending()?.key === attempt.key) {
+            if (fingerprint() === attempt.fingerprint) { cart = []; saveCart(); }
+            localStorage.removeItem(pendingKey);
+        }
         if (confirmation) {
             confirmation.textContent = `Solicitud ${result.code} registrada. Subtotal: ${result.subtotal} Bs. El restaurante revisará tu pedido.`;
             confirmation.hidden = false;
@@ -229,19 +231,24 @@ const initCheckout = () => {
         submit.textContent = 'Realizar pedido';
     };
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' };
-    const recover = async (attempt) => {
-        const response = await fetch(form.dataset.recoverUrl, { method: 'POST', headers, body: JSON.stringify({ idempotency_key: attempt.key }) });
-        if (response.status === 404) return false;
-        if (!response.ok) throw new Error('No fue posible recuperar el pedido.');
-        finish(await response.json(), attempt);
-        return true;
+    const resolveAttempt = async (attempt) => {
+        const response = await fetch(form.dataset.resolveUrl, { method: 'POST', headers, body: JSON.stringify({ idempotency_key: attempt.key }) });
+        if (!response.ok) throw new Error('No fue posible resolver el pedido anterior.');
+        const result = await response.json();
+        if (result.created === true) {
+            finish(result, attempt);
+            return true;
+        }
+        if (result.created !== false) throw new Error('No se pudo verificar el pedido anterior.');
+        if (pending()?.key === attempt.key) localStorage.removeItem(pendingKey);
+        return false;
     };
     const previous = pending();
     if (previous && form.dataset.demo !== 'true') {
         submit.disabled = true;
-        recover(previous).then((found) => {
-            if (!found) showError('No se encontró una confirmación. Reintenta con los mismos datos y carrito.');
-        }).catch(() => showError('No se pudo comprobar el pedido anterior. Reintenta con los mismos datos y carrito.'))
+        resolveAttempt(previous).then((found) => {
+            if (!found) showError('El intento anterior no se registró. Puedes corregir tu pedido y enviarlo.');
+        }).catch(() => showError('No se pudo resolver el pedido anterior. Recarga para volver a comprobarlo.'))
             .finally(() => { submit.disabled = false; });
     }
     submit?.addEventListener('click', () => form.requestSubmit());
@@ -259,26 +266,20 @@ const initCheckout = () => {
         submit.textContent = 'Validando pedido…';
         if (errors) errors.hidden = true;
         if (confirmation) confirmation.hidden = true;
-        const existing = pending();
-        if (existing && existing.fingerprint !== fingerprint()) {
-            showError('Hay un pedido pendiente de verificación. Restaura el carrito original para reintentarlo.');
-            submit.disabled = false;
-            submit.textContent = 'Realizar pedido';
-            return;
-        }
-        const attempt = existing ?? { key: crypto.randomUUID(), fingerprint: fingerprint() };
-        localStorage.setItem(pendingKey, JSON.stringify(attempt));
-        const fields = new FormData(form);
-        const payload = {
-            customer_name: fields.get('customer_name'),
-            customer_phone: fields.get('customer_phone'),
-            fulfillment: 'pickup',
-            notes: fields.get('notes') || null,
-            idempotency_key: attempt.key,
-            items: cart.map((item) => ({ variant_ulid: item.variantUlid, quantity: item.quantity })),
-        };
-
         try {
+            const existing = pending();
+            if (existing && await resolveAttempt(existing)) return;
+            const attempt = { key: crypto.randomUUID(), fingerprint: fingerprint() };
+            localStorage.setItem(pendingKey, JSON.stringify(attempt));
+            const fields = new FormData(form);
+            const payload = {
+                customer_name: fields.get('customer_name'),
+                customer_phone: fields.get('customer_phone'),
+                fulfillment: 'pickup',
+                notes: fields.get('notes') || null,
+                idempotency_key: attempt.key,
+                items: cart.map((item) => ({ variant_ulid: item.variantUlid, quantity: item.quantity })),
+            };
             const response = await fetch(form.action, {
                 method: 'POST',
                 headers,
@@ -287,6 +288,7 @@ const initCheckout = () => {
             const result = await response.json();
             if (!response.ok) {
                 const messages = Object.values(result.errors ?? {}).flat();
+                if (response.status === 422 && await resolveAttempt(attempt)) return;
                 throw new Error(messages[0] ?? result.message ?? 'No pudimos validar el pedido.');
             }
             finish(result, attempt);

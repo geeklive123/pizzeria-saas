@@ -55,9 +55,9 @@ Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->
     Route::get('/checkout', [StorefrontCheckoutController::class, 'show'])->name('checkout');
     Route::post('/checkout/solicitudes', [StorefrontCheckoutController::class, 'store'])->middleware('throttle:10,1')->name('checkout.store');
     Route::post('/checkout/solicitudes/recuperar', [StorefrontCheckoutController::class, 'recover'])->middleware('throttle:10,1')->name('checkout.recover');
-    Route::post('/checkout/whatsapp', [StorefrontCheckoutController::class, 'whatsapp'])
-        ->middleware('throttle:30,1')
-        ->name('checkout.whatsapp');
+    Route::post('/checkout/solicitudes/resolver', [StorefrontCheckoutController::class, 'resolve'])->middleware('throttle:10,1')->name('checkout.resolve');
+    Route::post('/checkout/whatsapp', fn () => response()->json(['message' => 'Este checkout fue reemplazado. Actualiza la página para registrar tu pedido.'], 410))
+        ->middleware('throttle:30,1')->name('checkout.whatsapp');
 });
 
 Route::middleware('guest')->group(function (): void {
