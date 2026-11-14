@@ -1,6 +1,8 @@
 <?php
 
 return [
+    // Requires the additive POS-link migration; disabled until explicitly enabled.
+    'online_pos_conversion_enabled' => env('STOREFRONT_ONLINE_POS_CONVERSION_ENABLED', false),
     /*
     |--------------------------------------------------------------------------
     | Modo de demostración

@@ -13,6 +13,7 @@ use App\Models\Order;
 use App\Models\OrderDeliveryCharge;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderFinancialService;
 use Brick\Math\BigDecimal;
 use DomainException;
@@ -33,6 +34,7 @@ class UpdateOrderDeliveryChargeAction
 
         DB::transaction(function () use ($order, $user, $amount, $enabled): void {
             $order = Order::query()->lockForUpdate()->findOrFail($order->id);
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             if ($order->type !== OrderType::Takeaway || ! in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)) {
                 throw new DomainException('Solo se puede configurar el envío de un pedido para llevar activo.');
             }

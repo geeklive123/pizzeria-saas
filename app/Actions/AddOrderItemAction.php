@@ -12,6 +12,7 @@ use App\Models\OrderItem;
 use App\Models\ProductVariant;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -42,6 +43,7 @@ class AddOrderItemAction
 
         return DB::transaction(function () use ($order, $variant, $quantity, $user, $fulfillment, $notes): OrderItem {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             if ($order->status !== OrderStatus::Open) {
                 throw new DomainException('Solo un pedido abierto puede recibir productos.');
             }

@@ -9,6 +9,7 @@ use App\Enums\Permission;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -55,6 +56,7 @@ class UpdateOrderItemQuantityAction
             if ($item->status !== OrderItemStatus::Draft || $item->order->status !== OrderStatus::Open) {
                 throw new DomainException('Solo un producto en borrador de un pedido abierto puede editarse.');
             }
+            app(OnlineOrderCommercialGuard::class)->assertEditable($item->order);
             if (($item->configuration_snapshot['pizzas'] ?? []) !== []) {
                 throw new DomainException('Una promoción con pizzas se reemplaza como unidad completa; no puede editarse parcialmente.');
             }

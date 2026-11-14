@@ -10,6 +10,6 @@ class OnlineOrderRequestItem extends Model
 
     protected function casts(): array
     {
-        return ['unit_price' => 'decimal:2', 'subtotal' => 'decimal:2'];
+        return ['unit_price' => 'decimal:2', 'subtotal' => 'decimal:2', 'was_promotion' => 'boolean'];
     }
 }

@@ -9,6 +9,7 @@ use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderFinancialService;
 use App\Services\OrderTotalsService;
 use DomainException;
@@ -30,6 +31,7 @@ class UpdateKitchenDispatchDiscountAction
 
         return DB::transaction(function () use ($dispatch, $discountPercentage): KitchenDispatch {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($dispatch->order_id);
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             $dispatch = KitchenDispatch::query()
                 ->where('order_id', $order->getKey())
                 ->lockForUpdate()

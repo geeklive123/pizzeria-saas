@@ -2,6 +2,7 @@
 
 namespace App\Actions;
 
+use App\Enums\ProductType;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\OnlineOrderRequest;
@@ -43,6 +44,7 @@ class CreateOnlineOrderRequestAction
                     $lines[] = ['company_id' => $company->id, 'branch_id' => $branch->id,
                         'product_variant_id' => $variant->id, 'product_name' => $variant->product->name,
                         'variant_name' => $variant->name, 'quantity' => (int) $item['quantity'],
+                        'was_promotion' => $variant->promotion !== null || $variant->product->type === ProductType::Combo,
                         'unit_price' => $variant->price, 'subtotal' => (string) $line];
                 }
                 $total = (string) $subtotal->toScale(2, RoundingMode::HalfUp);

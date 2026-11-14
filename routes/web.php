@@ -103,6 +103,7 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/online-orders', [OnlineOrderRequestController::class, 'index'])->name('online-orders.index');
             Route::get('/online-orders/{id}', [OnlineOrderRequestController::class, 'show'])->whereNumber('id')->name('online-orders.show');
             Route::post('/online-orders/{id}/transition', [OnlineOrderRequestController::class, 'transition'])->whereNumber('id')->name('online-orders.transition');
+            Route::post('/online-orders/{id}/legacy-review', [OnlineOrderRequestController::class, 'resolveLegacy'])->whereNumber('id')->name('online-orders.legacy-review');
             Route::get('/menu-availability', [MenuAvailabilityController::class, 'index'])->name('menu-availability.index');
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');

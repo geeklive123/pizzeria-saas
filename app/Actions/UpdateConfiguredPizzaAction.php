@@ -11,6 +11,7 @@ use App\Models\OrderItemModifier;
 use App\Models\OrderItemSection;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use App\Services\PizzaCompositionService;
 use Brick\Math\BigDecimal;
@@ -42,6 +43,7 @@ class UpdateConfiguredPizzaAction
             if ($item->status !== OrderItemStatus::Draft || $item->order->status !== OrderStatus::Open) {
                 throw new DomainException('Una línea enviada no se edita; debe cancelarse y agregarse nuevamente.');
             }
+            app(OnlineOrderCommercialGuard::class)->assertEditable($item->order);
             if ($item->promotion_id || ($item->configuration_snapshot['type'] ?? null) === 'promotion') {
                 throw new DomainException('Una promoción se reemplaza como unidad completa; no puede convertirse en una pizza normal.');
             }

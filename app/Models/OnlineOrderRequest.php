@@ -17,7 +17,7 @@ class OnlineOrderRequest extends Model
 
     protected function casts(): array
     {
-        return ['is_fence' => 'boolean', 'subtotal' => 'decimal:2', 'total' => 'decimal:2', 'resolved_at' => 'immutable_datetime'];
+        return ['is_fence' => 'boolean', 'subtotal' => 'decimal:2', 'total' => 'decimal:2', 'resolved_at' => 'immutable_datetime', 'converted_at' => 'immutable_datetime', 'legacy_reviewed_at' => 'immutable_datetime'];
     }
 
     public function items(): HasMany
@@ -28,6 +28,16 @@ class OnlineOrderRequest extends Model
     public function resolvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'resolved_by');
+    }
+
+    public function posOrder(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'pos_order_id');
+    }
+
+    public function legacyReviewedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'legacy_reviewed_by');
     }
 
     public function publicCode(): string

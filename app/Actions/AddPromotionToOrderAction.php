@@ -11,6 +11,7 @@ use App\Models\OrderItem;
 use App\Models\Promotion;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use App\Services\PromotionPizzaSelectionService;
 use Brick\Math\BigDecimal;
@@ -37,6 +38,7 @@ class AddPromotionToOrderAction
 
         return DB::transaction(function () use ($order, $promotion, $quantity, $user, $fulfillment, $notes, $pizzas): OrderItem {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->getKey());
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             $promotion = Promotion::query()->with(['company', 'productVariant.product', 'components.inventoryItem.unit', 'selectionGroups.category'])
                 ->lockForUpdate()->findOrFail($promotion->getKey());
             if ($order->status !== OrderStatus::Open || ! $promotion->isCurrentlyActive()

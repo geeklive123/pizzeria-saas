@@ -12,6 +12,7 @@ use App\Models\OrderItemModifier;
 use App\Models\OrderItemSection;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use App\Services\PizzaCompositionService;
 use Brick\Math\BigDecimal;
@@ -39,6 +40,7 @@ class AddConfiguredPizzaAction
 
         return DB::transaction(function () use ($order, $sections, $quantity, $user, $fulfillment, $modifiers, $notes, $toppings): OrderItem {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             if ($order->status !== OrderStatus::Open) {
                 throw new DomainException('Solo una cuenta abierta puede recibir productos.');
             }

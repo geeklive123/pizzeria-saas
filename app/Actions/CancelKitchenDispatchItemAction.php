@@ -21,6 +21,7 @@ use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderFinancialService;
 use App\Services\OrderTotalsService;
 use App\Services\ThermalPrintingService;
@@ -51,6 +52,9 @@ class CancelKitchenDispatchItemAction
 
         return DB::transaction(function () use ($item, $user, $reason, $parentAudit): OrderItem {
             $order = Order::query()->lockForUpdate()->findOrFail($item->order_id);
+            if ($parentAudit === null) {
+                app(OnlineOrderCommercialGuard::class)->assertEditable($order);
+            }
             $this->ensureOrderCanChange($order);
 
             $link = KitchenDispatchItem::query()->where('order_item_id', $item->getKey())->first();

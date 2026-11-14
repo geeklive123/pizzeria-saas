@@ -14,6 +14,7 @@ use App\Models\Order;
 use App\Models\OrderDeliveryCharge;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderFinancialService;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
@@ -58,6 +59,7 @@ class DispatchOrderToKitchenAction
                 throw new DomainException('En el modo cobrar al final, el descuento se define al solicitar la cuenta.');
             }
             if (filled($discountPercentage) && BigDecimal::of($discountPercentage)->isGreaterThan(0)) {
+                app(OnlineOrderCommercialGuard::class)->assertEditable($order);
                 $this->access->ensure($user, $order->company, Permission::ApplyOrderDiscounts);
             }
 

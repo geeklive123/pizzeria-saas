@@ -14,6 +14,7 @@ use App\Models\OrderItem;
 use App\Models\OrderItemModifier;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -40,6 +41,7 @@ class AddStandaloneExtraAction
 
         return DB::transaction(function () use ($order, $extra, $quantity, $user, $fulfillment): OrderItem {
             $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->getKey());
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             $extra = ModifierOption::query()->with(['modifier', 'inventoryItem.unit'])
                 ->lockForUpdate()->findOrFail($extra->getKey());
 

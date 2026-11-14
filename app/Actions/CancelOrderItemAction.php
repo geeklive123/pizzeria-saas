@@ -12,6 +12,7 @@ use App\Models\OrderDeliveryCharge;
 use App\Models\OrderItem;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -32,6 +33,7 @@ class CancelOrderItemAction
 
         return DB::transaction(function () use ($item, $user, $reason): OrderItem {
             $order = Order::query()->lockForUpdate()->findOrFail($item->order_id);
+            app(OnlineOrderCommercialGuard::class)->assertEditable($order);
             $item = OrderItem::query()->with(['order', 'productVariant', 'kitchenDispatchItem.dispatch'])->lockForUpdate()->findOrFail($item->id);
             if ($item->status === OrderItemStatus::Cancelled) {
                 return $item;
