@@ -375,7 +375,7 @@ class StorefrontTest extends TestCase
         $this->get(route('online-orders.show', $foreignCompany->id))->assertNotFound();
         $this->post(route('online-orders.transition', $order->id), ['status' => 'confirmed'])->assertRedirect();
         $this->assertDatabaseHas('online_order_requests', ['id' => $order->id, 'status' => 'confirmed', 'resolved_by' => $owner->id]);
-        $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertStatus(409);
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertRedirect(route('online-orders.show', $order->id))->assertSessionHas('online_order_notice');
         $this->get(route('online-orders.index', ['status' => 'pending_confirmation']))->assertOk()->assertDontSee($order->publicCode());
         $this->get(route('online-orders.index', ['from' => now()->addDay()->format('Y-m-d')]))->assertOk()->assertDontSee($order->publicCode());
         $order->update(['created_at' => '2026-11-14 02:30:00']);
@@ -450,8 +450,42 @@ class StorefrontTest extends TestCase
         $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
         $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertRedirect();
         $this->assertDatabaseHas('online_order_requests', ['id' => $order->id, 'status' => 'cancelled', 'resolved_by' => $owner->id]);
-        $this->post(route('online-orders.transition', $order->id), ['status' => 'confirmed'])->assertStatus(409);
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'confirmed'])->assertRedirect(route('online-orders.show', $order->id))->assertSessionHas('online_order_notice');
         $this->get(route('online-orders.index', ['status' => 'cancelled']))->assertOk()->assertSee($order->publicCode());
+    }
+
+    public function test_repeated_or_conflicting_transitions_show_notice_and_preserve_first_audit(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['name' => 'Familiar', 'price' => '12.00']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $first = User::factory()->create(['name' => 'Primera persona']);
+        $second = User::factory()->create(['name' => 'Segunda persona']);
+        Membership::factory()->for($company)->for($first)->owner()->create();
+        Membership::factory()->for($company)->for($second)->owner()->create();
+
+        foreach ([['confirmed', 'confirmed'], ['confirmed', 'cancelled'], ['cancelled', 'cancelled'], ['cancelled', 'confirmed']] as [$initial, $repeated]) {
+            $this->postJson(route('storefront.checkout.store'), ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]])->assertOk();
+            $order = OnlineOrderRequest::query()->latest('id')->firstOrFail();
+            $this->actingAs($first)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
+                ->post(route('online-orders.transition', $order->id), ['status' => $initial])->assertRedirect();
+            $resolved = $order->fresh();
+            $timestamp = $resolved->resolved_at->toISOString();
+            $this->travel(1)->minutes();
+            $this->actingAs($second)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id])
+                ->post(route('online-orders.transition', $order->id), ['status' => $repeated])
+                ->assertRedirect(route('online-orders.show', $order->id))
+                ->assertSessionHas('online_order_notice', 'Esta solicitud ya fue atendida. Se conserva el estado actual.');
+            $this->get(route('online-orders.show', $order->id))->assertOk()
+                ->assertSee('Esta solicitud ya fue atendida. Se conserva el estado actual.')
+                ->assertSee($initial === 'confirmed' ? 'Confirmado' : 'Cancelado')
+                ->assertSee('Primera persona')->assertSee('Familiar')->assertSee('12.00')
+                ->assertDontSee('Confirmar solicitud')->assertDontSee('Cancelar solicitud');
+            $this->assertSame($initial, $order->fresh()->status);
+            $this->assertSame($first->id, $order->fresh()->resolved_by);
+            $this->assertSame($timestamp, $order->fresh()->resolved_at->toISOString());
+        }
     }
 
     public function test_checkout_requires_contact_details_and_rejects_invalid_items(): void

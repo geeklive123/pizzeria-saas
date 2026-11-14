@@ -5,6 +5,7 @@
 <div class="mx-auto max-w-3xl rounded-2xl border border-stone-200 bg-white p-6">
     <a class="link" href="{{ route('online-orders.index') }}">Volver a pedidos online</a>
     <h1 class="mt-4 text-2xl font-bold">{{ $order->publicCode() }}</h1>
+    @if(session('online_order_notice'))<p class="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="status">{{ session('online_order_notice') }}</p>@endif
     <p class="mt-2">{{ $order->customer_name }} · {{ $order->customer_phone }}</p>
     <p>Recojo en local · {{ \App\Support\UiFormatter::date($order->created_at, true) }} · {{ ['pending_confirmation' => 'Pendiente', 'confirmed' => 'Confirmado', 'cancelled' => 'Cancelado'][$order->status] ?? $order->status }}</p>
     @if($order->resolved_at)<p>Resuelta por {{ $order->resolvedBy?->name ?? 'Usuario no disponible' }} · {{ \App\Support\UiFormatter::date($order->resolved_at, true) }}</p>@endif

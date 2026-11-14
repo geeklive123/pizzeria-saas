@@ -47,14 +47,20 @@ class OnlineOrderRequestController extends Controller
     public function transition(Request $request, string $id): RedirectResponse
     {
         $data = $request->validate(['status' => ['required', Rule::in(['confirmed', 'cancelled'])]]);
-        DB::transaction(function () use ($id, $data, $request): void {
+        $updated = DB::transaction(function () use ($id, $data, $request): bool {
             $order = $this->order($id, true);
             Gate::authorize($data['status'] === 'cancelled' ? 'cancel' : 'update', $order);
-            abort_unless($order->status === 'pending_confirmation', 409, 'La solicitud ya fue resuelta.');
+            if ($order->status !== 'pending_confirmation') {
+                return false;
+            }
             $order->update(['status' => $data['status'], 'resolved_by' => $request->user()->id, 'resolved_at' => now()]);
+
+            return true;
         });
 
-        return redirect()->route('online-orders.show', $id);
+        $redirect = redirect()->route('online-orders.show', $id);
+
+        return $updated ? $redirect : $redirect->with('online_order_notice', 'Esta solicitud ya fue atendida. Se conserva el estado actual.');
     }
 
     private function order(string $id, bool $lock = false): OnlineOrderRequest
