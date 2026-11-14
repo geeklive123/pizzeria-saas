@@ -34,34 +34,7 @@ class BuildStorefrontWhatsAppOrderAction
     public function execute(Company $company, Branch $branch, array $data): array
     {
         $requested = collect($data['items']);
-        $variants = ProductVariant::query()
-            ->forCompany($company)
-            ->whereIn('ulid', $requested->pluck('variant_ulid'))
-            ->where('is_active', true)
-            ->whereHas('product', function (Builder $product) use ($company): void {
-                $product->where('company_id', $company->getKey())
-                    ->where('is_active', true)
-                    ->whereHas('category', function (Builder $category) use ($company): void {
-                        $category->where('company_id', $company->getKey())
-                            ->where('is_active', true);
-                        $this->visibility->applyCategoryVisibility($category);
-                    });
-                $this->visibility->applyProductVisibility($product);
-            })
-            ->where(fn (Builder $query) => $query
-                ->whereDoesntHave('promotion')
-                ->orWhereHas('promotion', fn (Builder $promotion) => $promotion->currentlyActive()))
-            ->with(['product', 'promotion'])
-            ->get()
-            ->keyBy('ulid');
-
-        if ($variants->count() !== $requested->count()) {
-            throw ValidationException::withMessages([
-                'items' => 'Uno o más productos ya no están disponibles en esta tienda.',
-            ]);
-        }
-
-        $this->assertAvailability($branch, $requested, $variants);
+        $variants = $this->validatedVariants($company, $branch, $requested);
 
         [$detailLines, $subtotal, $itemCount] = $this->detail($requested, $variants);
         $destination = config('storefront.checkout_whatsapp');
@@ -95,6 +68,41 @@ class BuildStorefrontWhatsAppOrderAction
             'item_count' => $itemCount,
             'demo' => false,
         ];
+    }
+
+    /** @param Collection<int, array{variant_ulid:string,quantity:int}> $requested */
+    public function validatedVariants(Company $company, Branch $branch, Collection $requested): Collection
+    {
+        $variants = ProductVariant::query()
+            ->forCompany($company)
+            ->whereIn('ulid', $requested->pluck('variant_ulid'))
+            ->where('is_active', true)
+            ->whereHas('product', function (Builder $product) use ($company): void {
+                $product->where('company_id', $company->getKey())
+                    ->where('is_active', true)
+                    ->whereHas('category', function (Builder $category) use ($company): void {
+                        $category->where('company_id', $company->getKey())
+                            ->where('is_active', true);
+                        $this->visibility->applyCategoryVisibility($category);
+                    });
+                $this->visibility->applyProductVisibility($product);
+            })
+            ->where(fn (Builder $query) => $query
+                ->whereDoesntHave('promotion')
+                ->orWhereHas('promotion', fn (Builder $promotion) => $promotion->currentlyActive()))
+            ->with(['product', 'promotion'])
+            ->get()
+            ->keyBy('ulid');
+
+        if ($variants->count() !== $requested->count()) {
+            throw ValidationException::withMessages([
+                'items' => 'Uno o más productos ya no están disponibles en esta tienda.',
+            ]);
+        }
+
+        $this->assertAvailability($branch, $requested, $variants);
+
+        return $variants;
     }
 
     /**

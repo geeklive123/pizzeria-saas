@@ -22,6 +22,7 @@ use App\Http\Controllers\InventoryMovementController;
 use App\Http\Controllers\KitchenController;
 use App\Http\Controllers\MembershipController;
 use App\Http\Controllers\MenuAvailabilityController;
+use App\Http\Controllers\OnlineOrderRequestController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\OrderReprintController;
 use App\Http\Controllers\PreparationController;
@@ -52,6 +53,8 @@ Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->
     Route::get('/promociones', StorefrontPromotionController::class)->name('promotions');
     Route::get('/ubicacion', StorefrontLocationController::class)->name('location');
     Route::get('/checkout', [StorefrontCheckoutController::class, 'show'])->name('checkout');
+    Route::post('/checkout/solicitudes', [StorefrontCheckoutController::class, 'store'])->middleware('throttle:10,1')->name('checkout.store');
+    Route::post('/checkout/solicitudes/recuperar', [StorefrontCheckoutController::class, 'recover'])->middleware('throttle:10,1')->name('checkout.recover');
     Route::post('/checkout/whatsapp', [StorefrontCheckoutController::class, 'whatsapp'])
         ->middleware('throttle:30,1')
         ->name('checkout.whatsapp');
@@ -97,6 +100,9 @@ Route::middleware('auth')->group(function (): void {
             Route::put('/tables/{table}', [RestaurantTableController::class, 'update'])->name('tables.update');
             Route::post('/tables/{table}/open', [RestaurantTableController::class, 'open'])->name('tables.open');
             Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+            Route::get('/online-orders', [OnlineOrderRequestController::class, 'index'])->name('online-orders.index');
+            Route::get('/online-orders/{id}', [OnlineOrderRequestController::class, 'show'])->whereNumber('id')->name('online-orders.show');
+            Route::post('/online-orders/{id}/transition', [OnlineOrderRequestController::class, 'transition'])->whereNumber('id')->name('online-orders.transition');
             Route::get('/menu-availability', [MenuAvailabilityController::class, 'index'])->name('menu-availability.index');
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');

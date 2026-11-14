@@ -10,6 +10,7 @@
         ['key' => 'sales', 'label' => 'Ventas y atención', 'items' => [
             ['route' => 'sales.create', 'label' => 'Nueva venta', 'icon' => '＋', 'pattern' => 'sales.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('create', \App\Models\Order::class)],
             ['route' => 'orders.index', 'label' => 'Pedidos', 'icon' => '☷', 'pattern' => 'orders.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\Order::class)],
+            ['route' => 'online-orders.index', 'label' => 'Pedidos online', 'icon' => '◷', 'pattern' => 'online-orders.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\OnlineOrderRequest::class)],
             ['route' => 'tables.index', 'label' => 'Mesas', 'icon' => '▦', 'pattern' => 'tables.*', 'visible' => ! $isCashier && \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\RestaurantTable::class)],
             ['route' => 'menu-availability.index', 'label' => 'Menú', 'icon' => '◒', 'pattern' => 'menu-availability.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('menu-availability.view')],
             ['route' => 'cash.index', 'label' => 'Caja', 'icon' => 'Bs', 'pattern' => 'cash.*', 'visible' => \Illuminate\Support\Facades\Gate::allows('viewAny', \App\Models\CashSession::class)],

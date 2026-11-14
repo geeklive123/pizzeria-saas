@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\MembershipRole;
 use App\Enums\ProductType;
 use App\Http\Middleware\ResolveStorefrontContext;
 use App\Models\Branch;
@@ -10,12 +11,17 @@ use App\Models\Company;
 use App\Models\InventoryBatch;
 use App\Models\InventoryItem;
 use App\Models\InventoryStock;
+use App\Models\Membership;
+use App\Models\OnlineOrderRequest;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\Promotion;
+use App\Models\PromotionComponent;
 use App\Models\Unit;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class StorefrontTest extends TestCase
@@ -26,6 +32,7 @@ class StorefrontTest extends TestCase
     {
         parent::setUp();
         $this->withoutVite();
+        config()->set('storefront.demo_mode', true);
     }
 
     public function test_public_storefront_uses_the_configured_company_catalog_only(): void
@@ -145,6 +152,7 @@ class StorefrontTest extends TestCase
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('inventory_movements', 0);
+        $this->assertDatabaseCount('inventory_reservations', 0);
     }
 
     public function test_demo_checkout_validates_the_cart_without_generating_a_whatsapp_link(): void
@@ -337,6 +345,146 @@ class StorefrontTest extends TestCase
         ])->assertUnprocessable()->assertJsonValidationErrors('storefront');
     }
 
+    public function test_online_request_is_persisted_once_and_recovered_with_historical_prices(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['name' => 'Familiar', 'price' => '89.50']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $key = (string) Str::uuid();
+        $payload = ['idempotency_key' => $key, 'customer_name' => ' Cliente ', 'customer_phone' => '70000000',
+            'fulfillment' => 'pickup', 'notes' => 'Sin picante', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 2, 'price' => '0.01']]];
+        $first = $this->postJson(route('storefront.checkout.store'), $payload)->assertOk()->assertJsonPath('subtotal', '179.00');
+        $this->assertStringStartsWith('WEB-', $first->json('code'));
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertOk()->assertJsonPath('code', $first->json('code'));
+        $this->postJson(route('storefront.checkout.recover'), ['idempotency_key' => $key])->assertOk()->assertJsonPath('subtotal', '179.00')->assertJsonMissingPath('customer_name');
+        $this->postJson(route('storefront.checkout.store'), array_replace($payload, ['notes' => 'Otro']))->assertUnprocessable()->assertJsonValidationErrors('idempotency_key');
+        $variant->update(['price' => '100.00']);
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertOk()->assertJsonPath('subtotal', '179.00');
+        $this->assertDatabaseCount('online_order_requests', 1);
+        $this->assertDatabaseHas('online_order_request_items', ['product_variant_id' => $variant->id, 'quantity' => 2, 'unit_price' => '89.5']);
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('inventory_movements', 0);
+    }
+
+    public function test_online_request_only_accepts_valid_pickup_and_available_products(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create();
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $data = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
+        foreach (['customer_name', 'customer_phone'] as $field) {
+            $this->postJson(route('storefront.checkout.store'), array_replace($data, [$field => '']))->assertUnprocessable()->assertJsonValidationErrors($field);
+        }
+        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['fulfillment' => 'delivery']))->assertUnprocessable()->assertJsonValidationErrors('fulfillment');
+        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['items' => []]))->assertUnprocessable()->assertJsonValidationErrors('items');
+        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['items' => [['variant_ulid' => $variant->ulid, 'quantity' => 21]]]))->assertUnprocessable()->assertJsonValidationErrors('items.0.quantity');
+        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['notes' => str_repeat('a', 1001)]))->assertUnprocessable()->assertJsonValidationErrors('notes');
+        $product->update(['is_active' => false]);
+        $this->postJson(route('storefront.checkout.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('items');
+        $this->assertDatabaseCount('online_order_requests', 0);
+    }
+
+    public function test_online_request_administration_is_scoped_and_transitions_only_once(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['price' => '12.00']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $data = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
+        $this->postJson(route('storefront.checkout.store'), $data)->assertOk();
+        $order = OnlineOrderRequest::query()->firstOrFail();
+        $this->get(route('online-orders.index'))->assertRedirect();
+        $owner = User::factory()->create();
+        Membership::factory()->for($company)->for($owner)->owner()->create();
+        $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+        $this->get(route('online-orders.index', ['status' => 'pending_confirmation']))->assertOk()->assertSee($order->publicCode());
+        $this->get(route('online-orders.show', $order->id))->assertOk()->assertSee('https://wa.me/59170000000?text=', false);
+        $otherBranch = Branch::factory()->for($company)->create();
+        $foreign = OnlineOrderRequest::query()->create(['company_id' => $company->id, 'branch_id' => $otherBranch->id, 'idempotency_key' => (string) Str::uuid(), 'request_hash' => str_repeat('a', 64), 'customer_name' => 'Ajeno', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'status' => 'pending_confirmation', 'subtotal' => '1.00', 'total' => '1.00']);
+        $this->get(route('online-orders.show', $foreign->id))->assertNotFound();
+        [$otherCompany, $otherCompanyBranch] = $this->storefront('Otro restaurante', null);
+        $foreignCompany = OnlineOrderRequest::query()->create(['company_id' => $otherCompany->id, 'branch_id' => $otherCompanyBranch->id, 'idempotency_key' => (string) Str::uuid(), 'request_hash' => str_repeat('b', 64), 'customer_name' => 'Ajeno', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'status' => 'pending_confirmation', 'subtotal' => '1.00', 'total' => '1.00']);
+        $this->get(route('online-orders.show', $foreignCompany->id))->assertNotFound();
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'confirmed'])->assertRedirect();
+        $this->assertDatabaseHas('online_order_requests', ['id' => $order->id, 'status' => 'confirmed', 'resolved_by' => $owner->id]);
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertStatus(409);
+        $this->get(route('online-orders.index', ['status' => 'pending_confirmation']))->assertOk()->assertDontSee($order->publicCode());
+        $this->get(route('online-orders.index', ['from' => now()->addDay()->format('Y-m-d')]))->assertOk()->assertDontSee($order->publicCode());
+    }
+
+    public function test_online_request_rejects_unknown_products_and_obeys_demo_mode(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create();
+        $this->configureStorefront($company, $branch);
+        $data = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
+        $this->postJson(route('storefront.checkout.store'), $data)->assertForbidden();
+        config()->set('storefront.demo_mode', false);
+        $data['items'][0]['variant_ulid'] = (string) Str::ulid();
+        $this->postJson(route('storefront.checkout.store'), $data)->assertUnprocessable()->assertJsonValidationErrors('items');
+        $this->postJson(route('storefront.checkout.recover'), ['idempotency_key' => (string) Str::uuid()])->assertNotFound();
+        $this->assertDatabaseCount('online_order_requests', 0);
+    }
+
+    public function test_online_request_accepts_maximum_quantity_and_notes(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['price' => '10.50']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $this->postJson(route('storefront.checkout.store'), ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'notes' => str_repeat('a', 1000), 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 20]]])->assertOk()->assertJsonPath('subtotal', '210.00');
+        $this->assertDatabaseHas('online_order_requests', ['notes' => str_repeat('a', 1000), 'total' => '210']);
+    }
+
+    public function test_online_promotion_preserves_price_and_does_not_reserve_stock(): void
+    {
+        [$company, $branch, $category, $product] = $this->storefront('Masa y Mana', null);
+        $stockVariant = ProductVariant::factory()->for($product)->create();
+        $unit = Unit::factory()->for($company)->create();
+        $item = InventoryItem::query()->create(['company_id' => $company->id, 'unit_id' => $unit->id, 'product_variant_id' => $stockVariant->id, 'name' => 'Componente', 'is_active' => true]);
+        InventoryStock::query()->create(['company_id' => $company->id, 'branch_id' => $branch->id, 'inventory_item_id' => $item->id, 'quantity' => '10.000', 'average_cost' => '1.000000']);
+        InventoryBatch::factory()->for($company)->for($branch)->for($item)->create(['quantity_received' => '10.000', 'quantity_remaining' => '10.000']);
+        $promotion = $this->storefrontPromotion($company, $category, 'Combo', '55.00');
+        PromotionComponent::query()->create(['company_id' => $company->id, 'promotion_id' => $promotion->id, 'inventory_item_id' => $item->id, 'quantity' => '1.000']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $payload = ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $promotion->productVariant->ulid, 'quantity' => 2]]];
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertOk()->assertJsonPath('subtotal', '110.00');
+        $promotion->productVariant->update(['price' => '99.00']);
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertOk()->assertJsonPath('subtotal', '110.00');
+        $promotion->update(['ends_at' => now()->subMinute()]);
+        $payload['idempotency_key'] = (string) Str::uuid();
+        $this->postJson(route('storefront.checkout.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('items');
+        $this->assertDatabaseHas('online_order_request_items', ['product_name' => 'Combo', 'unit_price' => '55']);
+        $this->assertDatabaseCount('inventory_reservations', 0);
+        $this->assertDatabaseCount('inventory_movements', 0);
+    }
+
+    public function test_online_request_cancellation_and_admin_permission(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create();
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $this->postJson(route('storefront.checkout.store'), ['idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup', 'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]])->assertOk();
+        $order = OnlineOrderRequest::query()->firstOrFail();
+        $kitchen = User::factory()->create();
+        Membership::factory()->for($company)->for($kitchen)->create(['role' => MembershipRole::Kitchen]);
+        $this->actingAs($kitchen)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+        $this->get(route('online-orders.index'))->assertForbidden();
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertForbidden();
+        $owner = User::factory()->create();
+        Membership::factory()->for($company)->for($owner)->owner()->create();
+        $this->actingAs($owner)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'cancelled'])->assertRedirect();
+        $this->assertDatabaseHas('online_order_requests', ['id' => $order->id, 'status' => 'cancelled', 'resolved_by' => $owner->id]);
+        $this->post(route('online-orders.transition', $order->id), ['status' => 'confirmed'])->assertStatus(409);
+        $this->get(route('online-orders.index', ['status' => 'cancelled']))->assertOk()->assertSee($order->publicCode());
+    }
+
     public function test_checkout_requires_contact_details_and_rejects_invalid_items(): void
     {
         [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
@@ -346,7 +494,7 @@ class StorefrontTest extends TestCase
         $payload = ['customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
             'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
 
-        $this->get(route('storefront.checkout'))->assertOk()->assertDontSee('customer_email')->assertSee('Pedir por WhatsApp');
+        $this->get(route('storefront.checkout'))->assertOk()->assertDontSee('customer_email')->assertSee('Realizar pedido');
         foreach (['customer_name', 'customer_phone'] as $field) {
             $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, [$field => '  ']))
                 ->assertUnprocessable()->assertJsonValidationErrors($field);

@@ -210,23 +210,45 @@ const initCheckout = () => {
     if (!form) return;
     const submit = document.querySelector('[data-submit-order]');
     const errors = document.querySelector('[data-form-errors]');
-    const demoConfirmation = document.querySelector('[data-demo-confirmation]');
-    const deliveryFields = document.querySelector('[data-delivery-fields]');
-    const address = form.elements.namedItem('address');
-
-    const syncFulfillment = () => {
-        const fulfillment = form.querySelector('input[name="fulfillment"]:checked')?.value;
-        const isDelivery = fulfillment === 'delivery';
-        if (deliveryFields) deliveryFields.hidden = !isDelivery;
-        if (address) address.required = isDelivery;
+    const confirmation = document.querySelector('[data-demo-confirmation]');
+    const pendingKey = 'masa-y-mana-online-request-v1';
+    const fingerprint = () => JSON.stringify(cart.map((item) => [item.variantUlid, item.quantity]).sort((a, b) => a[0].localeCompare(b[0])));
+    const pending = () => {
+        try { return JSON.parse(localStorage.getItem(pendingKey) ?? 'null'); } catch { return null; }
     };
-
-    form.querySelectorAll('input[name="fulfillment"]').forEach((input) => input.addEventListener('change', syncFulfillment));
-    syncFulfillment();
+    const showError = (message) => { if (errors) { errors.textContent = message; errors.hidden = false; } };
+    const finish = (result, attempt) => {
+        if (!/^WEB-\d{6,}$/.test(result.code ?? '') || !/^\d+\.\d{2}$/.test(result.subtotal ?? '')) throw new Error('No se pudo verificar la respuesta.');
+        if (fingerprint() === attempt.fingerprint) { cart = []; saveCart(); }
+        localStorage.removeItem(pendingKey);
+        if (confirmation) {
+            confirmation.textContent = `Solicitud ${result.code} registrada. Subtotal: ${result.subtotal} Bs. El restaurante revisará tu pedido.`;
+            confirmation.hidden = false;
+        }
+        submit.disabled = false;
+        submit.textContent = 'Realizar pedido';
+    };
+    const headers = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' };
+    const recover = async (attempt) => {
+        const response = await fetch(form.dataset.recoverUrl, { method: 'POST', headers, body: JSON.stringify({ idempotency_key: attempt.key }) });
+        if (response.status === 404) return false;
+        if (!response.ok) throw new Error('No fue posible recuperar el pedido.');
+        finish(await response.json(), attempt);
+        return true;
+    };
+    const previous = pending();
+    if (previous && form.dataset.demo !== 'true') {
+        submit.disabled = true;
+        recover(previous).then((found) => {
+            if (!found) showError('No se encontró una confirmación. Reintenta con los mismos datos y carrito.');
+        }).catch(() => showError('No se pudo comprobar el pedido anterior. Reintenta con los mismos datos y carrito.'))
+            .finally(() => { submit.disabled = false; });
+    }
     submit?.addEventListener('click', () => form.requestSubmit());
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        if (submit.disabled) return;
         if (!form.reportValidity()) return;
         if (!cart.length) {
             toast('Agrega al menos un producto.');
@@ -236,26 +258,30 @@ const initCheckout = () => {
         submit.disabled = true;
         submit.textContent = 'Validando pedido…';
         if (errors) errors.hidden = true;
-        if (demoConfirmation) demoConfirmation.hidden = true;
+        if (confirmation) confirmation.hidden = true;
+        const existing = pending();
+        if (existing && existing.fingerprint !== fingerprint()) {
+            showError('Hay un pedido pendiente de verificación. Restaura el carrito original para reintentarlo.');
+            submit.disabled = false;
+            submit.textContent = 'Realizar pedido';
+            return;
+        }
+        const attempt = existing ?? { key: crypto.randomUUID(), fingerprint: fingerprint() };
+        localStorage.setItem(pendingKey, JSON.stringify(attempt));
         const fields = new FormData(form);
         const payload = {
             customer_name: fields.get('customer_name'),
             customer_phone: fields.get('customer_phone'),
-            fulfillment: fields.get('fulfillment'),
-            address: fields.get('address') || null,
-            reference: fields.get('reference') || null,
+            fulfillment: 'pickup',
             notes: fields.get('notes') || null,
+            idempotency_key: attempt.key,
             items: cart.map((item) => ({ variant_ulid: item.variantUlid, quantity: item.quantity })),
         };
 
         try {
             const response = await fetch(form.action, {
                 method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '',
-                },
+                headers,
                 body: JSON.stringify(payload),
             });
             const result = await response.json();
@@ -263,28 +289,14 @@ const initCheckout = () => {
                 const messages = Object.values(result.errors ?? {}).flat();
                 throw new Error(messages[0] ?? result.message ?? 'No pudimos validar el pedido.');
             }
-            if (result.demo === true) {
-                if (demoConfirmation) {
-                    demoConfirmation.textContent = `Simulación validada: ${result.item_count} producto(s), subtotal ${displayCents(moneyToCents(result.subtotal))} Bs. No se envió ningún pedido.`;
-                    demoConfirmation.hidden = false;
-                }
-                submit.disabled = false;
-                submit.innerHTML = '<span>◉</span> Simular nuevamente';
-                return;
-            }
-            if (typeof result.url !== 'string' || !result.url.startsWith('https://wa.me/')) {
-                throw new Error('El canal de pedido no está disponible.');
-            }
-            window.location.assign(result.url);
+            finish(result, attempt);
         } catch (error) {
             if (errors) {
                 errors.textContent = error instanceof Error ? error.message : 'No pudimos validar el pedido.';
                 errors.hidden = false;
             }
             submit.disabled = false;
-            submit.innerHTML = form.dataset.demo === 'true'
-                ? '<span>◉</span> Simular finalización'
-                : '<span>◉</span> Pedir por WhatsApp';
+            submit.textContent = 'Realizar pedido';
         }
     });
 };
