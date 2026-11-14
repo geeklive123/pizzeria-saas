@@ -23,9 +23,8 @@
                 <section class="checkout-card">
                     <div class="form-section-title"><span>1</span><div><h2>Datos de contacto</h2><p>Para identificar tu solicitud y poder confirmarla.</p></div></div>
                     <div class="field-grid">
-                        <label class="field field-full"><span>Nombre y apellido</span><input name="customer_name" type="text" autocomplete="name" maxlength="120" required></label>
+                        <label class="field"><span>Nombre y apellido</span><input name="customer_name" type="text" autocomplete="name" maxlength="120" required></label>
                         <label class="field"><span>Teléfono celular (WhatsApp)</span><input name="customer_phone" type="tel" autocomplete="tel" maxlength="30" required></label>
-                        <label class="field"><span>Correo electrónico <small>(opcional)</small></span><input name="customer_email" type="email" autocomplete="email" maxlength="255"></label>
                     </div>
                 </section>
 
@@ -57,7 +56,7 @@
                     <p class="summary-note">No incluye delivery. Los precios se validarán otra vez en el servidor antes de abrir WhatsApp.</p>
                     <div class="form-errors" data-form-errors role="alert" hidden></div>
                     <div class="demo-confirmation" data-demo-confirmation role="status" hidden></div>
-                    <button class="button whatsapp-button button-full" type="button" data-submit-order><span>◉</span> {{ $demoMode ? 'Simular finalización' : 'Enviar pedido por WhatsApp' }}</button>
+                    <button class="button whatsapp-button button-full" type="button" data-submit-order><span>◉</span> {{ $demoMode ? 'Simular finalización' : 'Pedir por WhatsApp' }}</button>
                     <p class="legal-note">Esta acción no crea una venta, no registra un pago y no descuenta inventario.@if($demoMode) Tampoco genera un enlace de envío.@endif</p>
                 </div>
                 <div class="trust-row"><span>48h<br><small>Masa madre</small></span><span>♨<br><small>Horno artesanal</small></span><span>✓<br><small>Precio validado</small></span></div>

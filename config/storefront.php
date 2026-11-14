@@ -10,7 +10,14 @@ return [
     | pero nunca construye ni devuelve enlaces de WhatsApp para enviar pedidos.
     |
     */
-    'demo_mode' => true,
+    'demo_mode' => env('STOREFRONT_DEMO_MODE', true),
+
+    // The public checkout destination is scoped to the configured storefront.
+    'checkout_whatsapp' => [
+        'company_id' => 1,
+        'branch_id' => 1,
+        'number' => '59157718695',
+    ],
 
     /*
     |--------------------------------------------------------------------------

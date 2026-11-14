@@ -241,7 +241,6 @@ const initCheckout = () => {
         const payload = {
             customer_name: fields.get('customer_name'),
             customer_phone: fields.get('customer_phone'),
-            customer_email: fields.get('customer_email') || null,
             fulfillment: fields.get('fulfillment'),
             address: fields.get('address') || null,
             reference: fields.get('reference') || null,
@@ -285,7 +284,7 @@ const initCheckout = () => {
             submit.disabled = false;
             submit.innerHTML = form.dataset.demo === 'true'
                 ? '<span>◉</span> Simular finalización'
-                : '<span>◉</span> Enviar pedido por WhatsApp';
+                : '<span>◉</span> Pedir por WhatsApp';
         }
     });
 };

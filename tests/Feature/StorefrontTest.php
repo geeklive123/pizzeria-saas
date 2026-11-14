@@ -112,9 +112,9 @@ class StorefrontTest extends TestCase
         config()->set('storefront.demo_mode', false);
 
         $response = $this->postJson(route('storefront.checkout.whatsapp'), [
-            'customer_name' => 'Valeria Méndez',
-            'customer_phone' => '76428910',
-            'customer_email' => 'valeria@example.com',
+            'customer_name' => '  Valeria   Méndez  ',
+            'customer_phone' => ' +591 (764) 28910 ',
+            'customer_email' => 'invalid-email-is-ignored',
             'fulfillment' => 'delivery',
             'address' => 'Av. Principal 320',
             'reference' => 'Portón rojo',
@@ -131,11 +131,17 @@ class StorefrontTest extends TestCase
             ->assertJsonPath('item_count', 2);
 
         $payload = $response->json();
-        $this->assertStringStartsWith('https://wa.me/59177700001?text=', $payload['url']);
+        $this->assertStringStartsWith('https://wa.me/59157718695?text=', $payload['url']);
         $this->assertStringContainsString($product->name, $payload['message']);
-        $this->assertStringContainsString('2 × '.$product->name.' (Familiar) — 179 Bs.', $payload['message']);
-        $this->assertStringContainsString('Costo de delivery: por confirmar', $payload['message']);
+        $this->assertStringContainsString('2 × '.$product->name.' (Familiar) — Bs 179', $payload['message']);
+        $this->assertStringContainsString('*Delivery:* Por confirmar', $payload['message']);
         $this->assertStringNotContainsString('0.01', $payload['message']);
+        $this->assertStringContainsString('*Cliente:* Valeria Méndez', $payload['message']);
+        $this->assertStringContainsString('*Celular:* +59176428910', $payload['message']);
+        $this->assertStringContainsString('*Observaciones:* Sin picante', $payload['message']);
+        $this->assertStringNotContainsString('invalid-email-is-ignored', $payload['message']);
+        $this->assertSame($payload['message'], rawurldecode(parse_url($payload['url'], PHP_URL_QUERY) ? substr(parse_url($payload['url'], PHP_URL_QUERY), 5) : ''));
+
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('inventory_movements', 0);
@@ -317,6 +323,7 @@ class StorefrontTest extends TestCase
 
     public function test_checkout_requires_an_official_configured_whatsapp_number(): void
     {
+        config()->set('storefront.checkout_whatsapp', null);
         [$company, $branch, , $product] = $this->storefront('Masa & Maña', null);
         $variant = ProductVariant::factory()->for($product)->create();
         $this->configureStorefront($company, $branch);
@@ -328,6 +335,52 @@ class StorefrontTest extends TestCase
             'fulfillment' => 'pickup',
             'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
         ])->assertUnprocessable()->assertJsonValidationErrors('storefront');
+    }
+
+    public function test_checkout_requires_contact_details_and_rejects_invalid_items(): void
+    {
+        [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
+        $variant = ProductVariant::factory()->for($product)->create(['price' => '10.00']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $payload = ['customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
+            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]]];
+
+        $this->get(route('storefront.checkout'))->assertOk()->assertDontSee('customer_email')->assertSee('Pedir por WhatsApp');
+        foreach (['customer_name', 'customer_phone'] as $field) {
+            $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, [$field => '  ']))
+                ->assertUnprocessable()->assertJsonValidationErrors($field);
+        }
+        $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, ['customer_phone' => 'invalid']))
+            ->assertUnprocessable()->assertJsonValidationErrors('customer_phone');
+        foreach ([0, 21] as $quantity) {
+            $this->postJson(route('storefront.checkout.whatsapp'), array_replace($payload, ['items' => [['variant_ulid' => $variant->ulid, 'quantity' => $quantity]]]))
+                ->assertUnprocessable()->assertJsonValidationErrors('items.0.quantity');
+        }
+        $response = $this->postJson(route('storefront.checkout.whatsapp'), $payload)->assertOk();
+        $this->assertStringContainsString('*Modalidad:* Recojo en local', $response->json('message'));
+        $this->assertStringNotContainsString('*Delivery:*', $response->json('message'));
+        $product->update(['is_active' => false]);
+        $this->postJson(route('storefront.checkout.whatsapp'), $payload)->assertUnprocessable()->assertJsonValidationErrors('items');
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('inventory_movements', 0);
+    }
+
+    public function test_checkout_keeps_other_company_destination_and_identity_separate(): void
+    {
+        $this->storefront('Primera tienda', '70000000');
+        [$company, $branch, , $product] = $this->storefront('Otra tienda', '+591 77700001');
+        $variant = ProductVariant::factory()->for($product)->create(['price' => '10.00']);
+        $this->configureStorefront($company, $branch);
+        config()->set('storefront.demo_mode', false);
+        $response = $this->postJson(route('storefront.checkout.whatsapp'), [
+            'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'pickup',
+            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
+        ])->assertOk();
+        $this->assertStringStartsWith('https://wa.me/59177700001?text=', $response->json('url'));
+        $this->assertStringContainsString('*OTRA TIENDA', $response->json('message'));
+        $this->assertStringNotContainsString('59157718695', $response->json('url'));
     }
 
     public function test_visibility_list_and_active_category_are_required_for_publication(): void

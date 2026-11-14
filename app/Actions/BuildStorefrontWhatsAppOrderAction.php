@@ -25,7 +25,7 @@ class BuildStorefrontWhatsAppOrderAction
 
     /**
      * @param  array{
-     *     customer_name:string,customer_phone:string,customer_email?:?string,
+     *     customer_name:string,customer_phone:string,
      *     fulfillment:string,address?:?string,reference?:?string,notes?:?string,
      *     items:list<array{variant_ulid:string,quantity:int}>
      * }  $data
@@ -64,7 +64,10 @@ class BuildStorefrontWhatsAppOrderAction
         $this->assertAvailability($branch, $requested, $variants);
 
         [$detailLines, $subtotal, $itemCount] = $this->detail($requested, $variants);
-        $message = $this->message($company, $branch, $data, $detailLines, $subtotal);
+        $destination = config('storefront.checkout_whatsapp');
+        $isConfiguredStore = (int) data_get($destination, 'company_id') === (int) $company->id
+            && (int) data_get($destination, 'branch_id') === (int) $branch->id;
+        $message = $this->message($company, $isConfiguredStore, $data, $detailLines, $subtotal);
 
         if ((bool) config('storefront.demo_mode', true)) {
             return [
@@ -76,7 +79,9 @@ class BuildStorefrontWhatsAppOrderAction
             ];
         }
 
-        $phone = $this->whatsAppPhone($branch->phone ?: $company->phone);
+        $phone = $isConfiguredStore
+            ? $this->whatsAppPhone(data_get($destination, 'number'))
+            : $this->whatsAppPhone($branch->phone ?: $company->phone);
         if ($phone === null) {
             throw ValidationException::withMessages([
                 'storefront' => 'El restaurante todavía no tiene un número oficial de WhatsApp configurado.',
@@ -136,7 +141,7 @@ class BuildStorefrontWhatsAppOrderAction
             $subtotal = $subtotal->plus($lineTotal);
             $itemCount += $quantity;
             $lines[] = sprintf(
-                '• %d × %s (%s) — %s Bs.',
+                '%d × %s (%s) — Bs %s',
                 $quantity,
                 $variant->product->name,
                 $variant->name,
@@ -151,52 +156,38 @@ class BuildStorefrontWhatsAppOrderAction
      * @param  array<string, mixed>  $data
      * @param  list<string>  $detailLines
      */
-    private function message(
-        Company $company,
-        Branch $branch,
-        array $data,
-        array $detailLines,
-        string $subtotal,
-    ): string {
+    private function message(Company $company, bool $isConfiguredStore, array $data, array $detailLines, string $subtotal): string
+    {
         $isDelivery = $data['fulfillment'] === 'delivery';
+        $storeName = $isConfiguredStore ? 'Masa y Maña' : $company->name;
         $lines = [
-            '*SOLICITUD DE PEDIDO WEB*',
-            '*'.$company->name.'*',
+            '*'.mb_strtoupper($storeName).' — NUEVO PEDIDO ONLINE*',
             '',
             '*Cliente:* '.$data['customer_name'],
-            '*Teléfono:* '.$data['customer_phone'],
+            '*Celular:* '.$data['customer_phone'],
+            '*Modalidad:* '.($isDelivery ? 'Delivery' : 'Recojo en local'),
         ];
-
-        if (filled($data['customer_email'] ?? null)) {
-            $lines[] = '*Correo:* '.$data['customer_email'];
-        }
-
-        $lines[] = '*Modalidad:* '.($isDelivery ? 'Delivery' : 'Recojo en local');
-        $lines[] = '*Sucursal:* '.$branch->name;
 
         if ($isDelivery) {
             $lines[] = '*Dirección:* '.$data['address'];
             if (filled($data['reference'] ?? null)) {
                 $lines[] = '*Referencia:* '.$data['reference'];
             }
-        } elseif (filled($branch->address)) {
-            $lines[] = '*Dirección de recojo:* '.$branch->address;
         }
 
-        array_push($lines, '', '*Detalle:*', ...$detailLines);
+        array_push($lines, '', '*DETALLE DEL PEDIDO*', ...$detailLines);
         $lines[] = '';
-        $lines[] = '*Subtotal de productos: '.$this->displayMoney($subtotal).' Bs.*';
+        $lines[] = '*Subtotal:* Bs '.$this->displayMoney($subtotal);
         if ($isDelivery) {
-            $lines[] = 'Costo de delivery: por confirmar con el restaurante.';
+            $lines[] = '';
+            $lines[] = '*Delivery:* Por confirmar';
         }
-
         if (filled($data['notes'] ?? null)) {
             $lines[] = '';
             $lines[] = '*Observaciones:* '.$data['notes'];
         }
-
         $lines[] = '';
-        $lines[] = 'Por favor, confirmar disponibilidad y total final.';
+        $lines[] = 'Pedido enviado desde la tienda online de '.$storeName.'.';
 
         return implode("\n", $lines);
     }
