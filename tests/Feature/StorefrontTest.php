@@ -352,7 +352,7 @@ class StorefrontTest extends TestCase
         $this->get(route('online-orders.show', $fence->id))->assertNotFound();
     }
 
-    public function test_online_request_only_accepts_valid_pickup_and_available_products(): void
+    public function test_online_request_validates_contact_delivery_location_and_available_products(): void
     {
         [$company, $branch, , $product] = $this->storefront('Masa y Mana', null);
         $variant = ProductVariant::factory()->for($product)->create();
@@ -362,7 +362,7 @@ class StorefrontTest extends TestCase
         foreach (['customer_name', 'customer_phone'] as $field) {
             $this->postJson(route('storefront.checkout.store'), array_replace($data, [$field => '']))->assertUnprocessable()->assertJsonValidationErrors($field);
         }
-        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['fulfillment' => 'delivery']))->assertUnprocessable()->assertJsonValidationErrors('fulfillment');
+        $this->postJson(route('storefront.checkout.store'), array_replace($data, ['fulfillment' => 'delivery']))->assertUnprocessable()->assertJsonValidationErrors(['address', 'latitude', 'longitude', 'location_confirmed']);
         $this->postJson(route('storefront.checkout.store'), array_replace($data, ['items' => []]))->assertUnprocessable()->assertJsonValidationErrors('items');
         $this->postJson(route('storefront.checkout.store'), array_replace($data, ['items' => [['variant_ulid' => $variant->ulid, 'quantity' => 21]]]))->assertUnprocessable()->assertJsonValidationErrors('items.0.quantity');
         $this->postJson(route('storefront.checkout.store'), array_replace($data, ['notes' => str_repeat('a', 1001)]))->assertUnprocessable()->assertJsonValidationErrors('notes');

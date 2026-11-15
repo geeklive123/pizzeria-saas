@@ -4,6 +4,7 @@ import { local } from 'laravel-vite-plugin/fonts';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+    build: { emptyOutDir: false },
     plugins: [
         laravel({
             input: [

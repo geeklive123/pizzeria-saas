@@ -1,3 +1,5 @@
+import { initDelivery } from './delivery';
+
 const CART_KEY = 'masa-y-mana-storefront-cart-v1';
 const MAX_QUANTITY = 20;
 
@@ -211,6 +213,7 @@ const initCheckout = () => {
     const submit = document.querySelector('[data-submit-order]');
     const errors = document.querySelector('[data-form-errors]');
     const confirmation = document.querySelector('[data-demo-confirmation]');
+    const delivery = typeof initDelivery === 'function' ? initDelivery(form) : null;
     const pendingKey = 'masa-y-mana-online-request-v1';
     const fingerprint = () => JSON.stringify(cart.map((item) => [item.variantUlid, item.quantity]).sort((a, b) => a[0].localeCompare(b[0])));
     const pending = () => {
@@ -224,7 +227,7 @@ const initCheckout = () => {
             localStorage.removeItem(pendingKey);
         }
         if (confirmation) {
-            confirmation.textContent = `Solicitud ${result.code} registrada. Subtotal: ${result.subtotal} Bs. El restaurante revisará tu pedido.`;
+            confirmation.textContent = `Solicitud ${result.code} registrada. Subtotal: ${result.subtotal} Bs. ${result.fulfillment === 'delivery' && result.delivery_coverage === 'free' ? 'Delivery gratuito · Bs 0,00.' : 'El restaurante revisará tu pedido.'}`;
             confirmation.hidden = false;
         }
         submit.disabled = false;
@@ -261,6 +264,8 @@ const initCheckout = () => {
             toast('Agrega al menos un producto.');
             return;
         }
+        const fulfillment = delivery ? delivery.payload() : { fulfillment: 'pickup' };
+        if (!fulfillment) return;
 
         submit.disabled = true;
         submit.textContent = 'Validando pedido…';
@@ -275,7 +280,7 @@ const initCheckout = () => {
             const payload = {
                 customer_name: fields.get('customer_name'),
                 customer_phone: fields.get('customer_phone'),
-                fulfillment: 'pickup',
+                ...fulfillment,
                 notes: fields.get('notes') || null,
                 idempotency_key: attempt.key,
                 items: cart.map((item) => ({ variant_ulid: item.variantUlid, quantity: item.quantity })),

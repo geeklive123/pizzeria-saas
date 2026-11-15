@@ -27,6 +27,18 @@
     "file": "assets/instrument-sans-600-normal-B9e8oLYv.woff",
     "src": "_instrument-sans-600-normal-B9e8oLYv.woff"
   },
+  "node_modules/leaflet/dist/images/layers-2x.png": {
+    "file": "assets/layers-2x-Bpkbi35X.png",
+    "src": "node_modules/leaflet/dist/images/layers-2x.png"
+  },
+  "node_modules/leaflet/dist/images/layers.png": {
+    "file": "assets/layers-BWBAp2CZ.png",
+    "src": "node_modules/leaflet/dist/images/layers.png"
+  },
+  "node_modules/leaflet/dist/images/marker-icon.png": {
+    "file": "assets/marker-icon-hN30_KVU.png",
+    "src": "node_modules/leaflet/dist/images/marker-icon.png"
+  },
   "resources/css/app.css": {
     "file": "assets/app-CoxYEZ3T.css",
     "name": "app",
@@ -37,7 +49,7 @@
     "isEntry": true
   },
   "resources/css/storefront.css": {
-    "file": "assets/storefront-BZYztdiF.css",
+    "file": "assets/storefront-xLZclLsg.css",
     "name": "storefront",
     "names": [
       "storefront.css"
@@ -52,9 +64,17 @@
     "isEntry": true
   },
   "resources/js/storefront.js": {
-    "file": "assets/storefront-DoywEuoW.js",
+    "file": "assets/storefront-D5OpfXTt.js",
     "name": "storefront",
     "src": "resources/js/storefront.js",
-    "isEntry": true
+    "isEntry": true,
+    "css": [
+      "assets/storefront-1DTFk8zz.css"
+    ],
+    "assets": [
+      "assets/layers-BWBAp2CZ.png",
+      "assets/layers-2x-Bpkbi35X.png",
+      "assets/marker-icon-hN30_KVU.png"
+    ]
   }
 }

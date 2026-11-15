@@ -30,14 +30,22 @@ class ConvertOnlineOrderRequestAction
 
         $request->loadMissing(['company', 'items']);
         $branch = Branch::query()->where('company_id', $request->company_id)->findOrFail($request->branch_id);
-        if ($request->fulfillment !== 'pickup' || $request->items->isEmpty()) {
+        if (! in_array($request->fulfillment, ['pickup', 'delivery'], true) || $request->items->isEmpty()) {
             throw new DomainException('La solicitud no contiene un pedido válido de recojo.');
+        }
+        if ($request->fulfillment === 'delivery' && ($request->delivery_coverage !== 'free' || $request->delivery_quote_status !== 'not_required' || ! $request->delivery_address)) {
+            throw new DomainException('El delivery necesita una cotización antes de poder confirmarse.');
+        }
+
+        $notes = $request->notes;
+        if ($request->fulfillment === 'delivery') {
+            $notes = trim("Delivery gratuito. Dirección: {$request->delivery_address}. Referencia: {$request->delivery_reference}. Coordenadas: {$request->delivery_latitude}, {$request->delivery_longitude}. ".$notes);
         }
 
         $order = $this->createOrder->execute($request->company, $branch, $user, [
             'customer_name' => $request->customer_name,
             'customer_phone' => $request->customer_phone,
-            'notes' => $request->notes,
+            'notes' => $notes,
         ]);
         $sum = BigDecimal::zero();
         foreach ($request->items as $line) {

@@ -7,14 +7,16 @@
 <section class="checkout-page">
     <div class="shell">
         <a class="back-link" href="{{ route('storefront.menu') }}">← Volver a la carta artesanal</a>
-        <div class="checkout-steps" aria-label="Progreso"><span class="done">✓ Carrito</span><i></i><span class="active">2 Datos de recojo</span><i></i><span>3 Confirmación</span></div>
+        <div class="checkout-steps" aria-label="Progreso"><span class="done">✓ Carrito</span><i></i><span class="active" data-checkout-mode-label>2 Datos de recojo</span><i></i><span>3 Confirmación</span></div>
 
         <div class="checkout-grid">
             <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
                 @csrf
                 <section class="checkout-card">
                     <span class="form-step">Modalidad</span>
-                    <div class="fulfillment-grid"><label class="choice-card"><input type="radio" name="fulfillment" value="pickup" checked><span><b>Recojo en local</b><small>{{ $branch->address ?: $branch->name }}</small></span></label></div>
+                    <div class="fulfillment-grid"><label class="choice-card"><input type="radio" name="fulfillment" value="pickup" checked><span><b>Recojo en local</b><small>{{ $branch->address ?: $branch->name }}</small></span></label>
+                        @if($delivery)<label class="choice-card"><input type="radio" name="fulfillment" value="delivery"><span><b>Delivery</b><small>Gratis hasta {{ $delivery['free_radius_m'] }} m en línea recta</small></span></label>@endif
+                    </div>
                 </section>
 
                 <section class="checkout-card">
@@ -25,8 +27,25 @@
                     </div>
                 </section>
 
+                @if($delivery)
+                <section class="checkout-card delivery-fields" data-delivery-fields hidden
+                    data-latitude="{{ $delivery['latitude'] }}" data-longitude="{{ $delivery['longitude'] }}" data-radius="{{ $delivery['free_radius_m'] }}"
+                    data-tile-url="{{ config('storefront.delivery.tile_url') }}" data-search-url="{{ route('storefront.delivery.search') }}" data-coverage-url="{{ route('storefront.delivery.coverage') }}">
+                    <div class="form-section-title"><span>2</span><div><h2>Ubicación de entrega</h2><p>Busca tu dirección o selecciona el punto en el mapa.</p></div></div>
+                    <label class="field"><span>Dirección</span><input name="address" type="text" autocomplete="off" maxlength="500" data-delivery-address></label>
+                    <ul class="delivery-suggestions" data-delivery-suggestions aria-label="Direcciones sugeridas"></ul>
+                    <button class="text-button" type="button" data-delivery-geolocate>Usar mi ubicación actual</button>
+                    <div class="delivery-map" data-delivery-map aria-label="Mapa para seleccionar el punto de entrega"></div>
+                    <label class="field"><span>Referencia del domicilio</span><textarea name="reference" rows="2" maxlength="500" placeholder="Ej.: portón verde, frente a la plaza"></textarea></label>
+                    <p class="delivery-status" data-delivery-status role="status" aria-live="polite">Toca el mapa o busca una dirección.</p>
+                    <p class="delivery-cost-warning" data-delivery-cost-warning hidden>Ubicación fuera de cobertura. Cambia el punto o elige recojo en local.</p>
+                    <button class="button button-primary" type="button" data-delivery-confirm disabled>Confirmar punto de entrega</button>
+                    <p class="summary-note">Distancia en línea recta. Fuera del radio gratuito puedes elegir recojo en local.</p>
+                </section>
+                @endif
+
                 <section class="checkout-card">
-                    <div class="form-section-title"><span>2</span><div><h2>Observaciones</h2><p>Indicaciones para el restaurante.</p></div></div>
+                    <div class="form-section-title"><span>3</span><div><h2>Observaciones</h2><p>Indicaciones para el restaurante.</p></div></div>
                     <label class="field"><span>Notas del pedido <small>(opcional)</small></span><textarea name="notes" rows="4" maxlength="1000" placeholder="Ej.: alergia que debamos conocer…"></textarea></label>
                 </section>
             </form>

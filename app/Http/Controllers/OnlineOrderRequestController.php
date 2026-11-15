@@ -43,7 +43,7 @@ class OnlineOrderRequestController extends Controller
         if (strlen($phone) === 8) {
             $phone = '591'.$phone;
         }
-        $message = 'Hola, te contactamos por tu solicitud '.$order->publicCode().' para coordinar la hora de recojo.';
+        $message = 'Hola, te contactamos por tu solicitud '.$order->publicCode().($order->fulfillment === 'delivery' ? ' para coordinar el delivery.' : ' para coordinar la hora de recojo.');
 
         return view('online-orders.show', ['order' => $order, 'whatsapp' => 'https://wa.me/'.$phone.'?text='.rawurlencode($message)]);
     }

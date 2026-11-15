@@ -3,6 +3,13 @@
 return [
     // Requires the additive POS-link migration; disabled until explicitly enabled.
     'online_pos_conversion_enabled' => env('STOREFRONT_ONLINE_POS_CONVERSION_ENABLED', false),
+    'delivery' => [
+        'branches' => [
+            '1:1' => ['latitude' => env('DELIVERY_LATITUDE', -17.3769946), 'longitude' => env('DELIVERY_LONGITUDE', -66.1771762), 'free_radius_m' => env('DELIVERY_FREE_RADIUS_M', 800)],
+        ],
+        'tile_url' => env('DELIVERY_TILE_URL', 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'),
+        'photon_url' => env('DELIVERY_PHOTON_URL', 'https://photon.komoot.io/api/'),
+    ],
     /*
     |--------------------------------------------------------------------------
     | Modo de demostración

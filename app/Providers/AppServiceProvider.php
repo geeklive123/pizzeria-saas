@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Contracts\AddressSearch;
 use App\Models\Branch;
 use App\Models\CashRegister;
 use App\Models\CashSession;
@@ -56,6 +57,7 @@ use App\Policies\SupplierPolicy;
 use App\Printing\Contracts\ThermalPrinterTransport;
 use App\Printing\FileThermalPrinterTransport;
 use App\Printing\WindowsRawPrinterTransport;
+use App\Services\PhotonAddressSearch;
 use App\Services\PrintAgentStatusService;
 use App\Support\BranchContext;
 use App\Support\CompanyContext;
@@ -72,6 +74,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(AddressSearch::class, PhotonAddressSearch::class);
         $this->app->scoped(CompanyContext::class);
         $this->app->scoped(BranchContext::class);
         $this->app->bind(ThermalPrinterTransport::class, function ($app): ThermalPrinterTransport {

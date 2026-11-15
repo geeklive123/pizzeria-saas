@@ -35,6 +35,7 @@ use App\Http\Controllers\RestaurantTableController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\Storefront\CheckoutController as StorefrontCheckoutController;
+use App\Http\Controllers\Storefront\DeliveryController;
 use App\Http\Controllers\Storefront\HomeController as StorefrontHomeController;
 use App\Http\Controllers\Storefront\LocationController as StorefrontLocationController;
 use App\Http\Controllers\Storefront\MenuController as StorefrontMenuController;
@@ -53,6 +54,8 @@ Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->
     Route::get('/promociones', StorefrontPromotionController::class)->name('promotions');
     Route::get('/ubicacion', StorefrontLocationController::class)->name('location');
     Route::get('/checkout', [StorefrontCheckoutController::class, 'show'])->name('checkout');
+    Route::post('/checkout/delivery/buscar', [DeliveryController::class, 'search'])->middleware('throttle:20,1,delivery-search:')->name('delivery.search');
+    Route::post('/checkout/delivery/cobertura', [DeliveryController::class, 'coverage'])->middleware('throttle:30,1,delivery-coverage:')->name('delivery.coverage');
     Route::post('/checkout/solicitudes', [StorefrontCheckoutController::class, 'store'])->middleware('throttle:10,1')->name('checkout.store');
     Route::post('/checkout/solicitudes/recuperar', [StorefrontCheckoutController::class, 'recover'])->middleware('throttle:10,1')->name('checkout.recover');
     Route::post('/checkout/solicitudes/resolver', [StorefrontCheckoutController::class, 'resolve'])->middleware('throttle:10,1')->name('checkout.resolve');

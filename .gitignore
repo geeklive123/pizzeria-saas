@@ -37,6 +37,9 @@
 !/public/build/assets/instrument-sans-*.woff2
 !/public/build/assets/storefront-*.js
 !/public/build/assets/storefront-*.css
+!/public/build/assets/layers-*.png
+!/public/build/assets/layers-2x-*.png
+!/public/build/assets/marker-icon-*.png
 /public/fonts-manifest.dev.json
 /public/hot
 /public/storage
