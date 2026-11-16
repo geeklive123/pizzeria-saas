@@ -18,6 +18,9 @@ class CheckoutController extends Controller
     public function store(OnlineOrderRequest $request, CreateOnlineOrderRequestAction $action): JsonResponse
     {
         abort_if(config('storefront.demo_mode', true), 403, 'La tienda está en modo demostración.');
+        if (config('storefront.delivery_payment_preparation_enabled') && $request->validated('fulfillment') === 'delivery') {
+            throw ValidationException::withMessages(['fulfillment' => 'Actualiza la página para preparar tu pedido de delivery.']);
+        }
         try {
             $order = $action->execute($request->attributes->get('storefrontCompany'), $request->attributes->get('storefrontBranch'), $request->validated());
         } catch (\DomainException $exception) {
@@ -35,7 +38,8 @@ class CheckoutController extends Controller
         try {
             $order = OnlineRequest::query()->forCompany($request->attributes->get('storefrontCompany'))
                 ->where('branch_id', $request->attributes->get('storefrontBranch')->id)
-                ->where('idempotency_key', $data['idempotency_key'])->where('is_fence', false)->firstOrFail();
+                ->where('idempotency_key', $data['idempotency_key'])->where('is_fence', false)
+                ->whereIn('status', ['pending_confirmation', 'confirmed', 'cancelled'])->firstOrFail();
         } catch (QueryException) {
             return response()->json(['message' => 'No se pudo verificar el pedido. Inténtalo de nuevo.'], 503)->header('Cache-Control', 'no-store');
         }
@@ -51,6 +55,8 @@ class CheckoutController extends Controller
         } catch (QueryException) {
             return response()->json(['message' => 'No se pudo verificar el pedido. Inténtalo de nuevo.'], 503)->header('Cache-Control', 'no-store');
         }
+
+        abort_if(! $result->is_fence && ! in_array($result->status, ['pending_confirmation', 'confirmed', 'cancelled'], true), 404);
 
         return response()->json($result->is_fence ? ['created' => false] : ['created' => true] + $this->summary($result))->header('Cache-Control', 'no-store');
     }

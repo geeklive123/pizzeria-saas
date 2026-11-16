@@ -17,7 +17,7 @@ class OnlineOrderRequest extends Model
 
     protected function casts(): array
     {
-        return ['is_fence' => 'boolean', 'subtotal' => 'decimal:2', 'total' => 'decimal:2', 'resolved_at' => 'immutable_datetime', 'converted_at' => 'immutable_datetime', 'legacy_reviewed_at' => 'immutable_datetime'];
+        return ['is_fence' => 'boolean', 'subtotal' => 'decimal:2', 'total' => 'decimal:2', 'resolved_at' => 'immutable_datetime', 'converted_at' => 'immutable_datetime', 'legacy_reviewed_at' => 'immutable_datetime', 'preparation_expires_at' => 'immutable_datetime'];
     }
 
     public function items(): HasMany

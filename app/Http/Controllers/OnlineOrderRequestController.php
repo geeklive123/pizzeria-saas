@@ -20,7 +20,7 @@ class OnlineOrderRequestController extends Controller
     {
         Gate::authorize('viewAny', OnlineOrderRequest::class);
         $filters = $request->validate(['status' => ['nullable', Rule::in(['pending_confirmation', 'confirmed', 'cancelled'])], 'from' => ['nullable', 'date_format:Y-m-d'], 'to' => ['nullable', 'date_format:Y-m-d', ...($request->filled('from') ? ['after_or_equal:from'] : [])]]);
-        $query = OnlineOrderRequest::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)->where('is_fence', false)
+        $query = OnlineOrderRequest::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)->where('is_fence', false)->whereIn('status', ['pending_confirmation', 'confirmed', 'cancelled'])
             ->withSum('items', 'quantity')->withCount(['items as unclassified_items_count' => fn ($query) => $query->whereNull('was_promotion')]);
         if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);

@@ -1,0 +1,17 @@
+# Preparación de delivery para pago futuro
+
+La bandera `STOREFRONT_DELIVERY_PAYMENT_PREPARATION_ENABLED` está desactivada por defecto. Al habilitarla, solo delivery gratuito utiliza la preparación; recojo conserva el flujo previo. Este sprint no genera QR, pagos, órdenes POS, movimientos, reservas, consumos ni impresiones.
+
+La preparación reutiliza `online_order_requests` y sus líneas históricas. Se registra como `payment_preparation`, con el UUID v4 de intento existente, caja y vencimiento de 15 minutos. La migración aditiva vincula la caja mediante una clave foránea que incluye empresa y sucursal. El POS no convierte preparaciones; se excluyen del listado operativo de solicitudes. La cancelación o invalidación conserva los datos históricos.
+
+Con la bandera activada, el endpoint convencional rechaza delivery. El endpoint de preparación comprueba la caja dentro de la transacción antes de crear la solicitud y sus líneas, por lo que una caja cerrada no deja una solicitud pendiente nueva. Al recuperar o reintentar una preparación se vuelve a comprobar su caja original; si cerró, se invalida. Recojo continúa usando el endpoint convencional.
+
+El checkout consulta el estado de la caja de la sucursal al cargar, cada 15 segundos mientras la pestaña está visible y al recuperar el foco. En delivery deshabilita el botón y muestra una advertencia si la caja está cerrada o no se puede consultar; recojo conserva su comportamiento. El estado visual puede tardar hasta la siguiente consulta en reflejar un cambio, por lo que la comprobación transaccional del servidor sigue siendo obligatoria.
+
+El servidor recalcula cobertura y precios, verifica disponibilidad y bloquea la sesión abierta de la sucursal durante la creación. Si hay varias cajas abiertas se elige determinísticamente la primera por identificador; no se abre una caja ni se inventa un cajero. La recuperación vuelve a comprobar la misma caja, vencimiento, cobertura, disponibilidad y precios. Si alguna condición cambió, se invalida la preparación; una caja nueva no reactiva la anterior. No se reserva stock, por lo que la disponibilidad debe comprobarse de nuevo antes de cualquier operación posterior.
+
+El navegador conserva un identificador aleatorio y un resumen criptográfico local del contenido, no los datos personales del formulario. Antes de crear una nueva preparación resuelve el intento anterior; si el contenido cambió lo cancela. Un cambio de ubicación o formulario solicita la cancelación. Si la conexión falla, conserva la identidad y vuelve a resolverla antes de continuar. El token es un secreto de acceso y debe protegerse frente a XSS; el código público correlativo no autoriza consultas de preparación.
+
+Antes de habilitar la bandera hay que ensayar la migración y la configuración en una copia equivalente, y verificar la caja, cobertura y conectividad. Las migraciones de producción requieren un respaldo y una ventana operativa. La preparación no es una autorización para conectar Banco Económico.
+
+En el siguiente sprint el intento bancario deberá tener identidad y estado propios, conservar importe y asociación de forma inmutable, y revalidar preparación y caja bajo bloqueos antes de generar el QR. La expiración o cancelación de la preparación no demuestra que un pago tardío no exista: cualquier resultado bancario incierto o tardío debe conservarse y resolverse mediante conciliación, sin borrar registros ni repetir cobros automáticamente.

@@ -39,6 +39,7 @@ use App\Http\Controllers\Storefront\DeliveryController;
 use App\Http\Controllers\Storefront\HomeController as StorefrontHomeController;
 use App\Http\Controllers\Storefront\LocationController as StorefrontLocationController;
 use App\Http\Controllers\Storefront\MenuController as StorefrontMenuController;
+use App\Http\Controllers\Storefront\PaymentPreparationController;
 use App\Http\Controllers\Storefront\PromotionController as StorefrontPromotionController;
 use App\Http\Controllers\SupplierController;
 use App\Http\Controllers\ToppingController;
@@ -56,6 +57,10 @@ Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->
     Route::get('/checkout', [StorefrontCheckoutController::class, 'show'])->name('checkout');
     Route::post('/checkout/delivery/buscar', [DeliveryController::class, 'search'])->middleware('throttle:20,1,delivery-search:')->name('delivery.search');
     Route::post('/checkout/delivery/cobertura', [DeliveryController::class, 'coverage'])->middleware('throttle:30,1,delivery-coverage:')->name('delivery.coverage');
+    Route::get('/checkout/preparacion/disponibilidad', [PaymentPreparationController::class, 'availability'])->middleware('throttle:60,1')->name('preparation.availability');
+    Route::post('/checkout/preparacion', [PaymentPreparationController::class, 'store'])->middleware('throttle:10,1')->name('preparation.store');
+    Route::post('/checkout/preparacion/resolver', [PaymentPreparationController::class, 'resolve'])->middleware('throttle:10,1')->name('preparation.resolve');
+    Route::post('/checkout/preparacion/cancelar', [PaymentPreparationController::class, 'cancel'])->middleware('throttle:10,1')->name('preparation.cancel');
     Route::post('/checkout/solicitudes', [StorefrontCheckoutController::class, 'store'])->middleware('throttle:10,1')->name('checkout.store');
     Route::post('/checkout/solicitudes/recuperar', [StorefrontCheckoutController::class, 'recover'])->middleware('throttle:10,1')->name('checkout.recover');
     Route::post('/checkout/solicitudes/resolver', [StorefrontCheckoutController::class, 'resolve'])->middleware('throttle:10,1')->name('checkout.resolve');

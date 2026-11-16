@@ -1,6 +1,8 @@
 import { initDelivery } from './delivery';
+import { initCashAvailability } from './cash-availability';
 
 const CART_KEY = 'masa-y-mana-storefront-cart-v1';
+const PREPARATION_KEY = 'masa-y-mana-delivery-preparation-v1';
 const MAX_QUANTITY = 20;
 
 const escapeHtml = (value) => String(value)
@@ -44,6 +46,14 @@ let cart = readCart();
 
 const saveCart = () => {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
+    try {
+        const pending = JSON.parse(localStorage.getItem(PREPARATION_KEY) ?? 'null');
+        if (pending?.key) {
+            pending.dirty = true;
+            localStorage.setItem(PREPARATION_KEY, JSON.stringify(pending));
+            document.querySelector('[data-checkout-form]')?.dispatchEvent(new Event('storefront:preparation-dirty'));
+        }
+    } catch { /* Keep the cart usable if local storage contains invalid data. */ }
     renderCart();
 };
 
@@ -121,7 +131,7 @@ const renderCart = () => {
         link.style.opacity = cart.length === 0 ? '.45' : '';
     });
 
-    document.querySelectorAll('[data-submit-order]').forEach((button) => { button.disabled = cart.length === 0; });
+    document.querySelectorAll('[data-submit-order]').forEach((button) => { button.disabled = cart.length === 0 || button.dataset.cashUnavailable === 'true' || button.dataset.cashBusy === 'true' || button.dataset.demo === 'true'; });
     const floating = document.querySelector('[data-floating-cart]');
     if (floating) floating.hidden = cart.length === 0;
 };
@@ -214,6 +224,17 @@ const initCheckout = () => {
     const errors = document.querySelector('[data-form-errors]');
     const confirmation = document.querySelector('[data-demo-confirmation]');
     const delivery = typeof initDelivery === 'function' ? initDelivery(form) : null;
+    const cashAvailability = typeof initCashAvailability === 'function' ? initCashAvailability(form, submit, document.querySelector('[data-cash-warning]'), () => cart.length > 0, errors) : null;
+    let recoveryCount = 0;
+    const beginRecovery = () => { recoveryCount++; submit.dataset.cashBusy = 'true'; submit.disabled = true; };
+    const endRecovery = () => {
+        recoveryCount--;
+        if (recoveryCount === 0) {
+            submit.dataset.cashBusy = 'false';
+            submit.disabled = false;
+            cashAvailability?.render();
+        }
+    };
     const pendingKey = 'masa-y-mana-online-request-v1';
     const fingerprint = () => JSON.stringify(cart.map((item) => [item.variantUlid, item.quantity]).sort((a, b) => a[0].localeCompare(b[0])));
     const pending = () => {
@@ -234,6 +255,77 @@ const initCheckout = () => {
         submit.textContent = 'Realizar pedido';
     };
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content ?? '' };
+    const preparationKey = PREPARATION_KEY;
+    const readPreparation = () => { try { return JSON.parse(localStorage.getItem(preparationKey) ?? 'null'); } catch { return null; } };
+    const preparationRequest = async (url, body) => {
+        const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        const result = await response.json();
+        if (!response.ok) throw new Error(Object.values(result.errors ?? {}).flat()[0] ?? result.message ?? 'No fue posible preparar el pedido.');
+        return result;
+    };
+    const showPreparation = (result) => {
+        if (!confirmation) return;
+        confirmation.textContent = result.ready ? `Preparación registrada. Total: ${result.subtotal} Bs. No se ha realizado ningún pago ni se ha confirmado el pedido.` : result.message;
+        confirmation.hidden = false;
+    };
+    const recoverPreparation = async (attempt) => {
+        const result = await preparationRequest(form.dataset.preparationResolveUrl, { idempotency_key: attempt.key });
+        if (!result.created) { if (readPreparation()?.key === attempt.key) localStorage.removeItem(preparationKey); return null; }
+        if (!attempt.dirty && readPreparation()?.key === attempt.key && !readPreparation()?.dirty) showPreparation(result);
+        return result;
+    };
+    let invalidation = Promise.resolve();
+    const invalidatePreparation = () => {
+        const attempt = readPreparation();
+        if (!attempt?.key) return;
+        attempt.dirty = true;
+        localStorage.setItem(preparationKey, JSON.stringify(attempt));
+        if (confirmation) confirmation.hidden = true;
+        invalidation = invalidation.then(async () => {
+            if (readPreparation()?.key !== attempt.key) return;
+            const existing = await recoverPreparation(attempt);
+            if (existing) await preparationRequest(form.dataset.preparationCancelUrl, { idempotency_key: attempt.key });
+            if (readPreparation()?.key === attempt.key) localStorage.removeItem(preparationKey);
+        }).catch(() => showError('No se pudo cancelar la preparación anterior. Vuelve a comprobar tu conexión.'));
+    };
+    if (form.dataset.preparationEnabled === 'true') {
+        form.addEventListener('input', invalidatePreparation);
+        form.addEventListener('change', invalidatePreparation);
+        form.addEventListener('storefront:preparation-dirty', invalidatePreparation);
+        form.addEventListener('storefront:location-changed', invalidatePreparation);
+    }
+    if (form.dataset.preparationEnabled === 'true' && form.dataset.demo !== 'true' && readPreparation()) {
+        beginRecovery();
+        const previousPreparation = readPreparation();
+        (previousPreparation.dirty ? (invalidatePreparation(), invalidation) : recoverPreparation(previousPreparation))
+            .catch(() => showError('No se pudo comprobar la preparación anterior. Recarga para volver a intentarlo.'))
+            .finally(endRecovery);
+    }
+    const prepareDelivery = async (fulfillment) => {
+        await invalidation;
+        const fields = new FormData(form);
+        const contents = { customer_name: fields.get('customer_name'), customer_phone: fields.get('customer_phone'), ...fulfillment,
+            notes: fields.get('notes') || null, items: cart.map((item) => ({ variant_ulid: item.variantUlid, quantity: item.quantity })).sort((a, b) => a.variant_ulid.localeCompare(b.variant_ulid)) };
+        const bytes = new TextEncoder().encode(JSON.stringify(contents));
+        const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+        let attempt = readPreparation();
+        if (attempt) {
+            const existing = await recoverPreparation(attempt);
+            if (existing && existing.ready && !attempt.dirty && attempt.fingerprint === digest) return;
+            if (existing) await preparationRequest(form.dataset.preparationCancelUrl, { idempotency_key: attempt.key });
+            if (readPreparation()?.key === attempt.key) localStorage.removeItem(preparationKey);
+        }
+        attempt = { key: crypto.randomUUID(), fingerprint: digest };
+        localStorage.setItem(preparationKey, JSON.stringify(attempt));
+        try {
+            const result = await preparationRequest(form.dataset.preparationUrl, { ...contents, idempotency_key: attempt.key });
+            const current = readPreparation();
+            if (current?.key === attempt.key && !current.dirty) showPreparation(result);
+        } catch (error) {
+            const existing = await recoverPreparation(attempt);
+            if (!existing) throw error;
+        }
+    };
     const resolveAttempt = async (attempt) => {
         const response = await fetch(form.dataset.resolveUrl, { method: 'POST', headers, body: JSON.stringify({ idempotency_key: attempt.key }) });
         if (!response.ok) throw new Error('No fue posible resolver el pedido anterior.');
@@ -248,11 +340,11 @@ const initCheckout = () => {
     };
     const previous = pending();
     if (previous && form.dataset.demo !== 'true') {
-        submit.disabled = true;
+        beginRecovery();
         resolveAttempt(previous).then((found) => {
             if (!found) showError('El intento anterior no se registró. Puedes corregir tu pedido y enviarlo.');
         }).catch(() => showError('No se pudo resolver el pedido anterior. Recarga para volver a comprobarlo.'))
-            .finally(() => { submit.disabled = false; });
+            .finally(endRecovery);
     }
     submit?.addEventListener('click', () => form.requestSubmit());
 
@@ -268,10 +360,17 @@ const initCheckout = () => {
         if (!fulfillment) return;
 
         submit.disabled = true;
+        submit.dataset.cashBusy = 'true';
         submit.textContent = 'Validando pedido…';
         if (errors) errors.hidden = true;
         if (confirmation) confirmation.hidden = true;
         try {
+            if (form.dataset.preparationEnabled === 'true' && fulfillment.fulfillment === 'delivery') {
+                await prepareDelivery(fulfillment);
+                submit.disabled = false;
+                submit.textContent = 'Preparar pedido';
+                return;
+            }
             const existing = pending();
             if (existing && await resolveAttempt(existing)) return;
             const attempt = { key: crypto.randomUUID(), fingerprint: fingerprint() };
@@ -303,7 +402,11 @@ const initCheckout = () => {
                 errors.hidden = false;
             }
             submit.disabled = false;
-            submit.textContent = 'Realizar pedido';
+            submit.textContent = form.dataset.preparationEnabled === 'true' && fulfillment.fulfillment === 'delivery' ? 'Preparar pedido' : 'Realizar pedido';
+        } finally {
+            submit.dataset.cashBusy = 'false';
+            cashAvailability?.render();
+            if (fulfillment.fulfillment === 'delivery') cashAvailability?.check();
         }
     });
 };

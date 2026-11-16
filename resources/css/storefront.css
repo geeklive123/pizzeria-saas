@@ -226,3 +226,4 @@ body.cart-open { overflow: hidden; }
 .delivery-status { margin: 12px 0; font-size: 14px; }
 .delivery-cost-warning { margin: 12px 0; padding: 12px; border: 1px solid #b42318; border-radius: 9px; background: #fff0ef; color: #8a1913; font-size: 14px; font-weight: 700; line-height: 1.5; }
 .delivery-cost-warning[hidden] { display: none; }
+.whatsapp-button[data-cash-unavailable="true"]:disabled { background: #777; color: #fff; opacity: 1; cursor: not-allowed; }

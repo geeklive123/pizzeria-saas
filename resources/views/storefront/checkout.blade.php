@@ -10,7 +10,7 @@
         <div class="checkout-steps" aria-label="Progreso"><span class="done">✓ Carrito</span><i></i><span class="active" data-checkout-mode-label>2 Datos de recojo</span><i></i><span>3 Confirmación</span></div>
 
         <div class="checkout-grid">
-            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
+            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" data-preparation-enabled="{{ config('storefront.delivery_payment_preparation_enabled') ? 'true' : 'false' }}" data-cash-availability-url="{{ route('storefront.preparation.availability') }}" data-preparation-url="{{ route('storefront.preparation.store') }}" data-preparation-resolve-url="{{ route('storefront.preparation.resolve') }}" data-preparation-cancel-url="{{ route('storefront.preparation.cancel') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
                 @csrf
                 <section class="checkout-card">
                     <span class="form-step">Modalidad</span>
@@ -61,10 +61,14 @@
                     <div class="summary-empty js-checkout-empty"><p>No hay productos en tu comanda.</p><a href="{{ route('storefront.menu') }}">Volver al menú</a></div>
                     <div class="summary-total"><span>Subtotal de productos</span><strong><span class="js-cart-total">0</span> Bs.</strong></div>
                     <p class="summary-note">Los precios y la disponibilidad se validarán al registrar la solicitud.</p>
+                    @if(config('storefront.delivery_payment_preparation_enabled'))
+                        <p class="summary-note" data-preparation-note hidden>Para delivery se prepararán los datos del pedido. No se generará un pago ni se confirmará la compra.</p>
+                    @endif
                     <div class="form-errors" data-form-errors role="alert" hidden></div>
+                    <div class="form-errors" data-cash-warning role="status" aria-live="polite" hidden></div>
                     <div class="demo-confirmation" data-demo-confirmation role="status" hidden></div>
-                    <button class="button whatsapp-button button-full" type="button" data-submit-order @disabled($demoMode)>Realizar pedido</button>
-                    <p class="legal-note">El restaurante revisará tu solicitud. No se registra un pago ni se descuenta inventario.</p>
+                    <button class="button whatsapp-button button-full" type="button" data-submit-order data-demo="{{ $demoMode ? 'true' : 'false' }}" @disabled($demoMode)>Realizar pedido</button>
+                    <p class="legal-note" data-checkout-legal-note>El restaurante revisará tu solicitud. No se registra un pago ni se descuenta inventario.</p>
                 </div>
                 <div class="trust-row"><span>48h<br><small>Masa madre</small></span><span>♨<br><small>Horno artesanal</small></span><span>✓<br><small>Precio validado</small></span></div>
             </aside>

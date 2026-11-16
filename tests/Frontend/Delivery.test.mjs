@@ -14,7 +14,7 @@ function setup(coverage = 'free', searchAvailable = true) {
     const mapElement = element();
     const panel = element({ dataset: { latitude: '-17.3769946', longitude: '-66.1771762', radius: '800', tileUrl: 'https://tile.example/{z}/{x}/{y}', searchUrl: '/search', coverageUrl: '/coverage' }, querySelector(s) { return ({ '[data-delivery-address]': address, '[data-delivery-status]': status, '[data-delivery-confirm]': confirm, '[data-delivery-geolocate]': locate, '[data-delivery-suggestions]': suggestions, '[data-delivery-map]': mapElement, '[data-delivery-cost-warning]': costWarning })[s]; } });
     const choice = element(), reference = element({ value: 'Portón' });
-    const form = { selected: 'delivery', querySelector: () => ({ value: form.selected }), querySelectorAll: () => [choice], elements: { namedItem: () => reference } };
+    const form = { dataset: {}, selected: 'delivery', querySelector: () => ({ value: form.selected }), querySelectorAll: () => [choice], elements: { namedItem: () => reference } };
     const map = { setView() { return this; }, on(name, fn) { events[name] = fn; }, invalidateSize() {} };
     let marker;
     const layer = () => ({ addTo() { return this; }, bindPopup() { return this; } });

@@ -42,6 +42,7 @@ class DeliveryTest extends TestCase
         config()->set('storefront.default', ['company_id' => $this->company->id, 'branch_id' => $this->branch->id]);
         config()->set('storefront.visibility', ['category_names' => [], 'category_ulids' => [$category->ulid], 'product_names' => [], 'product_ulids' => []]);
         config()->set('storefront.demo_mode', false);
+        config()->set('storefront.delivery_payment_preparation_enabled', false);
         config()->set('storefront.online_pos_conversion_enabled', true);
         config()->set('storefront.delivery.branches', [$this->company->id.':'.$this->branch->id => ['latitude' => -17.3769946, 'longitude' => -66.1771762, 'free_radius_m' => 800]]);
     }

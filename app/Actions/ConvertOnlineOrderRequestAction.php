@@ -24,6 +24,9 @@ class ConvertOnlineOrderRequestAction
 
     public function execute(OnlineOrderRequest $request, User $user): Order
     {
+        if ($request->status !== 'pending_confirmation') {
+            throw new DomainException('La solicitud no está disponible para conversión al POS.');
+        }
         if (! config('storefront.online_pos_conversion_enabled')) {
             throw new DomainException('La conversión de pedidos online al POS está desactivada.');
         }

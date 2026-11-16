@@ -3,6 +3,8 @@
 return [
     // Requires the additive POS-link migration; disabled until explicitly enabled.
     'online_pos_conversion_enabled' => env('STOREFRONT_ONLINE_POS_CONVERSION_ENABLED', false),
+    'delivery_payment_preparation_enabled' => env('STOREFRONT_DELIVERY_PAYMENT_PREPARATION_ENABLED', false),
+    'delivery_payment_preparation_minutes' => 15,
     'delivery' => [
         'branches' => [
             '1:1' => ['latitude' => env('DELIVERY_LATITUDE', -17.3769946), 'longitude' => env('DELIVERY_LONGITUDE', -66.1771762), 'free_radius_m' => env('DELIVERY_FREE_RADIUS_M', 800)],

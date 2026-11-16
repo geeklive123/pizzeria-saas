@@ -16,6 +16,7 @@ export function initDelivery(form) {
     let map, marker, point, confirmed = false, distance = null, request, coverageRequest, timer;
     const invalidate = () => { confirmed = false; confirm.textContent = 'Confirmar punto de entrega'; };
     const select = async (lat, lon) => {
+        form.dispatchEvent?.(new Event('storefront:location-changed'));
         point = [lat, lon]; distance = null; invalidate(); confirm.disabled = true; costWarning.hidden = true;
         if (marker) marker.setLatLng(point); else {
             marker = L.marker(point, { draggable: true, icon: L.divIcon({ className: 'delivery-marker', html: '<span></span>', iconSize: [28, 28], iconAnchor: [14, 28] }) }).addTo(map);
@@ -37,6 +38,14 @@ export function initDelivery(form) {
         panel.hidden = !active; address.required = active; reference.required = active;
         const label = document.querySelector('[data-checkout-mode-label]');
         if (label) label.textContent = active ? '2 Datos de delivery' : '2 Datos de recojo';
+        const note = document.querySelector('[data-preparation-note]');
+        if (note && form.dataset.preparationEnabled === 'true') note.hidden = !active;
+        const submit = document.querySelector('[data-submit-order]');
+        if (submit && form.dataset.preparationEnabled === 'true') submit.textContent = active ? 'Preparar pedido' : 'Realizar pedido';
+        const legal = document.querySelector('[data-checkout-legal-note]');
+        if (legal && form.dataset.preparationEnabled === 'true') legal.textContent = active
+            ? 'La preparación no confirma el pedido, no registra pagos ni reserva inventario.'
+            : 'El restaurante revisará tu solicitud. No se registra un pago ni se descuenta inventario.';
         if (active && !map) {
             map = L.map(panel.querySelector('[data-delivery-map]')).setView(origin, 15);
             L.tileLayer(panel.dataset.tileUrl, { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);

@@ -6,6 +6,8 @@ use App\Enums\ProductType;
 use App\Models\Branch;
 use App\Models\Company;
 use App\Models\OnlineOrderRequest;
+use App\Models\ProductVariant;
+use App\Services\CurrentCashSessionService;
 use App\Services\DeliveryCoverageService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -15,10 +17,13 @@ use Illuminate\Validation\ValidationException;
 
 class CreateOnlineOrderRequestAction
 {
-    public function __construct(private readonly BuildStorefrontWhatsAppOrderAction $catalog, private readonly DeliveryCoverageService $coverage) {}
+    public function __construct(private readonly BuildStorefrontWhatsAppOrderAction $catalog, private readonly DeliveryCoverageService $coverage, private readonly CurrentCashSessionService $cash) {}
 
-    public function execute(Company $company, Branch $branch, array $data): OnlineOrderRequest
+    public function execute(Company $company, Branch $branch, array $data, bool $prepare = false): OnlineOrderRequest
     {
+        if ($prepare && (! config('storefront.delivery_payment_preparation_enabled') || ($data['fulfillment'] ?? null) !== 'delivery')) {
+            throw ValidationException::withMessages(['fulfillment' => 'La preparación de delivery no está disponible.']);
+        }
         $items = collect($data['items'])->sortBy('variant_ulid')->values();
         $canonical = [
             'customer_name' => $data['customer_name'],
@@ -37,7 +42,7 @@ class CreateOnlineOrderRequestAction
         $hash = hash_hmac('sha256', json_encode($canonical, JSON_THROW_ON_ERROR), (string) config('app.key'));
         $existing = $this->find($company, $branch, $data['idempotency_key']);
         if ($existing) {
-            return $this->assertSameRequest($existing, $hash);
+            return $this->assertSameRequest($existing, $hash, $prepare);
         }
         if ($canonical['fulfillment'] === 'delivery') {
             $result = $this->coverage->calculate($branch, $latitude, $longitude);
@@ -52,7 +57,15 @@ class CreateOnlineOrderRequestAction
         }
 
         try {
-            return DB::transaction(function () use ($company, $branch, $data, $items, $hash, $delivery): OnlineOrderRequest {
+            return DB::transaction(function () use ($company, $branch, $data, $items, $hash, $delivery, $prepare): OnlineOrderRequest {
+                $session = null;
+                if ($prepare) {
+                    $session = $this->cash->forBranch($company, $branch, true);
+                    if (! $session) {
+                        throw ValidationException::withMessages(['cash_session' => 'Estamos fuera de horario. Por el momento no podemos recibir pedidos online. Vuelve a intentarlo cuando el restaurante esté atendiendo.']);
+                    }
+                    ProductVariant::query()->forCompany($company)->whereIn('ulid', $items->pluck('variant_ulid'))->orderBy('id')->lockForUpdate()->get();
+                }
                 $variants = $this->catalog->validatedVariants($company, $branch, $items);
                 $subtotal = BigDecimal::zero();
                 $lines = [];
@@ -72,8 +85,8 @@ class CreateOnlineOrderRequestAction
                     'idempotency_key' => $data['idempotency_key'], 'request_hash' => $hash,
                     'customer_name' => $data['customer_name'], 'customer_phone' => $data['customer_phone'],
                     'notes' => $data['notes'] ?? null, 'fulfillment' => $delivery ? 'delivery' : 'pickup',
-                    'status' => 'pending_confirmation', 'subtotal' => $total, 'total' => $total,
-                ] + $delivery);
+                    'status' => $prepare ? 'payment_preparation' : 'pending_confirmation', 'subtotal' => $total, 'total' => $total,
+                ] + $delivery + ($prepare ? ['preparation_cash_session_id' => $session->id, 'preparation_expires_at' => now()->addMinutes((int) config('storefront.delivery_payment_preparation_minutes', 15))] : []));
                 $request->items()->createMany($lines);
 
                 return $request;
@@ -81,7 +94,7 @@ class CreateOnlineOrderRequestAction
         } catch (QueryException $exception) {
             $existing = $this->find($company, $branch, $data['idempotency_key']);
             if ($existing) {
-                return $this->assertSameRequest($existing, $hash);
+                return $this->assertSameRequest($existing, $hash, $prepare);
             }
             throw $exception;
         }
@@ -93,9 +106,10 @@ class CreateOnlineOrderRequestAction
             ->where('idempotency_key', $key)->first();
     }
 
-    private function assertSameRequest(OnlineOrderRequest $request, string $hash): OnlineOrderRequest
+    private function assertSameRequest(OnlineOrderRequest $request, string $hash, bool $prepare): OnlineOrderRequest
     {
-        if ($request->is_fence || ! hash_equals($request->request_hash, $hash)) {
+        $isPreparation = $request->status === 'payment_preparation' || str_starts_with($request->status, 'preparation_');
+        if ($request->is_fence || $isPreparation !== $prepare || ($prepare && $request->status !== 'payment_preparation') || ! hash_equals($request->request_hash, $hash)) {
             throw ValidationException::withMessages(['idempotency_key' => 'La clave ya corresponde a otra solicitud.']);
         }
 
