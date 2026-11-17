@@ -10,6 +10,7 @@ use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\DeferredKitchenPrinting;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderPaymentService;
 use App\Services\TakeawayDeliveryTracker;
 use Brick\Math\BigDecimal;
@@ -25,11 +26,12 @@ class SettleKitchenDispatchAction
         private readonly DeferredKitchenPrinting $printing,
     ) {}
 
-    public function execute(KitchenDispatch $dispatch, User $user): KitchenDispatch
+    public function execute(KitchenDispatch $dispatch, User $user, ?OnlineOrderActionContext $online = null): KitchenDispatch
     {
-        return DB::transaction(function () use ($dispatch, $user): KitchenDispatch {
+        return DB::transaction(function () use ($dispatch, $user, $online): KitchenDispatch {
             $dispatch = KitchenDispatch::query()->with(['order.branch', 'items.orderItem.company', 'items.orderItem.reservations.inventoryItem'])
                 ->lockForUpdate()->findOrFail($dispatch->id);
+            $online?->assertConfirmedOrder($dispatch->order, $user);
             if ($dispatch->status === KitchenDispatchStatus::Settled) {
                 return $dispatch;
             }
@@ -47,7 +49,7 @@ class SettleKitchenDispatchAction
                 if ($item->status !== OrderItemStatus::PendingPayment) {
                     continue;
                 }
-                $this->consume->execute($item, $user);
+                $this->consume->execute($item, $user, $online);
                 $status = $item->requires_preparation ? OrderItemStatus::Sent : OrderItemStatus::Ready;
                 $item->forceFill(['status' => $status, 'sent_at' => now(), 'ready_at' => $status === OrderItemStatus::Ready ? now() : null])->save();
             }

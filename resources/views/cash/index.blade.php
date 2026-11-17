@@ -2,6 +2,12 @@
 @section('title', 'Caja')
 @section('heading', 'Caja')
 @section('content')
+@if($onlineQrPending)
+<section class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-4" role="alert">
+    <h2 class="font-bold">Hay QR de delivery online pendientes</h2>
+    <p class="mt-1 text-sm">Resuelve los QR activos o pendientes de conciliación antes de cerrar la caja.</p>
+</section>
+@endif
 @if($bankQrAlerts->isNotEmpty())
 <section class="mb-4 rounded-xl border border-red-300 bg-red-50 p-4" role="alert">
     <h2 class="font-bold">Banco Económico: conciliación requerida</h2>

@@ -57,8 +57,16 @@ class CashController extends Controller
         $bankQrAlerts = DynamicQrIntent::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
             ->whereIn('status', [DynamicQrStatus::GenerationUnknown, DynamicQrStatus::ReconciliationRequired])
             ->with('order')->orderBy('created_at')->limit(50)->get();
+        $onlineQrPending = $session && DynamicQrIntent::query()->forCompany($this->company())->where('branch_id', $this->branch()->id)
+            ->where('cash_session_id', $session->id)
+            ->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhere('status', DynamicQrStatus::ReconciliationRequired))
+            ->whereExists(fn ($query) => $query->selectRaw('1')->from('online_order_requests')
+                ->whereColumn('online_order_requests.pos_order_id', 'dynamic_qr_intents.order_id')
+                ->whereColumn('online_order_requests.company_id', 'dynamic_qr_intents.company_id')
+                ->whereColumn('online_order_requests.branch_id', 'dynamic_qr_intents.branch_id')
+                ->where('online_order_requests.fulfillment', 'delivery'))->exists();
 
-        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys', 'canCreateExpense', 'bankQrAlerts'));
+        return view('cash.index', compact('registers', 'activeSessions', 'session', 'summary', 'movementBalances', 'formatter', 'cashRegisterClass', 'withdrawalIdempotencyKeys', 'canCreateExpense', 'bankQrAlerts', 'onlineQrPending'));
     }
 
     public function openForm(): View

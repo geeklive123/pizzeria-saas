@@ -14,9 +14,13 @@ use App\Models\CashMovement;
 use App\Models\CashSession;
 use App\Models\DynamicQrIntent;
 use App\Models\KitchenDispatch;
+use App\Models\OnlineOrderRequest;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\User;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderPaymentService;
+use App\Services\PrepareOnlineQrOperation;
 use Brick\Math\BigDecimal;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +29,38 @@ use Illuminate\Support\Facades\DB;
 class ClaimPreparedDynamicQrAction
 {
     public function __construct(private readonly OrderPaymentService $balances) {}
+
+    public function executeOnline(DynamicQrIntent $candidate, OnlineOrderRequest $preparation): bool
+    {
+        if (DB::transactionLevel() !== 0 || ! app()->runningUnitTests()) {
+            throw new DomainException('El reclamo online solo está disponible con el banco simulado.');
+        }
+        $preparation->loadMissing(['company', 'posOrder.branch']);
+
+        return app(PrepareOnlineQrOperation::class)->withPendingOperation($preparation->company, $preparation->posOrder->branch, $preparation,
+            function (OnlineOrderRequest $locked, CashSession $session, User $actor, object $operation) use ($candidate): bool {
+                $order = Order::query()->whereKey($locked->pos_order_id)->lockForUpdate()->firstOrFail();
+                $context = OnlineOrderActionContext::fromLinkedOperation($locked, $session, $actor, $operation, $order);
+                $context->assertOrder($order, $actor);
+                $intent = DynamicQrIntent::query()->whereKey($candidate->id)->lockForUpdate()->firstOrFail();
+                if ($intent->generation_phase !== DynamicQrGenerationPhase::Prepared->value || $intent->status !== DynamicQrStatus::Creating) {
+                    return false;
+                }
+                if ((int) $operation->dynamic_qr_intent_id !== (int) $intent->id || (int) $intent->order_id !== (int) $order->id
+                    || (int) $intent->company_id !== (int) $locked->company_id || (int) $intent->branch_id !== (int) $locked->branch_id
+                    || (int) $intent->cash_session_id !== (int) $session->id || (int) $intent->user_id !== (int) $actor->id
+                    || (int) $intent->active_order_id !== (int) $order->id || $intent->kitchen_dispatch_id !== null
+                    || $intent->bank_qr_id !== null || $intent->currency !== 'BOB' || $intent->expires_at->isPast()
+                    || ! BigDecimal::of($this->balances->balance($order))->isEqualTo($intent->amount)
+                    || ! BigDecimal::of($intent->amount)->isEqualTo($locked->total)) {
+                    throw new DomainException('El QR online requiere revisión.');
+                }
+
+                return DynamicQrIntent::query()->whereKey($intent->id)->where('status', DynamicQrStatus::Creating->value)
+                    ->where('generation_phase', DynamicQrGenerationPhase::Prepared->value)
+                    ->update(['generation_phase' => DynamicQrGenerationPhase::SendArmed->value, 'expires_at' => DB::raw('expires_at')]) === 1;
+            });
+    }
 
     public function execute(DynamicQrIntent $candidate): bool
     {

@@ -11,6 +11,7 @@ use App\Models\Company;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderActionContext;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
@@ -18,15 +19,19 @@ class CreateTakeawayOrderAction
 {
     public function __construct(private readonly NextOrderNumberAction $numbers, private readonly CompanyAccessService $access) {}
 
-    public function execute(Company $company, Branch $branch, User $user, array $data = []): Order
+    public function execute(Company $company, Branch $branch, User $user, array $data = [], ?OnlineOrderActionContext $online = null): Order
     {
-        $this->access->ensure($user, $company, Permission::ManageOrders);
+        if ($online) {
+            $online->assertCreate($company, $branch, $user);
+        } else {
+            $this->access->ensure($user, $company, Permission::ManageOrders);
+        }
 
         if ((int) $branch->company_id !== (int) $company->getKey()) {
             throw new DomainException('The branch does not belong to the active company.');
         }
 
-        return DB::transaction(fn (): Order => Order::query()->create([
+        $order = DB::transaction(fn (): Order => Order::query()->create([
             'company_id' => $company->id, 'branch_id' => $branch->id,
             'order_number' => $this->numbers->execute($company, $branch),
             'type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch, 'status' => OrderStatus::Open,
@@ -36,5 +41,8 @@ class CreateTakeawayOrderAction
             'subtotal' => '0.00', 'discount_total' => '0.00', 'total' => '0.00',
             'opened_at' => now(), 'created_by' => $user->id,
         ]));
+        $online?->bind($order);
+
+        return $order;
     }
 }

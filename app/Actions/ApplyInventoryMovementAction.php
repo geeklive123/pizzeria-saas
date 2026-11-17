@@ -9,10 +9,13 @@ use App\Models\Branch;
 use App\Models\Company;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
+use App\Models\InventoryReservation;
 use App\Models\InventoryStock;
+use App\Models\OrderItem;
 use App\Models\PurchaseItem;
 use App\Models\User;
 use App\Services\InventoryBatchConsistencyService;
+use App\Services\OnlineOrderActionContext;
 use App\Services\WeightedAverageCostCalculator;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -48,8 +51,23 @@ class ApplyInventoryMovementAction
         ?InventoryMovement $reversalOf = null,
         ?int $reversalDirection = null,
         array $batch = [],
+        ?OnlineOrderActionContext $online = null,
     ): InventoryMovement {
-        $this->validateContext($company, $branch, $inventoryItem, $user);
+        if ($online) {
+            $item = $referenceType === OrderItem::class ? OrderItem::query()->find($referenceId) : null;
+            $reservation = InventoryReservation::query()->whereKey($metadata['inventory_reservation_id'] ?? null)->first();
+            if (! $item || ! $reservation || $type !== InventoryMovementType::OrderConsumption
+                || (int) $reservation->order_item_id !== (int) $item->id || (int) $reservation->inventory_item_id !== (int) $inventoryItem->id
+                || (int) $reservation->order_id !== (int) $item->order_id || (int) $inventoryItem->company_id !== (int) $company->id
+                || (int) $reservation->company_id !== (int) $company->id || (int) $reservation->branch_id !== (int) $branch->id
+                || (int) $item->company_id !== (int) $company->id || (int) $item->branch_id !== (int) $branch->id
+                || ! BigDecimal::of($reservation->quantity)->isEqualTo($baseQuantity) || $reservation->status->value !== 'reserved') {
+                throw new DomainException('La reserva online no autoriza este movimiento.');
+            }
+            $online->assertConfirmedOrder($item->order, $user);
+        } else {
+            $this->validateContext($company, $branch, $inventoryItem, $user);
+        }
 
         $quantity = BigDecimal::of($baseQuantity)->toScale(3, RoundingMode::HalfUp);
 

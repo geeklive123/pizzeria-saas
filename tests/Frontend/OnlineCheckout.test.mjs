@@ -15,8 +15,11 @@ function setup(saved = new Map(), initialResponses = [], preparation = false) {
     const submit = { disabled: false, textContent: '', dataset: {}, addEventListener() {} };
     const error = { hidden: true, textContent: '' };
     const confirmation = { hidden: true, textContent: '' };
-    const elements = { '[data-checkout-form]': form, '[data-submit-order]': submit, '[data-form-errors]': error, '[data-demo-confirmation]': confirmation, 'meta[name="csrf-token"]': { content: 'csrf' } };
+    const qr = { hidden: true }, qrStatus = { textContent: '' }, qrImage = { hidden: true, src: '' }, qrCheck = { hidden: true, dataset: { statusUrl: '/qr/status' }, addEventListener(event, fn) { this[event] = fn; } };
+    const elements = { '[data-checkout-form]': form, '[data-submit-order]': submit, '[data-form-errors]': error, '[data-demo-confirmation]': confirmation, '[data-online-qr]': qr, '[data-online-qr-status]': qrStatus, '[data-online-qr-image]': qrImage, '[data-online-qr-check]': qrCheck, 'meta[name="csrf-token"]': { content: 'csrf' } };
     const responses = [...initialResponses], calls = [];
+    let notifyFirstCall;
+    const firstCall = new Promise((resolve) => { notifyFirstCall = resolve; });
     let nextKey = 0;
     let cleared = 0;
     const context = {
@@ -27,10 +30,10 @@ function setup(saved = new Map(), initialResponses = [], preparation = false) {
         saveCart() { cleared++; }, toast() {}, crypto: { subtle: webcrypto.subtle, randomUUID: () => nextKey++ ? 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' : 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }, TextEncoder,
         ...(preparation ? { initDelivery: () => ({ payload: () => ({ fulfillment: 'delivery', address: 'Calle', reference: 'Porton', latitude: -17.37, longitude: -66.17, location_confirmed: true }) }) } : {}),
         FormData: class { get(name) { return { customer_name: 'Cliente', customer_phone: '70000000', notes: '' }[name]; } },
-        fetch: async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); const response = responses.shift(); if (response instanceof Error) throw response; return response; },
+        fetch: async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); notifyFirstCall(); const response = responses.shift(); if (response instanceof Error) throw response; return response; },
     };
     runInNewContext(`${checkout}\ninitCheckout();`, context);
-    return { form, submit, error, confirmation, saved, responses, calls, context, cleared: () => cleared };
+    return { form, submit, error, confirmation, qr, qrStatus, qrImage, qrCheck, saved, responses, calls, firstCall, context, cleared: () => cleared };
 }
 
 test('delivery preparation keeps its identity and cart after a lost response', async () => {
@@ -70,16 +73,54 @@ test('moving the map cancels the previous preparation and retains the cart', asy
     assert.equal(ui.cleared(), 0);
 });
 
-test('double click sends only one preparation request', async () => {
+test('double click sends only one preparation request', { timeout: 2000 }, async () => {
     const ui = setup(new Map(), [], true);
     let complete;
     ui.responses.push(new Promise((resolve) => { complete = resolve; }));
     const first = ui.form.submit({ preventDefault() {} });
     await ui.form.submit({ preventDefault() {} });
-    await new Promise((resolve) => setImmediate(resolve));
+    await ui.firstCall;
     assert.equal(ui.calls.length, 1);
     complete(ok({ created: true, ready: true, subtotal: '24.00' }));
     await first;
+    assert.equal(ui.cleared(), 0);
+});
+
+test('online order uses the same preparation key and retries without replacing it', async () => {
+    const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true })], true);
+    Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order' });
+    await ui.form.submit({ preventDefault() {} });
+    assert.deepEqual(ui.calls.map((call) => call.url), ['/prepare', '/prepare/order']);
+    assert.equal(ui.calls[0].body.idempotency_key, ui.calls[1].body.idempotency_key);
+    ui.responses.push(ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true }));
+    await ui.form.submit({ preventDefault() {} });
+    assert.deepEqual(ui.calls.map((call) => call.url), ['/prepare', '/prepare/order', '/prepare/resolve', '/prepare/order']);
+    assert.equal(ui.calls[1].body.idempotency_key, ui.calls[3].body.idempotency_key);
+    assert.equal(ui.cleared(), 0);
+});
+
+test('online order failure does not show the preparation as a completed operation', async () => {
+    const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), new Error('offline')], true);
+    Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order' });
+    await ui.form.submit({ preventDefault() {} });
+    assert.equal(ui.confirmation.hidden, true);
+    assert.equal(ui.error.hidden, false);
+    assert.equal(ui.saved.has('masa-y-mana-delivery-preparation-v1'), true);
+    assert.equal(ui.cleared(), 0);
+});
+
+test('online checkout displays the generated QR and waits for bank confirmation', async () => {
+    const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true }),
+        ok({ status: 'pending', qr_image: 'data:image/png;base64,AAAA', amount: '24.00' })], true);
+    Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order', onlineQrUrl: '/prepare/qr' });
+    await ui.form.submit({ preventDefault() {} });
+    assert.equal(ui.qr.hidden, false);
+    assert.equal(ui.qrImage.src, 'data:image/png;base64,AAAA');
+    assert.equal(ui.qrImage.hidden, false);
+    assert.match(ui.qrStatus.textContent, /Esperando confirmación bancaria/);
+    ui.responses.push(ok({ status: 'paid' }));
+    await ui.qrCheck.click();
+    assert.equal(ui.qrStatus.textContent, 'Pago confirmado');
     assert.equal(ui.cleared(), 0);
 });
 

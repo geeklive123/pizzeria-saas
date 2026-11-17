@@ -19,6 +19,7 @@ use App\Services\CompanyAccessService;
 use App\Services\OrderTotalsService;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class CancelOrderAction
 {
@@ -38,6 +39,12 @@ class CancelOrderAction
 
         return DB::transaction(function () use ($order, $user, $reason): Order {
             $order = Order::query()->with(['company', 'branch', 'items.productVariant'])->lockForUpdate()->findOrFail($order->id);
+            // Online QR reservations require their own audited disposition, even
+            // when the bank intent no longer appears active to the POS.
+            if (Schema::hasTable('online_qr_operations') && Schema::hasColumn('online_qr_operations', 'pos_order_id')
+                && DB::table('online_qr_operations')->where('pos_order_id', $order->id)->exists()) {
+                throw new DomainException('La orden QR online requiere una disposición administrativa auditada.');
+            }
             if (OrderDeliveryCharge::query()->where('order_id', $order->id)->where('enabled', true)->exists()
                 && DynamicQrIntent::query()->where('order_id', $order->id)->where(fn ($query) => $query->whereNotNull('active_order_id')->orWhereIn('status', [DynamicQrStatus::GenerationUnknown->value, DynamicQrStatus::ReconciliationRequired->value]))->exists()) {
                 throw new DomainException('Resuelve el QR bancario antes de anular el pedido con envío.');

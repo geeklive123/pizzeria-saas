@@ -4,6 +4,8 @@ return [
     // Requires the additive POS-link migration; disabled until explicitly enabled.
     'online_pos_conversion_enabled' => env('STOREFRONT_ONLINE_POS_CONVERSION_ENABLED', false),
     'delivery_payment_preparation_enabled' => env('STOREFRONT_DELIVERY_PAYMENT_PREPARATION_ENABLED', false),
+    // Online bank QR remains unavailable until its end-to-end flow is implemented and enabled.
+    'online_dynamic_qr_enabled' => env('STOREFRONT_ONLINE_DYNAMIC_QR_ENABLED', false),
     'delivery_payment_preparation_minutes' => 15,
     'delivery' => [
         'branches' => [

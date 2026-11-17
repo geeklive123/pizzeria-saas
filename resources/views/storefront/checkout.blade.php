@@ -10,7 +10,7 @@
         <div class="checkout-steps" aria-label="Progreso"><span class="done">✓ Carrito</span><i></i><span class="active" data-checkout-mode-label>2 Datos de recojo</span><i></i><span>3 Confirmación</span></div>
 
         <div class="checkout-grid">
-            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" data-preparation-enabled="{{ config('storefront.delivery_payment_preparation_enabled') ? 'true' : 'false' }}" data-cash-availability-url="{{ route('storefront.preparation.availability') }}" data-preparation-url="{{ route('storefront.preparation.store') }}" data-preparation-resolve-url="{{ route('storefront.preparation.resolve') }}" data-preparation-cancel-url="{{ route('storefront.preparation.cancel') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
+            <form class="checkout-form" data-checkout-form data-demo="{{ $demoMode ? 'true' : 'false' }}" data-resolve-url="{{ route('storefront.checkout.resolve') }}" data-preparation-enabled="{{ config('storefront.delivery_payment_preparation_enabled') ? 'true' : 'false' }}" data-online-qr-enabled="{{ config('storefront.online_dynamic_qr_enabled') ? 'true' : 'false' }}" data-online-order-url="{{ route('storefront.preparation.order') }}" data-online-qr-url="{{ route('storefront.preparation.qr') }}" data-cash-availability-url="{{ route('storefront.preparation.availability') }}" data-preparation-url="{{ route('storefront.preparation.store') }}" data-preparation-resolve-url="{{ route('storefront.preparation.resolve') }}" data-preparation-cancel-url="{{ route('storefront.preparation.cancel') }}" action="{{ route('storefront.checkout.store') }}" method="POST" novalidate>
                 @csrf
                 <section class="checkout-card">
                     <span class="form-step">Modalidad</span>
@@ -62,11 +62,12 @@
                     <div class="summary-total"><span>Subtotal de productos</span><strong><span class="js-cart-total">0</span> Bs.</strong></div>
                     <p class="summary-note">Los precios y la disponibilidad se validarán al registrar la solicitud.</p>
                     @if(config('storefront.delivery_payment_preparation_enabled'))
-                        <p class="summary-note" data-preparation-note hidden>Para delivery se prepararán los datos del pedido. No se generará un pago ni se confirmará la compra.</p>
+                        <p class="summary-note" data-preparation-note hidden>@if(config('storefront.online_dynamic_qr_enabled')) Para delivery se preparará el pedido y se generará un QR. El pago requiere confirmación bancaria. @else Para delivery se prepararán los datos del pedido. No se generará un pago ni se confirmará la compra. @endif</p>
                     @endif
                     <div class="form-errors" data-form-errors role="alert" hidden></div>
                     <div class="form-errors" data-cash-warning role="status" aria-live="polite" hidden></div>
                     <div class="demo-confirmation" data-demo-confirmation role="status" hidden></div>
+                    <div data-online-qr hidden><p data-online-qr-status role="status" aria-live="polite"></p><img data-online-qr-image alt="QR de pago" style="max-width: 100%; width: 260px" hidden><button type="button" class="button button-primary" data-online-qr-check data-status-url="{{ route('storefront.preparation.qr.status') }}" hidden>Verificar estado del pago</button></div>
                     <button class="button whatsapp-button button-full" type="button" data-submit-order data-demo="{{ $demoMode ? 'true' : 'false' }}" @disabled($demoMode)>Realizar pedido</button>
                     <p class="legal-note" data-checkout-legal-note>El restaurante revisará tu solicitud. No se registra un pago ni se descuenta inventario.</p>
                 </div>

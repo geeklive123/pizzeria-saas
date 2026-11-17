@@ -21,6 +21,7 @@ use App\Enums\PaymentStatus;
 use App\Models\Branch;
 use App\Models\CashRegister;
 use App\Models\Company;
+use App\Models\FinancialPaymentAttempt;
 use App\Models\Ingredient;
 use App\Models\InventoryItem;
 use App\Models\InventoryMovement;
@@ -31,9 +32,11 @@ use App\Models\RestaurantTable;
 use App\Models\Unit;
 use App\Models\User;
 use App\Services\CashSessionSummaryService;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderPaymentService;
 use Database\Seeders\DatabaseSeeder;
 use DomainException;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\InteractsWithBankQr;
 use Tests\Concerns\IsolatedSqliteCommits;
 use Tests\TestCase;
@@ -78,6 +81,34 @@ class CashAndPaymentsTest extends TestCase
         $this->assertDatabaseCount('payments', 1);
         $this->assertSame($beforeInventory, InventoryMovement::query()->count());
         $this->assertSame(OrderStatus::Paid, $order->refresh()->status);
+    }
+
+    public function test_unverified_online_marker_cannot_authorize_another_cashier_in_pos(): void
+    {
+        [$company, $branch, $owner, $register] = $this->context();
+        $session = app(OpenCashSessionAction::class)->execute($register, '0.00', $owner);
+        $other = User::factory()->create();
+        Membership::factory()->for($company)->for($other)->owner()->create();
+        $order = $this->servedOrder($company, $branch, $owner, '85.00');
+        $marker = (new \ReflectionClass(OnlineOrderActionContext::class))->newInstanceWithoutConstructor();
+
+        try {
+            DB::transaction(function () use ($company, $branch, $order, $session, $other, $marker): void {
+                FinancialPaymentAttempt::query()->create([
+                    'company_id' => $company->id, 'branch_id' => $branch->id, 'order_id' => $order->id,
+                    'active_order_id' => $order->id, 'cash_session_id' => $session->id, 'user_id' => $other->id,
+                    'idempotency_key' => 'foreign-cashier-marker', 'method' => 'cash', 'amount' => '85.00',
+                    'received_amount' => '85.00', 'status' => 'pending', 'revision' => 0,
+                    'expected_financial_version' => $order->financial_version,
+                ]);
+                app(RegisterPaymentAction::class)->execute($order, $session, PaymentMethod::Cash, '85.00', $other,
+                    'foreign-cashier-marker', '85.00', attemptRevision: 0, online: $marker);
+                $this->fail('Un contexto online no verificado no debe autorizar un pago presencial en caja ajena.');
+            });
+        } catch (DomainException $exception) {
+            $this->assertNotSame('', $exception->getMessage());
+        }
+        $this->assertDatabaseCount('payments', 0);
     }
 
     public function test_qr_partial_payment_does_not_change_physical_cash_or_release_table(): void

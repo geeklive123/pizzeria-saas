@@ -60,6 +60,9 @@ Route::prefix('tienda')->name('storefront.')->middleware('storefront.context')->
     Route::get('/checkout/preparacion/disponibilidad', [PaymentPreparationController::class, 'availability'])->middleware('throttle:60,1')->name('preparation.availability');
     Route::post('/checkout/preparacion', [PaymentPreparationController::class, 'store'])->middleware('throttle:10,1')->name('preparation.store');
     Route::post('/checkout/preparacion/resolver', [PaymentPreparationController::class, 'resolve'])->middleware('throttle:10,1')->name('preparation.resolve');
+    Route::post('/checkout/preparacion/orden', [PaymentPreparationController::class, 'order'])->middleware('throttle:10,1')->name('preparation.order');
+    Route::post('/checkout/preparacion/qr', [PaymentPreparationController::class, 'qr'])->middleware('throttle:10,1')->name('preparation.qr');
+    Route::post('/checkout/preparacion/qr/estado', [PaymentPreparationController::class, 'qrStatus'])->middleware('throttle:30,1')->name('preparation.qr.status');
     Route::post('/checkout/preparacion/cancelar', [PaymentPreparationController::class, 'cancel'])->middleware('throttle:10,1')->name('preparation.cancel');
     Route::post('/checkout/solicitudes', [StorefrontCheckoutController::class, 'store'])->middleware('throttle:10,1')->name('checkout.store');
     Route::post('/checkout/solicitudes/recuperar', [StorefrontCheckoutController::class, 'recover'])->middleware('throttle:10,1')->name('checkout.recover');
@@ -112,6 +115,9 @@ Route::middleware('auth')->group(function (): void {
             Route::get('/online-orders/{id}', [OnlineOrderRequestController::class, 'show'])->whereNumber('id')->name('online-orders.show');
             Route::post('/online-orders/{id}/transition', [OnlineOrderRequestController::class, 'transition'])->whereNumber('id')->name('online-orders.transition');
             Route::post('/online-orders/{id}/legacy-review', [OnlineOrderRequestController::class, 'resolveLegacy'])->whereNumber('id')->name('online-orders.legacy-review');
+            Route::post('/online-orders/{id}/qr-disposition', [OnlineOrderRequestController::class, 'resolveQrDisposition'])->whereNumber('id')->name('online-orders.qr-disposition');
+            Route::post('/online-orders/{id}/qr-delivery', [OnlineOrderRequestController::class, 'confirmQrDelivery'])->whereNumber('id')->name('online-orders.qr-delivery');
+            Route::post('/online-orders/{id}/closed-payment-resolution', [OnlineOrderRequestController::class, 'resolveClosedPayment'])->whereNumber('id')->name('online-orders.closed-payment-resolution');
             Route::get('/menu-availability', [MenuAvailabilityController::class, 'index'])->name('menu-availability.index');
             Route::get('/orders/takeaway/create', [OrderController::class, 'createTakeaway'])->name('orders.takeaway.create');
             Route::post('/orders/takeaway', [OrderController::class, 'storeTakeaway'])->name('orders.takeaway.store');

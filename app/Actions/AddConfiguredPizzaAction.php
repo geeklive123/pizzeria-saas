@@ -12,6 +12,7 @@ use App\Models\OrderItemModifier;
 use App\Models\OrderItemSection;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use App\Services\PizzaCompositionService;
@@ -30,9 +31,13 @@ class AddConfiguredPizzaAction
     ) {}
 
     /** @param list<array<string,mixed>> $sections @param list<array<string,mixed>> $modifiers */
-    public function execute(Order $order, array $sections, int|string $quantity, User $user, ?OrderType $fulfillment = null, array $modifiers = [], ?string $notes = null, array $toppings = []): OrderItem
+    public function execute(Order $order, array $sections, int|string $quantity, User $user, ?OrderType $fulfillment = null, array $modifiers = [], ?string $notes = null, array $toppings = [], ?OnlineOrderActionContext $online = null): OrderItem
     {
-        $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        if ($online) {
+            $online->assertOrder($order, $user);
+        } else {
+            $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        }
         $quantity = BigDecimal::of($quantity)->toScale(3, RoundingMode::HalfUp);
         if ($quantity->isLessThanOrEqualTo(0)) {
             throw new DomainException('La cantidad debe ser mayor que cero.');

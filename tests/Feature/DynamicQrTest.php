@@ -2,12 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Actions\ApplyInventoryMovementAction;
 use App\Actions\CloseCashSessionAction;
 use App\Actions\DynamicQrAction;
 use App\Actions\OpenCashSessionAction;
 use App\Actions\RegisterPaymentAction;
+use App\Actions\ReserveInventoryForOrderItemAction;
 use App\Enums\CashSessionStatus;
+use App\Enums\DynamicQrGenerationPhase;
 use App\Enums\DynamicQrStatus;
+use App\Enums\InventoryMovementType;
 use App\Enums\KitchenDispatchStatus;
 use App\Enums\MembershipRole;
 use App\Enums\OrderItemStatus;
@@ -17,6 +21,7 @@ use App\Enums\PaymentMethod;
 use App\Enums\PaymentStatus;
 use App\Enums\PrintAttemptStatus;
 use App\Enums\PrinterPurpose;
+use App\Enums\ProductType;
 use App\Enums\TableChargeMode;
 use App\Models\BankQrDiagnostic;
 use App\Models\BankQrSetting;
@@ -24,20 +29,28 @@ use App\Models\Branch;
 use App\Models\CashMovement;
 use App\Models\CashRegister;
 use App\Models\CashSession;
+use App\Models\Category;
 use App\Models\Company;
 use App\Models\DynamicQrIntent;
 use App\Models\FinancialPaymentAttempt;
+use App\Models\InventoryItem;
+use App\Models\InventoryMovement;
+use App\Models\InventoryStock;
 use App\Models\KitchenDispatch;
 use App\Models\KitchenDispatchItem;
 use App\Models\Membership;
+use App\Models\OnlineOrderRequest;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\PrinterSetting;
 use App\Models\RestaurantTable;
+use App\Models\Unit;
 use App\Models\User;
 use App\Services\BancoEconomicoGateway;
+use App\Services\BankQrEmitter;
 use App\Services\BankQrException;
+use App\Services\OnlinePaymentPreparationService;
 use App\Services\ThermalPrintingService;
 use Carbon\Carbon;
 use DomainException;
@@ -45,6 +58,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -487,6 +501,76 @@ class DynamicQrTest extends TestCase
         $this->assertSame(1, $this->generations);
     }
 
+    public function test_shared_emitter_requires_a_committed_claim_and_never_replays_an_armed_attempt(): void
+    {
+        $intent = DynamicQrIntent::query()->create([
+            'company_id' => $this->company->id, 'branch_id' => $this->branch->id, 'order_id' => $this->order->id,
+            'active_order_id' => $this->order->id, 'cash_session_id' => $this->session->id, 'user_id' => $this->user->id,
+            'bank_qr_setting_id' => $this->setting->id, 'amount' => '100.00', 'currency' => 'BOB',
+            'commercial_reference' => 'emitter-test', 'idempotency_key' => 'emitter-test',
+            'status' => DynamicQrStatus::Creating, 'generation_phase' => DynamicQrGenerationPhase::Prepared->value,
+            'expires_at' => now()->addDay(),
+        ]);
+        $emitter = app(BankQrEmitter::class);
+        $result = $emitter->emit($intent, fn () => false);
+        $this->assertSame(DynamicQrStatus::Creating, $result->status);
+        try {
+            $emitter->emit($intent, fn () => true);
+            $this->fail('No debe enviarse sin una reclamación persistida.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('no está autorizado', $exception->getMessage());
+        }
+        $intent->update(['generation_phase' => DynamicQrGenerationPhase::SendArmed->value]);
+        $called = false;
+        $emitter->emit($intent, function () use (&$called): bool {
+            $called = true;
+
+            return true;
+        });
+        $this->assertFalse($called);
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_bank_success_followed_by_a_persistence_failure_never_sends_a_second_qr(): void
+    {
+        DB::unprepared("CREATE TEMP TRIGGER fail_qr_first_response BEFORE UPDATE ON dynamic_qr_intents WHEN NEW.bank_qr_id IS NOT NULL AND NEW.status = 'creating' BEGIN SELECT RAISE(ABORT, 'simulated persistence failure'); END");
+        try {
+            $intent = $this->generate();
+            $this->assertSame(DynamicQrStatus::GenerationUnknown, $intent->status);
+            $this->assertSame('generation_result_unknown', $intent->issue_code);
+            $this->assertSame($intent->id, $this->generate(key: 'retry-after-persistence-failure')->id);
+            $this->assertSame(1, $this->generations);
+            $this->assertDatabaseCount('dynamic_qr_intents', 1);
+            $this->assertDatabaseCount('payments', 0);
+        } finally {
+            DB::unprepared('DROP TRIGGER IF EXISTS fail_qr_first_response');
+        }
+    }
+
+    public function test_permanent_persistence_failure_leaves_an_armed_attempt_for_reconciliation(): void
+    {
+        DB::unprepared("CREATE TEMP TRIGGER fail_qr_all_responses BEFORE UPDATE ON dynamic_qr_intents WHEN NEW.bank_qr_id IS NOT NULL BEGIN SELECT RAISE(ABORT, 'simulated persistent failure'); END");
+        try {
+            try {
+                $this->generate();
+                $this->fail('Se esperaba un fallo de persistencia.');
+            } catch (QueryException) {
+                $intent = DynamicQrIntent::query()->sole();
+                $this->assertSame('send_armed', $intent->generation_phase);
+                $this->assertNull($intent->bank_qr_id);
+                $this->assertSame($intent->id, $this->generate()->id);
+                $this->assertSame(1, $this->generations);
+                $this->travel(4)->minutes();
+                $this->assertSame(DynamicQrStatus::GenerationUnknown, app(DynamicQrAction::class)->check($intent)->status);
+                $this->assertSame(1, $this->generations);
+                $this->assertDatabaseCount('payments', 0);
+            }
+        } finally {
+            DB::unprepared('DROP TRIGGER IF EXISTS fail_qr_all_responses');
+        }
+    }
+
     public function test_unreadable_credentials_block_generation_before_payment_or_bank_contact(): void
     {
         DB::table('bank_qr_settings')->where('id', $this->setting->id)->update(['credentials' => 'incompatible']);
@@ -513,6 +597,94 @@ class DynamicQrTest extends TestCase
         $this->assertDatabaseCount('payments', 0);
         $this->assertSame($intent->id, $this->generate(key: 'another-click')->id);
         $this->assertSame(1, $this->generations);
+    }
+
+    public function test_abandoned_pending_qr_preserves_existing_financial_and_inventory_counts(): void
+    {
+        $tables = ['orders', 'payments', 'cash_movements', 'inventory_movements', 'inventory_stocks'];
+        $before = [];
+        foreach ($tables as $table) {
+            $before[$table] = DB::table($table)->count();
+        }
+        $intent = $this->generate();
+        $this->check($intent);
+        $this->assertSame($intent->id, $this->generate(key: 'same-order-retry')->id);
+        $this->assertSame(DynamicQrStatus::Pending, $intent->fresh()->status);
+        $this->assertSame(1, $this->generations);
+        foreach ($before as $table => $count) {
+            $this->assertDatabaseCount($table, $count);
+        }
+        $this->assertNotSame(OrderStatus::Paid, $this->order->fresh()->status);
+    }
+
+    public function test_online_preparation_cannot_use_a_distinct_system_actor_as_the_cashier(): void
+    {
+        $variant = $this->order->items()->firstOrFail()->productVariant;
+        $category = Category::factory()->for($this->company)->create();
+        $variant->update(['price' => '100.00', 'requires_preparation' => false, 'is_active' => true]);
+        $variant->product->update(['category_id' => $category->id, 'type' => ProductType::Beverage, 'is_active' => true]);
+        config()->set('storefront.default', ['company_id' => $this->company->id, 'branch_id' => $this->branch->id]);
+        config()->set('storefront.visibility', ['category_names' => [], 'category_ulids' => [$category->ulid], 'product_names' => [], 'product_ulids' => []]);
+        config()->set('storefront.demo_mode', false);
+        config()->set('storefront.delivery_payment_preparation_enabled', true);
+        config()->set('storefront.delivery.branches', [$this->company->id.':'.$this->branch->id => ['latitude' => -17.3769946, 'longitude' => -66.1771762, 'free_radius_m' => 800]]);
+        $this->postJson(route('storefront.preparation.store'), [
+            'idempotency_key' => (string) Str::uuid(), 'customer_name' => 'Cliente', 'customer_phone' => '70000000',
+            'fulfillment' => 'delivery', 'address' => 'Calle de prueba', 'reference' => 'Referencia',
+            'latitude' => -17.3769946, 'longitude' => -66.1771762, 'location_confirmed' => true,
+            'items' => [['variant_ulid' => $variant->ulid, 'quantity' => 1]],
+        ])->assertOk()->assertJsonPath('ready', true);
+        $preparation = OnlineOrderRequest::query()->sole();
+        try {
+            app(OnlinePaymentPreparationService::class)->withUsable($this->company, $this->branch, $preparation,
+                fn () => app(DynamicQrAction::class)->generate($this->order, $this->session, $this->user, 'inside-transaction'));
+            $this->fail('No se debe llamar al banco dentro de la transacción de preparación.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('transacción sin confirmar', $exception->getMessage());
+        }
+        $system = User::factory()->create(['name' => 'Sistema — Tienda online']);
+        Membership::factory()->for($this->company)->for($system)->owner()->create();
+        try {
+            app(DynamicQrAction::class)->generate($this->order, $this->session, $system, 'online-attempt');
+            $this->fail('Un actor distinto no debe suplantar al titular de la caja.');
+        } catch (DomainException $exception) {
+            $this->assertStringContainsString('propio turno', $exception->getMessage());
+        }
+        $this->assertSame('payment_preparation', $preparation->fresh()->status);
+        $this->assertDatabaseCount('dynamic_qr_intents', 0);
+        $this->assertDatabaseCount('payments', 0);
+        Http::assertNothingSent();
+    }
+
+    public function test_pos_reuses_active_qr_after_balance_changes_but_reconciles_payment(): void
+    {
+        $intent = $this->generate();
+        $this->order->update(['total' => '101.00']);
+        foreach (['request-one', 'different-request'] as $key) {
+            $this->assertSame($intent->id, $this->generate(key: $key)->id);
+        }
+        $this->assertSame(DynamicQrStatus::Pending, $intent->fresh()->status);
+        $this->assertDatabaseCount('dynamic_qr_intents', 1);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertSame(1, $this->generations);
+        $this->paid();
+        $this->assertSame(DynamicQrStatus::ReconciliationRequired, $this->check($intent)->status);
+        $this->assertSame('balance_changed', $intent->fresh()->issue_code);
+        $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_pos_finishes_a_claimed_generation_if_flag_changes_after_creation(): void
+    {
+        $event = 'eloquent.created: '.DynamicQrIntent::class;
+        Event::listen($event, fn () => config()->set('baneco.enabled', false));
+        try {
+            $intent = $this->generate();
+        } finally {
+            Event::forget($event);
+        }
+        $this->assertSame(DynamicQrStatus::Pending, $intent->status);
+        $this->assertSame(1, $this->generations);
+        $this->assertDatabaseCount('payments', 0);
     }
 
     public function test_generation_request_matches_plugin_checkout_contract(): void
@@ -1295,6 +1467,14 @@ class DynamicQrTest extends TestCase
     {
         $this->order->forceFill(['type' => OrderType::Takeaway, 'charge_mode' => TableChargeMode::PerBatch,
             'restaurant_table_id' => null, 'active_restaurant_table_id' => null, 'status' => OrderStatus::Open])->save();
+        $item = $this->order->items()->first();
+        $unit = Unit::factory()->for($this->company)->create();
+        $inventory = InventoryItem::query()->create(['company_id' => $this->company->id, 'unit_id' => $unit->id,
+            'product_variant_id' => $item->product_variant_id, 'name' => 'Producto de prueba', 'is_active' => true]);
+        app(ApplyInventoryMovementAction::class)->execute($this->company, $this->branch, $inventory,
+            InventoryMovementType::AdjustmentIn, '10.000', '1.000000', $this->user, reason: 'Prueba aislada');
+        $item->update(['configuration_snapshot' => ['requirements' => [['inventory_item_id' => $inventory->id, 'quantity' => '1.000']]]]);
+        app(ReserveInventoryForOrderItemAction::class)->execute($item->fresh(), '1.000');
         $this->user->memberships()->where('company_id', $this->company->id)->update(['role' => MembershipRole::Cashier->value]);
         foreach ([PrinterPurpose::Kitchen, PrinterPurpose::CustomerTicket] as $purpose) {
             PrinterSetting::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
@@ -1304,7 +1484,6 @@ class DynamicQrTest extends TestCase
         $dispatch = KitchenDispatch::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
             'order_id' => $this->order->id, 'sequence_number' => 1, 'status' => KitchenDispatchStatus::AwaitingPayment,
             'dispatched_at' => now(), 'dispatched_by' => $this->user->id, 'total' => '100.00', 'gross_subtotal' => '100.00']);
-        $item = $this->order->items()->first();
         $item->update(['status' => OrderItemStatus::PendingPayment, 'requires_preparation' => true]);
         KitchenDispatchItem::query()->create(['company_id' => $this->company->id, 'branch_id' => $this->branch->id,
             'kitchen_dispatch_id' => $dispatch->id, 'order_item_id' => $item->id, 'gross_total' => '100.00', 'net_total' => '100.00']);
@@ -1316,15 +1495,21 @@ class DynamicQrTest extends TestCase
         ])->assertOk()->assertJsonPath('intent.status', 'pending');
         $this->get(route('orders.show', $orderB->ulid))->assertOk()->assertSee('data-qr-notifications', false);
         $this->assertSame(0, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->assertSame(0, InventoryMovement::query()->where('type', InventoryMovementType::OrderConsumption)->count());
+        $this->assertSame('10.000', InventoryStock::query()->where('inventory_item_id', $inventory->id)->value('quantity'));
+        $this->assertDatabaseCount('payments', 0);
         $this->paid();
         $this->artisan('baneco:reconcile', ['--inline' => true])->assertSuccessful();
         $this->assertSame(OrderStatus::Paid, $this->order->refresh()->status);
         $this->assertSame(KitchenDispatchStatus::Settled, $dispatch->refresh()->status);
         $this->assertSame(OrderItemStatus::Sent, $item->refresh()->status);
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->assertSame(1, $dispatch->printAttempts()->where('purpose', PrinterPurpose::CustomerTicket->value)->count());
         $this->artisan('baneco:reconcile', ['--inline' => true])->assertSuccessful();
         $this->artisan('kitchen:enqueue-paid')->assertSuccessful();
         $this->assertSame(1, $dispatch->printAttempts()->where('purpose', 'kitchen')->count());
+        $this->assertSame(1, InventoryMovement::query()->where('type', InventoryMovementType::OrderConsumption)->count());
+        $this->assertSame('9.000', InventoryStock::query()->where('inventory_item_id', $inventory->id)->value('quantity'));
         $this->getJson(route('dynamic-qr.notifications.index'))->assertOk()->assertJsonPath('notifications.0.order_url', route('orders.show', $this->order->ulid));
         $this->get(route('orders.index'))->assertOk()->assertSee('Pendientes de entrega')->assertSee(route('orders.delivered', $this->order->ulid));
         $this->get(route('orders.show', $this->order->ulid))->assertOk()->assertSee('Pendiente de entrega');
@@ -1610,6 +1795,27 @@ class DynamicQrTest extends TestCase
             $this->assertSame(DynamicQrStatus::ReconciliationRequired, $this->check($intent)->status);
         }
         $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_cash_warns_for_an_online_delivery_qr_in_the_current_session(): void
+    {
+        $intent = $this->generate();
+        $this->login()->get(route('cash.index'))->assertOk()->assertDontSee('Hay QR de delivery online pendientes');
+        DB::table('online_order_requests')->insert([
+            'company_id' => $this->company->id, 'branch_id' => $this->branch->id, 'pos_order_id' => $this->order->id,
+            'idempotency_key' => (string) Str::uuid(), 'request_hash' => str_repeat('a', 64),
+            'customer_name' => 'Cliente', 'customer_phone' => '70000000', 'fulfillment' => 'delivery',
+            'status' => 'confirmed', 'subtotal' => '100.00', 'total' => '100.00',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->login()->get(route('cash.index'))->assertOk()->assertSee('Hay QR de delivery online pendientes');
+        $otherBranch = Branch::factory()->for($this->company)->create();
+        $otherRegister = CashRegister::query()->create(['company_id' => $this->company->id, 'branch_id' => $otherBranch->id, 'name' => 'Otra sucursal', 'is_active' => true]);
+        app(OpenCashSessionAction::class)->execute($otherRegister, '0.00', $this->user);
+        $this->login()->withSession(['active_branch_id' => $otherBranch->id])->get(route('cash.index'))
+            ->assertOk()->assertDontSee('Hay QR de delivery online pendientes');
+        $this->check($intent, true);
+        $this->login()->get(route('cash.index'))->assertOk()->assertDontSee('Hay QR de delivery online pendientes');
     }
 
     public function test_cash_alerts_show_quarantined_operations_and_new_attempts_cannot_hide_them(): void

@@ -18,6 +18,7 @@ use App\Models\Payment;
 use App\Models\User;
 use App\Services\CompanyAccessService;
 use App\Services\FinancialPaymentCoordinator;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderFinancialVersion;
 use App\Services\OrderPaymentService;
 use Brick\Math\BigDecimal;
@@ -50,8 +51,16 @@ class RegisterPaymentAction
         ?KitchenDispatch $dispatch = null,
         ?DynamicQrIntent $bankIntent = null,
         ?int $attemptRevision = null,
+        ?OnlineOrderActionContext $online = null,
     ): Payment {
-        $this->access->ensure($user, $order->company, Permission::CreatePayments);
+        if ($online !== null && $bankIntent === null) {
+            throw new DomainException('El contexto online requiere una intención bancaria confirmada.');
+        }
+        if ($online && $bankIntent) {
+            $online->assertConfirmedPayment($order, $session, $user, $bankIntent);
+        } else {
+            $this->access->ensure($user, $order->company, Permission::CreatePayments);
+        }
         $existing = Payment::query()->forCompany($order->company)->where('idempotency_key', $idempotencyKey)->first();
         if ($existing) {
             return $this->validateDuplicate($existing, $order, $method, $amount, $dispatch);
@@ -63,7 +72,7 @@ class RegisterPaymentAction
         }
 
         try {
-            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $bankIntent, $attemptRevision): Payment {
+            return DB::transaction(function () use ($order, $session, $method, $amount, $user, $idempotencyKey, $receivedAmount, $reference, $dispatch, $bankIntent, $attemptRevision, $online): Payment {
                 $session = CashSession::query()->lockForUpdate()->findOrFail($session->id);
                 $order = Order::query()->with('company')->lockForUpdate()->findOrFail($order->id);
                 $dispatch = $dispatch ? KitchenDispatch::query()->lockForUpdate()->findOrFail($dispatch->id) : null;
@@ -106,7 +115,7 @@ class RegisterPaymentAction
                 if ($session->status !== CashSessionStatus::Open
                     || (int) $session->company_id !== (int) $order->company_id
                     || (int) $session->branch_id !== (int) $order->branch_id
-                    || (int) $session->opened_by !== (int) $user->id) {
+                    || ($online === null && (int) $session->opened_by !== (int) $user->id)) {
                     throw new DomainException('Debes cobrar desde tu propio turno de caja abierto.');
                 }
                 if (! in_array($order->status, [OrderStatus::Open, OrderStatus::ReadyForPayment], true)) {
@@ -156,7 +165,7 @@ class RegisterPaymentAction
                     $order->forceFill(['status' => OrderStatus::ReadyForPayment])->save();
                 }
                 if ($dispatch && BigDecimal::of($this->balances->dispatchBalance($dispatch))->isZero()) {
-                    $this->settleDispatch->execute($dispatch, $user);
+                    $this->settleDispatch->execute($dispatch, $user, $online);
                 } elseif (! $dispatch && BigDecimal::of($this->balances->balance($order))->isZero()) {
                     $this->closeOrder->executeIfEligibleLocked($order);
                 }

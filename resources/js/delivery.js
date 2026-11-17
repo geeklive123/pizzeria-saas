@@ -44,7 +44,9 @@ export function initDelivery(form) {
         if (submit && form.dataset.preparationEnabled === 'true') submit.textContent = active ? 'Preparar pedido' : 'Realizar pedido';
         const legal = document.querySelector('[data-checkout-legal-note]');
         if (legal && form.dataset.preparationEnabled === 'true') legal.textContent = active
-            ? 'La preparación no confirma el pedido, no registra pagos ni reserva inventario.'
+            ? (form.dataset.onlineQrEnabled === 'true'
+                ? 'Al preparar el QR se reserva inventario. El pago requiere confirmación bancaria.'
+                : 'La preparación no confirma el pedido, no registra pagos ni reserva inventario.')
             : 'El restaurante revisará tu solicitud. No se registra un pago ni se descuenta inventario.';
         if (active && !map) {
             map = L.map(panel.querySelector('[data-delivery-map]')).setView(origin, 15);

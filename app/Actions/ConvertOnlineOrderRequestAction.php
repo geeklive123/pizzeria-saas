@@ -8,6 +8,7 @@ use App\Models\OnlineOrderRequest;
 use App\Models\Order;
 use App\Models\ProductVariant;
 use App\Models\User;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
@@ -22,13 +23,17 @@ class ConvertOnlineOrderRequestAction
         private readonly OrderTotalsService $totals,
     ) {}
 
-    public function execute(OnlineOrderRequest $request, User $user): Order
+    public function execute(OnlineOrderRequest $request, User $user, ?OnlineOrderActionContext $online = null): Order
     {
-        if ($request->status !== 'pending_confirmation') {
-            throw new DomainException('La solicitud no está disponible para conversión al POS.');
-        }
-        if (! config('storefront.online_pos_conversion_enabled')) {
-            throw new DomainException('La conversión de pedidos online al POS está desactivada.');
+        if ($online) {
+            $online->assertRequest($request, $user);
+        } else {
+            if ($request->status !== 'pending_confirmation') {
+                throw new DomainException('La solicitud no está disponible para conversión al POS.');
+            }
+            if (! config('storefront.online_pos_conversion_enabled')) {
+                throw new DomainException('La conversión de pedidos online al POS está desactivada.');
+            }
         }
 
         $request->loadMissing(['company', 'items']);
@@ -49,7 +54,7 @@ class ConvertOnlineOrderRequestAction
             'customer_name' => $request->customer_name,
             'customer_phone' => $request->customer_phone,
             'notes' => $notes,
-        ]);
+        ], $online);
         $sum = BigDecimal::zero();
         foreach ($request->items as $line) {
             if ($line->was_promotion === null) {
@@ -70,7 +75,7 @@ class ConvertOnlineOrderRequestAction
                 throw new DomainException('Los importes históricos de la solicitud son inconsistentes.');
             }
 
-            $item = $this->addItem->execute($order, $variant, $line->quantity, $user);
+            $item = $this->addItem->execute($order, $variant, $line->quantity, $user, online: $online);
             $snapshot = $item->configuration_snapshot ?? [];
             $snapshot['online_request'] = ['request_id' => $request->id, 'item_id' => $line->id,
                 'product_name' => $line->product_name, 'variant_name' => $line->variant_name,

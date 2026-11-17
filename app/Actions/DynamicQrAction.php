@@ -25,9 +25,11 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\User;
 use App\Services\BancoEconomicoGateway;
+use App\Services\BankQrEmitter;
 use App\Services\BankQrException;
 use App\Services\CompanyAccessService;
 use App\Services\FinancialPaymentCoordinator;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OrderFinancialVersion;
 use App\Services\OrderPaymentService;
 use App\Services\ThermalPrintingService;
@@ -38,6 +40,8 @@ use Illuminate\Database\LostConnectionDetector;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class DynamicQrAction
@@ -48,9 +52,58 @@ class DynamicQrAction
         private readonly OrderPaymentService $balances,
         private readonly CompanyAccessService $access,
         private readonly ClaimPreparedDynamicQrAction $claims,
+        private readonly BankQrEmitter $emitter,
         private readonly FinancialPaymentCoordinator $financialAttempts,
         private readonly OrderFinancialVersion $versions,
     ) {}
+
+    /** Prepare only; the caller must commit before invoking the emitter. */
+    public function prepareOnline(Order $order, CashSession $session, User $actor, object $operation, OnlineOrderActionContext $context): DynamicQrIntent
+    {
+        if (DB::transactionLevel() < 1 || ! app()->runningUnitTests() || ! config('baneco.enabled')) {
+            throw new DomainException('La emisión online todavía está limitada al banco simulado.');
+        }
+        $context->assertOrder($order, $actor);
+        $key = 'online:'.$operation->id;
+        $existing = DynamicQrIntent::query()->where('company_id', $order->company_id)->where('idempotency_key', $key)->lockForUpdate()->first();
+        if ($existing) {
+            if ((int) $existing->id !== (int) $operation->dynamic_qr_intent_id || (int) $existing->order_id !== (int) $order->id
+                || (int) $existing->cash_session_id !== (int) $session->id || (int) $existing->user_id !== (int) $actor->id) {
+                throw new DomainException('La intención online requiere revisión.');
+            }
+
+            return $existing;
+        }
+        if ($operation->dynamic_qr_intent_id !== null || $order->status !== OrderStatus::Open
+            || DynamicQrIntent::query()->where('order_id', $order->id)->exists()) {
+            throw new DomainException('La orden ya tiene un intento bancario que requiere revisión.');
+        }
+        $this->financialAttempts->assertNoActiveAttempt($order);
+        $setting = BankQrSetting::forOrder($order);
+        if (! $setting || ! $setting->enabled) {
+            throw new DomainException('Falta configurar Banco Económico para esta sucursal.');
+        }
+        $setting->readableCredentials();
+        $balance = BigDecimal::of($this->balances->balance($order));
+        if (! $balance->isPositive()) {
+            throw new DomainException('El importe del QR no es válido.');
+        }
+        $intent = DynamicQrIntent::query()->create([
+            'company_id' => $order->company_id, 'branch_id' => $order->branch_id, 'order_id' => $order->id,
+            'active_order_id' => $order->id, 'cash_session_id' => $session->id, 'user_id' => $actor->id,
+            'bank_qr_setting_id' => $setting->id, 'amount' => (string) $balance->toScale(2), 'currency' => 'BOB',
+            'commercial_reference' => now()->format('ymdHis').random_int(1000, 9999), 'idempotency_key' => $key,
+            'status' => DynamicQrStatus::Creating, 'generation_phase' => DynamicQrGenerationPhase::Prepared->value,
+            'expires_at' => now()->timezone('America/La_Paz')->addDays($setting->due_days ?? 1)->endOfDay()->utc(),
+        ]);
+        if (DB::table('online_qr_operations')->where('id', $operation->id)->whereNull('dynamic_qr_intent_id')
+            ->update(['dynamic_qr_intent_id' => $intent->id, 'updated_at' => now()]) !== 1) {
+            throw new DomainException('No se pudo vincular la intención online.');
+        }
+        $this->versions->advance($order);
+
+        return $intent;
+    }
 
     public function generate(Order $order, CashSession $session, User $user, string $key, ?KitchenDispatch $dispatch = null, string $cash = '0.00', ?string $received = null): DynamicQrIntent
     {
@@ -215,42 +268,8 @@ class DynamicQrAction
         if (! $created) {
             return $intent;
         }
-        $generationLock = Cache::lock('baneco:intent:'.$intent->id, 120);
-        if (! $generationLock->get()) {
-            return $intent->refresh();
-        }
-        try {
-            $intent->refresh();
-            if ($intent->status !== DynamicQrStatus::Creating) {
-                return $intent;
-            }
-            // A failed or uncertain claim commit must never lead to an HTTP request.
-            if (! $this->claims->execute($intent)) {
-                return $intent->refresh();
-            }
-            // Claim has committed. Armed attempts are never automatically sent twice.
-            try {
-                $data = $this->gateway->generate($intent);
-                $intent->update(['bank_qr_id' => $data['qrId'], 'generation_phase' => DynamicQrGenerationPhase::Generated->value]);
-                $image = $this->gateway->image(is_string($data['qrImage'] ?? null) ? $data['qrImage'] : '');
-                $intent->update(['qr_image' => $image, 'status' => DynamicQrStatus::Pending]);
-            } catch (BankQrException $exception) {
-                $uncertain = $exception->uncertain || $this->gateway->generationAttempted();
-                $intent->update(['status' => $uncertain ? DynamicQrStatus::GenerationUnknown : DynamicQrStatus::Failed, 'issue_code' => $exception->issue,
-                    'generation_phase' => $uncertain ? DynamicQrGenerationPhase::GenerationUnknown->value : DynamicQrGenerationPhase::ErrorConfirmed->value]);
-                if ($uncertain) {
-                    $this->alert($intent);
-                }
-            } catch (Throwable) {
-                // Includes a duplicate bank ID or a persistence failure after a remote success.
-                $intent->update(['status' => DynamicQrStatus::GenerationUnknown, 'issue_code' => 'generation_result_unknown', 'generation_phase' => DynamicQrGenerationPhase::GenerationUnknown->value]);
-                $this->alert($intent);
-            }
-        } finally {
-            $generationLock->release();
-        }
 
-        return $intent->refresh();
+        return $this->emitter->emit($intent, fn (DynamicQrIntent $candidate): bool => $this->claims->execute($candidate), requireEnabled: false);
     }
 
     public function check(DynamicQrIntent $intent, bool $cancel = false): DynamicQrIntent
@@ -361,9 +380,40 @@ class DynamicQrAction
                 if (! $reason) {
                     try {
                         $intent->save();
-                        $record = $this->payments->execute($order, $session, PaymentMethod::Qr, $intent->amount, $intent->user, 'baneco:'.$intent->ulid, reference: 'Banco Económico '.$intent->bank_qr_id, dispatch: $dispatch, bankIntent: $intent);
+                        $onlineOperation = Schema::hasTable('online_qr_operations') && Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
+                            ? DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->first() : null;
+                        if ($onlineOperation) {
+                            $record = DB::transaction(function () use ($intent, $order, $session, $onlineOperation): Payment {
+                                $actor = $intent->user;
+                                try {
+                                    $context = OnlineOrderActionContext::fromConfirmedIntent($intent, $order, $session, $actor);
+                                } catch (ValidationException $exception) {
+                                    throw new DomainException('La reserva online requiere conciliación.', previous: $exception);
+                                }
+                                $dispatch = app(DispatchOrderToKitchenAction::class)->execute($order, $actor, online: $context);
+                                if (! $dispatch) {
+                                    throw new DomainException('La orden online no contiene una tanda válida.');
+                                }
+                                $intent->update(['kitchen_dispatch_id' => $dispatch->id]);
+                                $payment = $this->payments->execute($order, $session, PaymentMethod::Qr, $intent->amount, $actor,
+                                    'baneco:'.$intent->ulid, reference: 'Banco Económico '.$intent->bank_qr_id, dispatch: $dispatch,
+                                    bankIntent: $intent, online: $context);
+                                $updated = DB::table('online_order_requests')->where('id', $onlineOperation->online_order_request_id)
+                                    ->where('company_id', $order->company_id)->where('branch_id', $order->branch_id)
+                                    ->where('pos_order_id', $order->id)->whereIn('status', ['payment_preparation', 'preparation_invalidated'])
+                                    ->update(['status' => 'paid', 'updated_at' => now()]);
+                                if ($updated !== 1) {
+                                    throw new DomainException('La solicitud online requiere revisión.');
+                                }
+
+                                return $payment;
+                            });
+                        } else {
+                            $record = $this->payments->execute($order, $session, PaymentMethod::Qr, $intent->amount, $intent->user, 'baneco:'.$intent->ulid, reference: 'Banco Económico '.$intent->bank_qr_id, dispatch: $dispatch, bankIntent: $intent);
+                        }
                         $intent->fill(['payment_id' => $record->id, 'status' => DynamicQrStatus::Paid, 'active_order_id' => null, 'confirmed_at' => now(), 'issue_code' => null]);
                     } catch (DomainException|AuthorizationException) {
+                        $intent->refresh();
                         $reason = 'payment_context_rejected';
                     }
                 }

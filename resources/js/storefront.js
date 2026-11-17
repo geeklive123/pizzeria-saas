@@ -263,6 +263,21 @@ const initCheckout = () => {
         if (!response.ok) throw new Error(Object.values(result.errors ?? {}).flat()[0] ?? result.message ?? 'No fue posible preparar el pedido.');
         return result;
     };
+    const qrCheck = document.querySelector('[data-online-qr-check]');
+    qrCheck?.addEventListener('click', async () => {
+        const attempt = readPreparation();
+        if (!attempt?.key || !qrCheck.dataset.statusUrl) return;
+        const status = document.querySelector('[data-online-qr-status]');
+        qrCheck.disabled = true;
+        try {
+            const result = await preparationRequest(qrCheck.dataset.statusUrl, { idempotency_key: attempt.key });
+            if (status) status.textContent = result.status === 'paid' ? 'Pago confirmado' : result.status === 'pending' ? 'Esperando confirmación bancaria.' : 'El pago requiere revisión. Contacta al restaurante.';
+        } catch {
+            if (status) status.textContent = 'Error temporal recuperable. Vuelve a comprobar el pago.';
+        } finally {
+            qrCheck.disabled = false;
+        }
+    });
     const showPreparation = (result) => {
         if (!confirmation) return;
         confirmation.textContent = result.ready ? `Preparación registrada. Total: ${result.subtotal} Bs. No se ha realizado ningún pago ni se ha confirmado el pedido.` : result.message;
@@ -311,7 +326,7 @@ const initCheckout = () => {
         let attempt = readPreparation();
         if (attempt) {
             const existing = await recoverPreparation(attempt);
-            if (existing && existing.ready && !attempt.dirty && attempt.fingerprint === digest) return;
+            if (existing && existing.ready && !attempt.dirty && attempt.fingerprint === digest) return attempt;
             if (existing) await preparationRequest(form.dataset.preparationCancelUrl, { idempotency_key: attempt.key });
             if (readPreparation()?.key === attempt.key) localStorage.removeItem(preparationKey);
         }
@@ -324,7 +339,9 @@ const initCheckout = () => {
         } catch (error) {
             const existing = await recoverPreparation(attempt);
             if (!existing) throw error;
+            if (!existing.ready) throw error;
         }
+        return attempt;
     };
     const resolveAttempt = async (attempt) => {
         const response = await fetch(form.dataset.resolveUrl, { method: 'POST', headers, body: JSON.stringify({ idempotency_key: attempt.key }) });
@@ -366,7 +383,28 @@ const initCheckout = () => {
         if (confirmation) confirmation.hidden = true;
         try {
             if (form.dataset.preparationEnabled === 'true' && fulfillment.fulfillment === 'delivery') {
-                await prepareDelivery(fulfillment);
+                const attempt = await prepareDelivery(fulfillment);
+                if (form.dataset.onlineQrEnabled === 'true' && readPreparation()?.key === attempt.key && !readPreparation()?.dirty) {
+                    await preparationRequest(form.dataset.onlineOrderUrl, { idempotency_key: attempt.key });
+                    if (form.dataset.onlineQrUrl) {
+                        const panel = document.querySelector('[data-online-qr]');
+                        const status = document.querySelector('[data-online-qr-status]');
+                        const qrImage = document.querySelector('[data-online-qr-image]');
+                        if (panel) panel.hidden = false;
+                        if (confirmation) confirmation.hidden = true;
+                        if (qrImage) qrImage.hidden = true;
+                        if (status) status.textContent = 'Generando tu QR';
+                        const qr = await preparationRequest(form.dataset.onlineQrUrl, { idempotency_key: attempt.key });
+                        if (qr.status === 'pending' && qr.qr_image && qrImage) {
+                            qrImage.src = qr.qr_image;
+                            qrImage.hidden = false;
+                            if (qrCheck) qrCheck.hidden = false;
+                            if (status) status.textContent = `QR listo para pagar · Bs ${qr.amount}. Esperando confirmación bancaria.`;
+                        } else if (status) {
+                            status.textContent = 'Error temporal recuperable. Vuelve a intentarlo o consulta al restaurante.';
+                        }
+                    }
+                }
                 submit.disabled = false;
                 submit.textContent = 'Preparar pedido';
                 return;
@@ -397,6 +435,10 @@ const initCheckout = () => {
             }
             finish(result, attempt);
         } catch (error) {
+            if (confirmation) confirmation.hidden = true;
+            const qrPanel = document.querySelector('[data-online-qr]');
+            const qrStatus = document.querySelector('[data-online-qr-status]');
+            if (qrPanel && !qrPanel.hidden && qrStatus) qrStatus.textContent = 'Error temporal recuperable. Vuelve a intentarlo o consulta al restaurante.';
             if (errors) {
                 errors.textContent = error instanceof Error ? error.message : 'No pudimos validar el pedido.';
                 errors.hidden = false;

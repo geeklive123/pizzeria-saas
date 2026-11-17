@@ -61,7 +61,10 @@ use App\Services\PhotonAddressSearch;
 use App\Services\PrintAgentStatusService;
 use App\Support\BranchContext;
 use App\Support\CompanyContext;
+use Illuminate\Auth\EloquentUserProvider;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\View\View as ViewContract;
@@ -91,6 +94,16 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Auth::provider('interactive-eloquent', function ($app, array $config): EloquentUserProvider {
+            return (new EloquentUserProvider($app['hash'], $config['model']))->withQuery(function ($query): void {
+                // Before the additive migration there can be no system identities to exclude.
+                if (Schema::hasTable('online_system_identities')) {
+                    $query->whereNotExists(fn ($subquery) => $subquery->selectRaw('1')->from('online_system_identities')
+                        ->whereColumn('online_system_identities.user_id', $query->getModel()->getQualifiedKeyName()));
+                }
+            });
+        });
+
         Gate::policy(Company::class, CompanyPolicy::class);
         Gate::policy(Branch::class, BranchPolicy::class);
         Gate::policy(Membership::class, MembershipPolicy::class);

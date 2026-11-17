@@ -14,6 +14,7 @@ use App\Models\Order;
 use App\Models\OrderDeliveryCharge;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderFinancialService;
 use App\Services\OrderTotalsService;
@@ -31,9 +32,16 @@ class DispatchOrderToKitchenAction
         private readonly NextOperationalOrderNumberAction $numbers,
     ) {}
 
-    public function execute(Order $order, User $user, int|string|null $discountPercentage = null, bool $releaseTakeaway = false): ?KitchenDispatch
+    public function execute(Order $order, User $user, int|string|null $discountPercentage = null, bool $releaseTakeaway = false, ?OnlineOrderActionContext $online = null): ?KitchenDispatch
     {
-        $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        if ($online) {
+            $online->assertConfirmedOrder($order, $user);
+            if ($releaseTakeaway || $discountPercentage !== null) {
+                throw new DomainException('La orden online no admite liberación o descuentos anticipados.');
+            }
+        } else {
+            $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        }
 
         return DB::transaction(function () use ($order, $user, $discountPercentage, $releaseTakeaway): ?KitchenDispatch {
             $order = Order::query()->with(['company', 'branch'])->lockForUpdate()->findOrFail($order->getKey());

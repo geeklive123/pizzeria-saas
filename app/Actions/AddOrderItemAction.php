@@ -12,6 +12,7 @@ use App\Models\OrderItem;
 use App\Models\ProductVariant;
 use App\Models\User;
 use App\Services\CompanyAccessService;
+use App\Services\OnlineOrderActionContext;
 use App\Services\OnlineOrderCommercialGuard;
 use App\Services\OrderTotalsService;
 use Brick\Math\BigDecimal;
@@ -23,7 +24,7 @@ class AddOrderItemAction
 {
     public function __construct(private readonly ReserveInventoryForOrderItemAction $reserve, private readonly OrderTotalsService $totals, private readonly CompanyAccessService $access, private readonly AddConfiguredPizzaAction $configuredPizza) {}
 
-    public function execute(Order $order, ProductVariant $variant, int|string $quantity, User $user, ?OrderType $fulfillment = null, ?string $notes = null): OrderItem
+    public function execute(Order $order, ProductVariant $variant, int|string $quantity, User $user, ?OrderType $fulfillment = null, ?string $notes = null, ?OnlineOrderActionContext $online = null): OrderItem
     {
         $variant->loadMissing('product');
         if ($variant->product->type === ProductType::Pizza) {
@@ -31,10 +32,14 @@ class AddOrderItemAction
                 'product_variant' => $variant,
                 'fraction_numerator' => 1,
                 'fraction_denominator' => 1,
-            ]], $quantity, $user, $fulfillment, notes: $notes);
+            ]], $quantity, $user, $fulfillment, notes: $notes, online: $online);
         }
 
-        $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        if ($online) {
+            $online->assertOrder($order, $user);
+        } else {
+            $this->access->ensure($user, $order->company, Permission::ManageOrders);
+        }
         $quantity = BigDecimal::of($quantity)->toScale(3, RoundingMode::HalfUp);
 
         if ($quantity->isLessThanOrEqualTo(0) || (int) $variant->company_id !== (int) $order->company_id || ! $variant->is_active) {

@@ -73,6 +73,15 @@ class BuildStorefrontWhatsAppOrderAction
     /** @param Collection<int, array{variant_ulid:string,quantity:int}> $requested */
     public function validatedVariants(Company $company, Branch $branch, Collection $requested): Collection
     {
+        $variants = $this->visibleVariants($company, $requested);
+        $this->assertAvailability($branch, $requested, $variants);
+
+        return $variants;
+    }
+
+    /** Catalog visibility and activity only; callers must separately verify availability. */
+    public function visibleVariants(Company $company, Collection $requested): Collection
+    {
         $variants = ProductVariant::query()
             ->forCompany($company)
             ->whereIn('ulid', $requested->pluck('variant_ulid'))
@@ -99,8 +108,6 @@ class BuildStorefrontWhatsAppOrderAction
                 'items' => 'Uno o más productos ya no están disponibles en esta tienda.',
             ]);
         }
-
-        $this->assertAvailability($branch, $requested, $variants);
 
         return $variants;
     }
