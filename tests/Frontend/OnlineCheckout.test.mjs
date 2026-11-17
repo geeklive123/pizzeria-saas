@@ -9,9 +9,10 @@ const checkout = source.slice(source.indexOf('const initCheckout ='), source.ind
 const key = 'masa-y-mana-online-request-v1';
 const ok = (data) => ({ ok: true, status: 200, json: async () => data });
 
-function setup(saved = new Map(), initialResponses = [], preparation = false) {
+function setup(saved = new Map(), initialResponses = [], preparation = false, options = {}) {
     const form = { action: '/store', dataset: { demo: 'false', resolveUrl: '/resolve' }, addEventListener(event, fn) { this[event] = fn; }, reportValidity: () => true };
     if (preparation) Object.assign(form.dataset, { preparationEnabled: 'true', preparationUrl: '/prepare', preparationResolveUrl: '/prepare/resolve', preparationCancelUrl: '/prepare/cancel' });
+    Object.assign(form.dataset, options);
     const submit = { disabled: false, textContent: '', dataset: {}, addEventListener() {} };
     const error = { hidden: true, textContent: '' };
     const confirmation = { hidden: true, textContent: '' };
@@ -35,6 +36,16 @@ function setup(saved = new Map(), initialResponses = [], preparation = false) {
     runInNewContext(`${checkout}\ninitCheckout();`, context);
     return { form, submit, error, confirmation, qr, qrStatus, qrImage, qrCheck, saved, responses, calls, firstCall, context, cleared: () => cleared };
 }
+
+test('a stopped online channel retains the previous QR status check after reload', async () => {
+    const saved = new Map([['masa-y-mana-delivery-preparation-v1', JSON.stringify({ key: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' })]]);
+    const ui = setup(saved, [ok({ status: 'paid' })], false, { onlineQrEnabled: 'false', preparationEnabled: 'false' });
+    assert.equal(ui.qr.hidden, false);
+    assert.equal(ui.qrCheck.hidden, false);
+    await ui.qrCheck.click();
+    assert.equal(ui.qrStatus.textContent, 'Pago confirmado');
+    assert.deepEqual(ui.calls.map((call) => call.url), ['/qr/status']);
+});
 
 test('delivery preparation keeps its identity and cart after a lost response', async () => {
     const saved = new Map();

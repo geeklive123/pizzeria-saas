@@ -15,6 +15,8 @@ async function main() {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, serviceWorkers: 'block' });
     await context.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
     const page = await context.newPage();
+    const applicationRequests = [];
+    page.on('request', request => { if (request.method() === 'POST') applicationRequests.push(new URL(request.url()).pathname); });
     page.on('pageerror', error => console.error('PAGE ERROR:', error.message));
     page.on('response', response => { if (response.status() >= 400) console.error('HTTP', response.status(), new URL(response.url()).pathname); });
     const api = async (method, endpoint) => {
@@ -48,9 +50,22 @@ async function main() {
         assert.ok(pending.intent.bank_qr_id.startsWith('demo-'));
         assert.equal(pending.intent.has_image, true);
         assert.equal(pending.orders, 1);
+        assert.equal(pending.intents, 1);
         assert.equal(pending.payments, 0);
         assert.equal(pending.reservations[0].status, 'reserved');
+        await fs.writeFile(path.join(dir, 'stop-online-emissions'), 'disabled for demo');
+        applicationRequests.length = 0;
+        await page.reload();
+        await page.locator('[data-online-qr-check]:not([hidden])').waitFor();
+        await page.locator('[data-online-qr-check]').click();
+        await page.getByText('Esperando confirmación bancaria.').waitFor();
+        const afterReload = await api('GET', '/__demo/state');
+        assert.equal(afterReload.intents, 1);
+        assert.equal(afterReload.intent.bank_qr_id, pending.intent.bank_qr_id);
+        assert.equal(applicationRequests.some(url => url.endsWith('/preparacion/qr') || url.endsWith('/preparacion/orden')), false);
+        await page.screenshot({ path: path.join(dir, 'checkout-recarga-canal-detenido.png'), fullPage: true });
         await api('POST', '/__demo/paid');
+        await api('POST', '/__demo/reconcile');
         await page.locator('[data-online-qr-check]').click();
         await page.getByText('Pago confirmado').waitFor({ timeout: 30000 });
         await page.screenshot({ path: path.join(dir, 'checkout-pago-confirmado.png'), fullPage: true });
@@ -59,6 +74,7 @@ async function main() {
         const paid = await api('GET', '/__demo/state');
         assert.equal(paid.intent.status, 'paid');
         assert.equal(paid.orders, 1);
+        assert.equal(paid.intents, 1);
         assert.equal(paid.payments, 1);
         assert.equal(paid.consumptions, 1);
         assert.equal(paid.reservations[0].status, 'consumed');

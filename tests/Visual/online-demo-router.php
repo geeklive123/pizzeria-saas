@@ -1,5 +1,7 @@
 <?php
 
+use App\Actions\DynamicQrAction;
+use App\Models\DynamicQrIntent;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -15,6 +17,10 @@ if (str_starts_with($path, '/build/') && is_file(dirname(__DIR__, 2).'/public'.$
 $app = require __DIR__.'/online-demo-bootstrap.php';
 $dir = realpath(getenv('ONLINE_QR_DEMO_DIR'));
 $info = json_decode(file_get_contents($dir.'/info.json'), true, flags: JSON_THROW_ON_ERROR);
+// Test-only switch, stored inside this disposable demo directory.
+if (is_file($dir.'/stop-online-emissions')) {
+    config(['storefront.online_dynamic_qr_enabled' => false, 'storefront.delivery_payment_preparation_enabled' => false]);
+}
 if (in_array($path, ['/__demo/paid', '/__demo/state'], true)) {
     if (! hash_equals($info['control_token'], $_SERVER['HTTP_X_DEMO_TOKEN'] ?? '')) {
         http_response_code(403);
@@ -32,7 +38,7 @@ if (in_array($path, ['/__demo/paid', '/__demo/state'], true)) {
         }
         echo json_encode(['request' => DB::table('online_order_requests')->first(['id', 'status', 'pos_order_id']),
             'intent' => $intent,
-            'orders' => DB::table('orders')->count(), 'payments' => DB::table('payments')->count(),
+            'orders' => DB::table('orders')->count(), 'intents' => DB::table('dynamic_qr_intents')->count(), 'payments' => DB::table('payments')->count(),
             'reservations' => DB::table('inventory_reservations')->get(['status']),
             'consumptions' => DB::table('inventory_movements')->where('type', 'order_consumption')->count(),
             'prints' => DB::table('print_attempts')->count()], JSON_THROW_ON_ERROR);
@@ -80,4 +86,14 @@ Http::fake(function ($request) {
     }
     throw new RuntimeException('Unexpected outbound request blocked');
 });
+if ($path === '/__demo/reconcile') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || ! hash_equals($info['control_token'], $_SERVER['HTTP_X_DEMO_TOKEN'] ?? '')) {
+        http_response_code(403);
+        exit;
+    }
+    app(DynamicQrAction::class)->check(DynamicQrIntent::query()->sole());
+    header('Content-Type: application/json');
+    echo '{"ok":true}';
+    exit;
+}
 $app->handleRequest(Request::capture());

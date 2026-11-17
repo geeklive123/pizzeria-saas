@@ -15,6 +15,8 @@ final class SimulatedOnlineBank
 
     public bool $authFail = false;
 
+    public bool $statusFail = false;
+
     public bool $paidQr = false;
 
     public bool $bankCancelled = false;
@@ -46,6 +48,10 @@ final class SimulatedOnlineBank
                 return Http::response(['responseCode' => 0, 'qrId' => 'bank-fake-'.$this->generations, 'qrImage' => 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=']);
             }
             if (str_contains($request->url(), 'statusQR')) {
+                if ($this->statusFail) {
+                    return Http::failedConnection();
+                }
+
                 return Http::response(['responseCode' => 0, 'statusQrCode' => $this->bankCancelled ? 9 : ($this->paidQr ? 1 : 0),
                     'payment' => ['qrId' => $this->paidBankId, 'amount' => '24.00', 'currency' => 'BOB', 'transactionId' => 'simulated-transaction']]);
             }

@@ -278,6 +278,16 @@ const initCheckout = () => {
             qrCheck.disabled = false;
         }
     });
+    // A stopped channel can still have a QR issued before the stop. Keep its
+    // status check available after reload without creating another operation.
+    if (form.dataset.demo !== 'true' && (form.dataset.onlineQrEnabled !== 'true' || form.dataset.preparationEnabled !== 'true')
+        && readPreparation()?.key && qrCheck?.dataset.statusUrl) {
+        const panel = document.querySelector('[data-online-qr]');
+        const status = document.querySelector('[data-online-qr-status]');
+        if (panel) panel.hidden = false;
+        if (status) status.textContent = 'Si generaste un QR antes, consulta el estado de ese pago.';
+        qrCheck.hidden = false;
+    }
     const showPreparation = (result) => {
         if (!confirmation) return;
         confirmation.textContent = result.ready ? `Preparación registrada. Total: ${result.subtotal} Bs. No se ha realizado ningún pago ni se ha confirmado el pedido.` : result.message;

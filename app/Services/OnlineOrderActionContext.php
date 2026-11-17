@@ -26,7 +26,8 @@ final class OnlineOrderActionContext
     /** Constructed only from persisted, bank-confirmed evidence under the payment transaction. */
     public static function fromConfirmedIntent(DynamicQrIntent $intent, Order $order, CashSession $cash, User $actor): self
     {
-        if (DB::transactionLevel() < 1 || ! app()->runningUnitTests() || ! config('storefront.online_dynamic_qr_enabled')) {
+        // Reconciliation of an existing intent must not depend on the switch for new emissions.
+        if (DB::transactionLevel() < 1 || ! app()->runningUnitTests()) {
             throw new DomainException('El contexto de confirmación online requiere revisión.');
         }
         // Re-read in the same order as payment reconciliation; callers may hold stale models.

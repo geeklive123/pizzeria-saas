@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\Storefront;
 
 use App\Actions\CreateOnlineOrderRequestAction;
-use App\Actions\DynamicQrAction;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\OnlineOrderRequest as OrderInput;
-use App\Models\DynamicQrIntent;
 use App\Models\OnlineOrderRequest;
 use App\Services\CreatePendingOnlineOrder;
 use App\Services\CurrentCashSessionService;
@@ -16,29 +14,60 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 
 class PaymentPreparationController extends Controller
 {
-    public function qrStatus(Request $request, DynamicQrAction $qr): JsonResponse
+    public function qrStatus(Request $request): JsonResponse
     {
-        abort_unless(config('storefront.delivery_payment_preparation_enabled') && config('storefront.online_dynamic_qr_enabled') && app()->runningUnitTests(), 404);
+        abort_if($request->query->count() !== 0, 422);
+        abort_if(array_diff(array_keys($request->all()), ['idempotency_key']) !== [], 422);
         $data = $request->validate(['idempotency_key' => ['required', 'uuid:4']]);
         $company = $request->attributes->get('storefrontCompany');
         $branch = $request->attributes->get('storefrontBranch');
-        $preparation = OnlineOrderRequest::query()->forCompany($company)->where('branch_id', $branch->id)
-            ->where('idempotency_key', $data['idempotency_key'])->where('is_fence', false)->firstOrFail();
-        $operation = DB::table('online_qr_operations')->where('online_order_request_id', $preparation->id)
-            ->where('company_id', $company->id)->where('branch_id', $branch->id)->first();
-        abort_unless($operation && $operation->dynamic_qr_intent_id, 404);
-        $intent = DynamicQrIntent::query()->where('company_id', $company->id)->where('branch_id', $branch->id)
-            ->whereKey($operation->dynamic_qr_intent_id)->firstOrFail();
-        Http::allowStrayRequests([]);
-        Http::preventStrayRequests();
-        $intent = $qr->check($intent);
+        // A UUID is a bearer capability. Verify the entire persisted context in
+        // one query and never turn a public request into a bank API call.
+        try {
+            $intent = DB::table('online_order_requests as request')
+                ->join('online_qr_operations as operation', 'operation.online_order_request_id', '=', 'request.id')
+                ->join('orders as pos', 'pos.id', '=', 'operation.pos_order_id')
+                ->join('cash_sessions as cash', 'cash.id', '=', 'operation.cash_session_id')
+                ->join('online_system_identities as identity', 'identity.user_id', '=', 'operation.system_user_id')
+                ->join('dynamic_qr_intents as intent', 'intent.id', '=', 'operation.dynamic_qr_intent_id')
+                ->join('bank_qr_settings as setting', 'setting.id', '=', 'intent.bank_qr_setting_id')
+                ->leftJoin('payments as payment', function ($join): void {
+                    $join->on('payment.id', '=', 'intent.payment_id')
+                        ->on('payment.company_id', '=', 'intent.company_id')->on('payment.branch_id', '=', 'intent.branch_id')
+                        ->on('payment.order_id', '=', 'intent.order_id')->on('payment.cash_session_id', '=', 'intent.cash_session_id')
+                        ->where('payment.status', '=', 'completed')->where('payment.method', '=', 'qr');
+                })
+                ->where('request.company_id', $company->id)->where('request.branch_id', $branch->id)
+                ->where('request.idempotency_key', $data['idempotency_key'])->where('request.is_fence', false)
+                ->where('request.fulfillment', 'delivery')
+                ->whereColumn('operation.company_id', 'request.company_id')->whereColumn('operation.branch_id', 'request.branch_id')
+                ->whereColumn('request.pos_order_id', 'operation.pos_order_id')->whereColumn('request.preparation_cash_session_id', 'operation.cash_session_id')
+                ->whereColumn('pos.company_id', 'request.company_id')->whereColumn('pos.branch_id', 'request.branch_id')
+                ->whereColumn('pos.created_by', 'operation.system_user_id')
+                ->whereColumn('cash.company_id', 'request.company_id')->whereColumn('cash.branch_id', 'request.branch_id')
+                ->whereColumn('cash.opened_by', 'operation.original_cashier_id')
+                ->whereColumn('identity.company_id', 'request.company_id')->whereColumn('identity.branch_id', 'request.branch_id')
+                ->whereColumn('intent.company_id', 'request.company_id')->whereColumn('intent.branch_id', 'request.branch_id')
+                ->whereColumn('intent.order_id', 'operation.pos_order_id')->whereColumn('intent.cash_session_id', 'operation.cash_session_id')
+                ->whereColumn('intent.user_id', 'operation.system_user_id')->whereColumn('setting.company_id', 'request.company_id')
+                ->where(fn ($query) => $query->whereNull('setting.branch_id')->orWhereColumn('setting.branch_id', 'request.branch_id'))
+                ->select('intent.status')->selectRaw('CASE WHEN payment.id IS NULL THEN 0 ELSE 1 END AS paid_verified')->first();
+        } catch (QueryException) {
+            return $this->unavailable();
+        }
+        abort_unless($intent && in_array($intent->status, ['creating', 'pending', 'paid', 'failed', 'generation_unknown', 'cancelled', 'reconciliation_required'], true), 404);
 
-        return response()->json(['status' => $intent->status->value])->header('Cache-Control', 'no-store');
+        $publicStatus = match ($intent->status) {
+            'creating', 'pending' => 'pending',
+            'paid' => $intent->paid_verified ? 'paid' : 'review',
+            default => 'review',
+        };
+
+        return response()->json(['status' => $publicStatus])->header('Cache-Control', 'no-store');
     }
 
     public function qr(Request $request, EmitOnlineDynamicQr $emitter): JsonResponse
