@@ -264,6 +264,25 @@ const initCheckout = () => {
         return result;
     };
     const qrCheck = document.querySelector('[data-online-qr-check]');
+    let qrExpiryTimer = null;
+    const hideExpiredQr = () => {
+        const image = document.querySelector('[data-online-qr-image]');
+        const status = document.querySelector('[data-online-qr-status]');
+        if (image) image.hidden = true;
+        if (status) status.textContent = 'QR vencido. Consulta el estado del pago; el vencimiento no confirma su cancelación.';
+    };
+    const scheduleQrExpiry = (expiresAt) => {
+        if (qrExpiryTimer !== null) clearTimeout(qrExpiryTimer);
+        const deadline = Date.parse(expiresAt);
+        if (!Number.isFinite(deadline) || deadline <= Date.now()) { hideExpiredQr(); return false; }
+        const schedule = () => {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) { hideExpiredQr(); return; }
+            qrExpiryTimer = setTimeout(schedule, Math.min(remaining, 2147483647));
+        };
+        schedule();
+        return true;
+    };
     qrCheck?.addEventListener('click', async () => {
         const attempt = readPreparation();
         if (!attempt?.key || !qrCheck.dataset.statusUrl) return;
@@ -271,6 +290,11 @@ const initCheckout = () => {
         qrCheck.disabled = true;
         try {
             const result = await preparationRequest(qrCheck.dataset.statusUrl, { idempotency_key: attempt.key });
+            if (result.status !== 'pending') {
+                if (qrExpiryTimer !== null) clearTimeout(qrExpiryTimer);
+                const image = document.querySelector('[data-online-qr-image]');
+                if (image) image.hidden = true;
+            }
             if (status) status.textContent = result.status === 'paid' ? 'Pago confirmado' : result.status === 'pending' ? 'Esperando confirmación bancaria.' : 'El pago requiere revisión. Contacta al restaurante.';
         } catch {
             if (status) status.textContent = 'Error temporal recuperable. Vuelve a comprobar el pago.';
@@ -406,10 +430,12 @@ const initCheckout = () => {
                         if (status) status.textContent = 'Generando tu QR';
                         const qr = await preparationRequest(form.dataset.onlineQrUrl, { idempotency_key: attempt.key });
                         if (qr.status === 'pending' && qr.qr_image && qrImage) {
-                            qrImage.src = qr.qr_image;
-                            qrImage.hidden = false;
                             if (qrCheck) qrCheck.hidden = false;
-                            if (status) status.textContent = `QR listo para pagar · Bs ${qr.amount}. Esperando confirmación bancaria.`;
+                            if (scheduleQrExpiry(qr.expires_at)) {
+                                qrImage.src = qr.qr_image;
+                                qrImage.hidden = false;
+                                if (status) status.textContent = `QR listo para pagar · Bs ${qr.amount}. Esperando confirmación bancaria.`;
+                            }
                         } else if (status) {
                             status.textContent = 'Error temporal recuperable. Vuelve a intentarlo o consulta al restaurante.';
                         }

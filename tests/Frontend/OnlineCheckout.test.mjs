@@ -24,6 +24,7 @@ function setup(saved = new Map(), initialResponses = [], preparation = false, op
     let nextKey = 0;
     let cleared = 0;
     const context = {
+        setTimeout, clearTimeout,
         PREPARATION_KEY: 'masa-y-mana-delivery-preparation-v1',
         document: { querySelector: (selector) => elements[selector] },
         cart: [{ variantUlid: 'variant', quantity: 2, price: '0.01' }],
@@ -122,7 +123,7 @@ test('online order failure does not show the preparation as a completed operatio
 
 test('online checkout displays the generated QR and waits for bank confirmation', async () => {
     const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true }),
-        ok({ status: 'pending', qr_image: 'data:image/png;base64,AAAA', amount: '24.00' })], true);
+        ok({ status: 'pending', qr_image: 'data:image/png;base64,AAAA', amount: '24.00', expires_at: '2099-01-01T00:00:00Z' })], true);
     Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order', onlineQrUrl: '/prepare/qr' });
     await ui.form.submit({ preventDefault() {} });
     assert.equal(ui.qr.hidden, false);
@@ -133,6 +134,30 @@ test('online checkout displays the generated QR and waits for bank confirmation'
     await ui.qrCheck.click();
     assert.equal(ui.qrStatus.textContent, 'Pago confirmado');
     assert.equal(ui.cleared(), 0);
+});
+
+test('expired online QR is hidden while status remains available for review', async () => {
+    const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true }),
+        ok({ status: 'pending', qr_image: 'data:image/png;base64,AAAA', amount: '24.00', expires_at: '2020-01-01T00:00:00Z' })], true);
+    Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order', onlineQrUrl: '/prepare/qr' });
+    await ui.form.submit({ preventDefault() {} });
+    assert.equal(ui.qrImage.hidden, true);
+    assert.equal(ui.qrCheck.hidden, false);
+    assert.match(ui.qrStatus.textContent, /vencido/);
+    assert.equal(ui.cleared(), 0);
+});
+
+test('a displayed QR is hidden when its validity ends', async () => {
+    const expiry = new Date(Date.now() + 200).toISOString();
+    const ui = setup(new Map(), [ok({ created: true, ready: true, subtotal: '24.00' }), ok({ ready: true }),
+        ok({ status: 'pending', qr_image: 'data:image/png;base64,AAAA', amount: '24.00', expires_at: expiry })], true);
+    Object.assign(ui.form.dataset, { onlineQrEnabled: 'true', onlineOrderUrl: '/prepare/order', onlineQrUrl: '/prepare/qr' });
+    await ui.form.submit({ preventDefault() {} });
+    assert.equal(ui.qrImage.hidden, false);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.equal(ui.qrImage.hidden, true);
+    assert.equal(ui.qrCheck.hidden, false);
+    assert.match(ui.qrStatus.textContent, /vencido/);
 });
 
 test('failed cancellation keeps a dirty identity for later recovery', async () => {

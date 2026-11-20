@@ -27,7 +27,7 @@ final class OnlineOrderActionContext
     public static function fromConfirmedIntent(DynamicQrIntent $intent, Order $order, CashSession $cash, User $actor): self
     {
         // Reconciliation of an existing intent must not depend on the switch for new emissions.
-        if (DB::transactionLevel() < 1 || ! app()->runningUnitTests()) {
+        if (DB::transactionLevel() < 1) {
             throw new DomainException('El contexto de confirmación online requiere revisión.');
         }
         // Re-read in the same order as payment reconciliation; callers may hold stale models.

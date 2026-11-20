@@ -32,6 +32,7 @@ use Illuminate\Foundation\Http\Middleware\PreventRequestForgery;
 use Illuminate\Http\Request;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -64,7 +65,7 @@ class OnlineQrHttpTest extends TestCase
 
     public static function resolutionTypes(): array
     {
-        return [['refund', 'Devolución interna documentada'], ['accounting', 'Regularización contable documentada'], ['invalid_reservation', ''], ['cancel', ''], ['cancel_expired', '']];
+        return [['refund', 'Devolución interna documentada'], ['accounting', 'Regularización contable documentada'], ['invalid_reservation', ''], ['cancel', ''], ['cancel_expired', ''], ['identity_collision', ''], ['identity_missing', ''], ['qr_mismatch', ''], ['distinct_qr_same_transaction', ''], ['contradiction', ''], ['production_without_observations', '']];
     }
 
     #[DataProvider('resolutionTypes')]
@@ -74,6 +75,8 @@ class OnlineQrHttpTest extends TestCase
             throw new \RuntimeException('La prueba requiere SQLite en memoria.');
         }
         $this->artisan('migrate', ['--database' => 'sqlite', '--force' => true])->assertExitCode(0);
+        config(['baneco.observations_enabled' => true]);
+        config(['baneco.experimental_transaction_identity_guard' => $resolutionType !== 'distinct_qr_same_transaction']);
         $this->withoutVite();
         $company = Company::factory()->create();
         $branch = Branch::factory()->for($company)->create();
@@ -113,11 +116,22 @@ class OnlineQrHttpTest extends TestCase
         $this->assertEquals($cash->id, $intent->cash_session_id);
         $this->assertEquals($operation->pos_order_id, $intent->order_id);
         $this->assertSame('bank-fake-1', $intent->bank_qr_id);
+        $generation = Http::recorded(fn ($request) => str_contains($request->url(), '/generateQR'))->sole()[0];
+        $this->assertSame(true, $generation['singleUse']);
+        $this->assertSame(false, $generation['modifyAmount']);
+        $this->assertSame($intent->commercial_reference, $generation['transactionId']);
+        $this->assertNotSame($bank->transactionId, $generation['transactionId']);
+        $this->assertStringContainsString('"amount":24.00', $generation->body());
         $this->assertSame(1, $bank->generations);
         $this->assertDatabaseCount('orders', 1);
         $this->assertDatabaseCount('inventory_reservations', 1);
         $this->assertDatabaseCount('payments', 0);
         $this->assertDatabaseCount('print_attempts', 0);
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['expires_at' => now()->subMinute()]);
+        $this->postJson(route('storefront.preparation.qr.status'), ['idempotency_key' => $key])->assertOk()->assertExactJson(['status' => 'review']);
+        $this->postJson(route('storefront.preparation.qr'), ['idempotency_key' => $key])->assertOk()->assertJsonPath('status', 'review')->assertJsonPath('qr_image', null);
+        $this->assertSame('reserved', DB::table('inventory_reservations')->where('order_id', $operation->pos_order_id)->value('status'));
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['expires_at' => $intent->expires_at]);
         // The same public endpoint works outside testing, but only reads the
         // persisted status and never contacts the bank on the caller's behalf.
         $previousEnvironment = $this->app['env'];
@@ -155,24 +169,6 @@ class OnlineQrHttpTest extends TestCase
             $this->postJson($statusUrl, ['idempotency_key' => $key])->assertOk()->assertExactJson(['status' => 'review']);
             DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => $intent->status]);
             $this->assertSame($callsBefore, Http::recorded()->count());
-            if ($resolutionType === 'accounting') {
-                // A backend confirmation in a non-test environment must stay
-                // in reconciliation until bank identity guarantees are known.
-                $bank->paidQr = true;
-                config(['storefront.online_dynamic_qr_enabled' => false, 'storefront.delivery_payment_preparation_enabled' => false]);
-                DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
-                app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
-                $this->postJson($statusUrl, ['idempotency_key' => $key])->assertOk()->assertExactJson(['status' => 'review']);
-                $this->assertSame('payment_context_rejected', DB::table('dynamic_qr_intents')->where('id', $intent->id)->value('issue_code'));
-                $this->assertSame('reserved', DB::table('inventory_reservations')->where('order_id', $operation->pos_order_id)->value('status'));
-                $this->assertDatabaseCount('payments', 0);
-                $evidence = json_decode(DB::table('dynamic_qr_intents')->where('id', $intent->id)->value('reconciliation_data'), true, flags: JSON_THROW_ON_ERROR);
-                $this->assertSame('simulated-transaction', $evidence['transactionId']);
-                DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => 'pending', 'bank_status' => null,
-                    'reconciliation_data' => null, 'issue_code' => null, 'last_checked_at' => null]);
-                config(['storefront.online_dynamic_qr_enabled' => true, 'storefront.delivery_payment_preparation_enabled' => true]);
-                $bank->paidQr = false;
-            }
         } finally {
             $this->app['env'] = $previousEnvironment;
         }
@@ -343,6 +339,83 @@ class OnlineQrHttpTest extends TestCase
         DB::table('online_order_requests')->where('idempotency_key', $key)->update(['preparation_expires_at' => now()->subMinute()]);
         $bank->authFail = false;
         $bank->paidQr = true;
+        if ($resolutionType === 'production_without_observations') {
+            config(['baneco.observations_enabled' => false]);
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+            $originalEnvironment = app()->environment();
+            try {
+                app()->instance('env', 'production');
+                app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            } finally {
+                app()->instance('env', $originalEnvironment);
+            }
+            $this->assertSame('bank_observation_disabled', DB::table('dynamic_qr_intents')->where('id', $intent->id)->value('issue_code'));
+            $this->assertDatabaseCount('payments', 0);
+            $this->assertDatabaseCount('print_attempts', 0);
+            $this->assertSame('reserved', DB::table('inventory_reservations')->where('order_id', $operation->pos_order_id)->value('status'));
+
+            return;
+        }
+        if ($resolutionType === 'distinct_qr_same_transaction') {
+            $other = DB::table('dynamic_qr_intents')->where('id', '<>', $intent->id)->first();
+            $this->assertNotNull($other);
+            $otherQr = $other->bank_qr_id ?? 'bank-simulated-independent';
+            $this->assertNotSame($intent->bank_qr_id, $otherQr);
+            DB::table('dynamic_qr_intents')->where('id', $other->id)->update([
+                'bank_qr_id' => $otherQr,
+                'reconciliation_data' => json_encode(['qrId' => $otherQr, 'transactionId' => 'simulated-transaction'], JSON_THROW_ON_ERROR),
+            ]);
+        }
+        if (in_array($resolutionType, ['identity_collision', 'identity_missing', 'qr_mismatch'], true)) {
+            if ($resolutionType === 'identity_collision') {
+                $otherId = DB::table('dynamic_qr_intents')->where('id', '<>', $intent->id)->value('id');
+                DB::table('dynamic_qr_intents')->where('id', $otherId)->update([
+                    'reconciliation_data' => json_encode(['transactionId' => 'simulated-transaction'], JSON_THROW_ON_ERROR),
+                ]);
+            } elseif ($resolutionType === 'identity_missing') {
+                $bank->transactionId = null;
+            } else {
+                $bank->paidBankId = 'bank-other-qr';
+            }
+            config(['storefront.online_dynamic_qr_enabled' => false, 'storefront.delivery_payment_preparation_enabled' => false]);
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+            app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            $this->postJson(route('storefront.preparation.qr.status'), ['idempotency_key' => $key])->assertOk()->assertJsonPath('status', 'review');
+            $expectedIssue = match ($resolutionType) {
+                'identity_collision' => 'bank_transaction_identity_collision',
+                'identity_missing' => 'bank_transaction_identity_missing',
+                'qr_mismatch' => 'bank_payment_mismatch',
+            };
+            $this->assertSame($expectedIssue, DB::table('dynamic_qr_intents')->where('id', $intent->id)->value('issue_code'));
+            $this->assertSame($bank->transactionId, DynamicQrIntent::query()->findOrFail($intent->id)->reconciliation_data['transactionId']);
+            $this->assertDatabaseCount('payments', 0);
+            $this->assertSame('reserved', DB::table('inventory_reservations')->where('order_id', $operation->pos_order_id)->value('status'));
+            if ($resolutionType === 'identity_collision') {
+                $bank->transactionId = 'simulated-transaction-changed';
+                DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+                app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+                $observations = DB::table('bank_qr_observations')->where('dynamic_qr_intent_id', $intent->id)
+                    ->where('kind', 'observation')->orderBy('id')->get();
+                $decoded = $observations->map(fn ($row) => json_decode(Crypt::decryptString($row->evidence), true, flags: JSON_THROW_ON_ERROR));
+                $paidObservations = $decoded->filter(fn ($entry) => $entry['status'] === '1')->values();
+                $this->assertCount(2, $paidObservations);
+                $this->assertSame('simulated-transaction', $paidObservations[0]['payment']['transactionId']);
+                $this->assertSame('simulated-transaction-changed', $paidObservations[1]['payment']['transactionId']);
+                $this->assertStringNotContainsString('simulated-transaction', $observations[0]->evidence);
+                foreach (['update', 'delete'] as $operationType) {
+                    try {
+                        $query = DB::table('bank_qr_observations')->where('id', $observations[0]->id);
+                        $operationType === 'update' ? $query->update(['kind' => 'changed']) : $query->delete();
+                        $this->fail('Las observaciones bancarias no deben poder modificarse ni borrarse.');
+                    } catch (QueryException) {
+                        $this->assertDatabaseHas('bank_qr_observations', ['id' => $observations[0]->id]);
+                    }
+                }
+                $this->assertDatabaseCount('payments', 0);
+            }
+
+            return;
+        }
         Cache::flush();
         if ($resolutionType === 'invalid_reservation') {
             $forged = DynamicQrIntent::query()->findOrFail($intent->id);
@@ -433,7 +506,15 @@ class OnlineQrHttpTest extends TestCase
         // A payment already in flight can settle after emission has been stopped.
         config(['storefront.online_dynamic_qr_enabled' => false, 'storefront.delivery_payment_preparation_enabled' => false]);
         DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
-        if ($resolutionType === 'accounting') {
+        if ($resolutionType === 'contradiction') {
+            $originalEnvironment = app()->environment();
+            try {
+                app()->instance('env', 'production');
+                app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            } finally {
+                app()->instance('env', $originalEnvironment);
+            }
+        } elseif ($resolutionType === 'accounting') {
             $this->artisan('baneco:reconcile', ['--inline' => true])->assertExitCode(0);
         } else {
             config(['baneco.webhook_enabled' => true]);
@@ -446,10 +527,60 @@ class OnlineQrHttpTest extends TestCase
         $this->assertSame('paid', DB::table('online_order_requests')->where('idempotency_key', $key)->value('status'));
         $this->assertSame('paid', DB::table('orders')->where('id', $operation->pos_order_id)->value('status'));
         $this->assertDatabaseCount('payments', 1);
+        $confirmedIntent = DynamicQrIntent::query()->findOrFail($intent->id);
+        $this->assertSame($confirmedIntent->bank_qr_id, $confirmedIntent->reconciliation_data['qrId']);
+        $this->assertSame($bank->transactionId, $confirmedIntent->reconciliation_data['transactionId']);
+        $this->assertSame($intent->commercial_reference, $generation['transactionId']);
+        $this->assertNotSame($intent->commercial_reference, $confirmedIntent->reconciliation_data['transactionId']);
+        $this->assertEquals($operation->pos_order_id, DB::table('payments')->where('id', $confirmedIntent->payment_id)->value('order_id'));
         $this->assertSame('24.00', app(CashSessionSummaryService::class)->calculate($cash->fresh())['qr_payments']);
         $this->assertDatabaseCount('cash_movements', 0);
         $this->assertSame(1, DB::table('inventory_movements')->where('type', InventoryMovementType::OrderConsumption->value)->count());
         $this->assertSame(2, DB::table('print_attempts')->count());
+        if ($resolutionType === 'contradiction') {
+            $bank->transactionId = 'contradictory-transaction';
+            $this->actingAs($cashier)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+            $this->post(route('bank-qr-history.status', $intent->ulid), ['kind' => 'sale'])->assertRedirect();
+            $this->assertSame('contradictory_bank_response', $confirmedIntent->fresh()->issue_code);
+            foreach (range(1, 2) as $attempt) {
+                DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+                app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            }
+            $bank->transactionId = 'simulated-transaction';
+            $bank->bankCancelled = true;
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+            app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            $bank->bankCancelled = false;
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['last_checked_at' => null]);
+            app(DynamicQrAction::class)->check(DynamicQrIntent::query()->findOrFail($intent->id));
+            $confirmedIntent->refresh();
+            $this->assertSame('paid', $confirmedIntent->status->value);
+            $this->assertSame('contradictory_bank_response', $confirmedIntent->issue_code);
+            $this->assertSame('simulated-transaction', $confirmedIntent->reconciliation_data['transactionId']);
+            $this->assertDatabaseCount('payments', 1);
+            $this->assertDatabaseCount('cash_movements', 0);
+            $this->assertSame(1, DB::table('inventory_movements')->where('type', InventoryMovementType::OrderConsumption->value)->count());
+            $this->assertDatabaseCount('print_attempts', 2);
+            $this->actingAs($cashier)->withSession(['active_company_id' => $company->id, 'active_branch_id' => $branch->id]);
+            $this->get(route('bank-qr-history.index', ['category' => 'review']))
+                ->assertOk()->assertSee($intent->commercial_reference)->assertSee('contradictory_bank_response');
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['issue_code' => null]);
+            $bank->conflictingStatus = true;
+            $this->post(route('bank-qr-history.status', $intent->ulid), ['kind' => 'sale'])->assertSessionHasErrors('bank');
+            $this->assertSame('conflicting_bank_status', $confirmedIntent->fresh()->issue_code);
+            $this->assertDatabaseCount('payments', 1);
+            $this->assertDatabaseCount('print_attempts', 2);
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['issue_code' => null]);
+            $bank->conflictingStatus = false;
+            config(['baneco.observations_enabled' => false]);
+            $this->post(route('bank-qr-history.status', $intent->ulid), ['kind' => 'sale'])->assertRedirect();
+            $this->assertSame('bank_observation_disabled', $confirmedIntent->fresh()->issue_code);
+
+            return;
+        }
+        if ($resolutionType === 'distinct_qr_same_transaction') {
+            return;
+        }
         $bank->timeout = false;
         $lateKey = $input['idempotency_key'];
         $this->postJson(route('storefront.preparation.qr'), ['idempotency_key' => $lateKey])->assertOk()->assertJsonPath('status', 'pending');

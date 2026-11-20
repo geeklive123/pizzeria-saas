@@ -281,15 +281,19 @@ class BancoEconomicoGateway
         $code = is_array($data) ? ($data['responseCode'] ?? $data['response_code'] ?? null) : null;
         $code = (is_int($code) || is_string($code)) && preg_match('/^\d{1,6}$/D', (string) $code) ? (string) $code : null;
 
-        Log::warning('baneco_response_diagnostic', [
-            'operation' => $operation,
-            'http_status' => $response->status(),
-            'bank_response_code' => $code,
-            'json_valid' => $valid,
-            'generation_fields_present' => $operation === 'generate' && is_array($data)
-                ? ['qrId' => array_key_exists('qrId', $data), 'qrImage' => array_key_exists('qrImage', $data)] : null,
-            'error_code' => $error,
-        ]);
+        try {
+            Log::warning('baneco_response_diagnostic', [
+                'operation' => $operation,
+                'http_status' => $response->status(),
+                'bank_response_code' => $code,
+                'json_valid' => $valid,
+                'generation_fields_present' => $operation === 'generate' && is_array($data)
+                    ? ['qrId' => array_key_exists('qrId', $data), 'qrImage' => array_key_exists('qrImage', $data)] : null,
+                'error_code' => $error,
+            ]);
+        } catch (\Throwable) {
+            // Diagnostics must not replace the bank error.
+        }
     }
 
     private function diagnoseShape(Response $response): void

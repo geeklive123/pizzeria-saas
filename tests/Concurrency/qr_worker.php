@@ -4,12 +4,16 @@ use App\Actions\ClaimPreparedDynamicQrAction;
 use App\Actions\DynamicQrAction;
 use App\Actions\RegisterPaymentAction;
 use App\Enums\PaymentMethod;
+use App\Http\Controllers\BankQrHistoryController;
 use App\Jobs\ReconcileDynamicQr;
 use App\Models\CashSession;
 use App\Models\DynamicQrIntent;
 use App\Models\KitchenDispatch;
 use App\Models\Order;
 use App\Models\User;
+use App\Services\BankQrHistory;
+use App\Support\CompanyContext;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -77,7 +81,7 @@ Http::fake(function ($request) use ($directory) {
     throw new RuntimeException('Solicitud HTTP no prevista.');
 });
 file_put_contents($directory.'/ready-'.$workerId, 'ready');
-$deadline = microtime(true) + 30;
+$deadline = microtime(true) + 120;
 while (! is_file($directory.'/start') && microtime(true) < $deadline) {
     usleep(10000);
 }
@@ -114,6 +118,16 @@ try {
     } elseif ($operation === 'job') {
         (new ReconcileDynamicQr($args['intent']))->handle(app(DynamicQrAction::class));
         $value = ['job' => 'finished'];
+    } elseif ($operation === 'deposit') {
+        $intent = DynamicQrIntent::findOrFail($args['intent']);
+        $actor = User::findOrFail($args['user']);
+        app(CompanyContext::class)->setForUser($actor, $intent->order->company);
+        $request = Request::create('/', 'POST', ['request_key' => $args['key'],
+            'deposit_date' => $args['date'], 'details' => 'Extracto bancario de prueba concurrente 12345', 'confirmed' => '1']);
+        $request->setUserResolver(fn () => $actor);
+        $request->setLaravelSession(app('session')->driver('array'));
+        app(BankQrHistoryController::class)->recordDeposit($request, $intent->ulid, app(BankQrHistory::class));
+        $value = ['deposit' => 'recorded'];
     } elseif ($operation === 'scheduler') {
         Artisan::call('baneco:reconcile', ['--inline' => true]);
         $value = ['scheduler' => 'finished'];

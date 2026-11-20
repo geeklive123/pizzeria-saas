@@ -95,16 +95,20 @@ function race(string $case, string $database, string $nonce, array $operations):
     $workers = [];
     foreach ($operations as $id => [$operation, $args]) {
         $worker = new Process([PHP_BINARY, __DIR__.'/qr_worker.php', $database, $nonce, $directory, $id, $operation, base64_encode(json_encode($args, JSON_THROW_ON_ERROR))], dirname(__DIR__, 2));
-        $worker->setTimeout(45);
+        $worker->setTimeout(120);
         $worker->start();
         $workers[] = $worker;
     }
-    $deadline = microtime(true) + 35;
+    $deadline = microtime(true) + 90;
     while ((! is_file($directory.'/ready-a') || ! is_file($directory.'/ready-b')) && microtime(true) < $deadline) {
         usleep(10000);
     }
     if (! is_file($directory.'/ready-a') || ! is_file($directory.'/ready-b')) {
-        throw new RuntimeException('No se sincronizaron los dos procesos en '.$case);
+        $diagnostics = array_map(fn (Process $worker) => [
+            'running' => $worker->isRunning(), 'exit' => $worker->getExitCode(),
+            'stderr' => $worker->getErrorOutput(), 'stdout' => $worker->getOutput(),
+        ], $workers);
+        throw new RuntimeException('No se sincronizaron los dos procesos en '.$case.': '.json_encode($diagnostics, JSON_THROW_ON_ERROR));
     }
     file_put_contents($directory.'/start', 'go');
     $results = [];

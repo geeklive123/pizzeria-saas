@@ -27,6 +27,7 @@ use App\Models\User;
 use App\Services\BancoEconomicoGateway;
 use App\Services\BankQrEmitter;
 use App\Services\BankQrException;
+use App\Services\BankQrObservationRecorder;
 use App\Services\CompanyAccessService;
 use App\Services\FinancialPaymentCoordinator;
 use App\Services\OnlineOrderActionContext;
@@ -292,7 +293,10 @@ class DynamicQrAction
                     return $intent;
                 }
             }
-            if ($intent->status === DynamicQrStatus::Paid) {
+            $observePaidOnline = $intent->status === DynamicQrStatus::Paid && config('baneco.observations_enabled')
+                && Schema::hasTable('online_qr_operations') && Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
+                && DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->exists();
+            if ($intent->status === DynamicQrStatus::Paid && ! $observePaidOnline) {
                 $this->print($intent);
 
                 return $intent->refresh();
@@ -328,9 +332,15 @@ class DynamicQrAction
                     }
                 }
             } catch (BankQrException $exception) {
-                $intent->update(['issue_code' => $exception->issue]);
+                $intent->refresh();
+                if ($intent->status !== DynamicQrStatus::Paid || ! $intent->issue_code) {
+                    $intent->update(['issue_code' => $exception->issue]);
+                }
             } catch (Throwable) {
-                $intent->refresh()->update(['issue_code' => 'status_check_failed']);
+                $intent->refresh();
+                if ($intent->status !== DynamicQrStatus::Paid || ! $intent->issue_code) {
+                    $intent->update(['issue_code' => 'status_check_failed']);
+                }
             }
             $this->print($intent);
 
@@ -340,18 +350,96 @@ class DynamicQrAction
         }
     }
 
-    private function apply(DynamicQrIntent $intent, array $data): DynamicQrIntent
+    /** Record a status already queried by an administrator for a paid online intent. */
+    public function observePaidOnline(DynamicQrIntent $intent, array $data): void
     {
-        return DB::transaction(function () use ($intent, $data): DynamicQrIntent {
+        if (! $intent->payment_id || ! Schema::hasTable('online_qr_operations') || ! Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
+            || ! DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->exists()) {
+            return;
+        }
+        if (! config('baneco.observations_enabled')) {
+            $this->flagPaidOnlineConflict($intent, 'bank_observation_disabled');
+
+            return;
+        }
+        $this->apply($intent, $data, paidObservationOnly: true);
+    }
+
+    public function flagPaidOnlineConflict(DynamicQrIntent $intent, string $issue = 'conflicting_bank_status'): void
+    {
+        if (! Schema::hasTable('online_qr_operations') || ! Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
+            || ! DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->exists()) {
+            return;
+        }
+        DB::transaction(function () use ($intent, $issue): void {
+            $locked = DynamicQrIntent::query()->whereKey($intent->id)->lockForUpdate()->firstOrFail();
+            if ($locked->payment_id && ! $locked->issue_code) {
+                $locked->update(['issue_code' => $issue]);
+                $this->alert($locked);
+            }
+        });
+    }
+
+    private function apply(DynamicQrIntent $intent, array $data, bool $paidObservationOnly = false): DynamicQrIntent
+    {
+        return DB::transaction(function () use ($intent, $data, $paidObservationOnly): DynamicQrIntent {
+            // Serialize online confirmations for one company before acquiring cash/order
+            // locks. This is a conservative collision alarm, not a bank uniqueness claim.
+            $onlineOperation = Schema::hasTable('online_qr_operations') && Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
+                ? DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->first() : null;
+            $guardOnline = (bool) $onlineOperation;
+            if ($guardOnline) {
+                Company::query()->lockForUpdate()->findOrFail($intent->company_id);
+            }
             // Same lock order as RegisterPaymentAction and CloseCashSessionAction.
             $session = CashSession::query()->lockForUpdate()->findOrFail($intent->cash_session_id);
             $order = Order::query()->lockForUpdate()->findOrFail($intent->order_id);
             $dispatch = $intent->kitchen_dispatch_id ? KitchenDispatch::query()->lockForUpdate()->findOrFail($intent->kitchen_dispatch_id) : null;
             $intent = DynamicQrIntent::query()->lockForUpdate()->findOrFail($intent->id);
-            if ($intent->payment_id) {
+            if ($paidObservationOnly && (! $intent->payment_id || ! $guardOnline)) {
+                return $intent;
+            }
+            if ($intent->payment_id && ! config('baneco.observations_enabled')) {
                 return $intent;
             }
             $status = (string) ($data['statusQrCode'] ?? $data['statusQRCode'] ?? 'unknown');
+            if (($status !== '0' || ! empty($data['payment']) || ($guardOnline && $intent->payment_id)) && config('baneco.observations_enabled')) {
+                $recordedStatus = preg_match('/^\d{1,20}$/D', $status) ? $status : 'unknown';
+                $observed = $data['payment'] ?? [];
+                $observed = is_array($observed) ? $observed : [];
+                if (array_is_list($observed)) {
+                    foreach ($observed as $entry) {
+                        app(BankQrObservationRecorder::class)->record($intent, $recordedStatus, is_array($entry) ? $entry : []);
+                    }
+                    if ($observed === []) {
+                        app(BankQrObservationRecorder::class)->record($intent, $recordedStatus, []);
+                    }
+                } else {
+                    app(BankQrObservationRecorder::class)->record($intent, $recordedStatus, $observed);
+                }
+            }
+            if ($intent->payment_id) {
+                if ($guardOnline) {
+                    $payment = $data['payment'] ?? [];
+                    $payment = is_array($payment) ? $payment : [];
+                    if (array_is_list($payment)) {
+                        $payment = count($payment) === 1 && is_array($payment[0]) ? $payment[0] : [];
+                    }
+                    $previous = $intent->reconciliation_data ?? [];
+                    $amount = $payment['amount'] ?? null;
+                    $consistent = $status === '1' && ($payment['qrId'] ?? null) === $intent->bank_qr_id
+                        && ($payment['currency'] ?? null) === $intent->currency
+                        && is_string($amount) && preg_match('/^\d+(?:\.\d{1,2})?$/D', $amount)
+                        && BigDecimal::of($amount)->isEqualTo($intent->amount)
+                        && (! isset($previous['transactionId']) || ($payment['transactionId'] ?? null) === $previous['transactionId']);
+                    if (! $consistent && ! $intent->issue_code) {
+                        $intent->update(['issue_code' => 'contradictory_bank_response']);
+                        $this->alert($intent);
+                    }
+                }
+
+                return $intent;
+            }
             $previousStatus = $intent->status;
             $intent->bank_status = mb_substr($status, 0, 20);
             if ($status === '9' && $intent->status !== DynamicQrStatus::ReconciliationRequired) {
@@ -377,11 +465,28 @@ class DynamicQrAction
                 if ($intent->status === DynamicQrStatus::ReconciliationRequired) {
                     $reason ??= $intent->issue_code ?? 'manual_reconciliation_required';
                 }
+                if ($guardOnline && ! config('baneco.observations_enabled')) {
+                    $reason ??= 'bank_observation_disabled';
+                }
+                if (! $reason && $guardOnline && config('baneco.experimental_transaction_identity_guard', false)) {
+                    $transactionId = $payment['transactionId'] ?? null;
+                    if (! is_string($transactionId) || trim($transactionId) === '') {
+                        $reason = 'bank_transaction_identity_missing';
+                    } else {
+                        // Exact bytes only: even a match is suspicious, not proof of
+                        // duplication. Include historical POS evidence in this company.
+                        foreach (DynamicQrIntent::query()->where('company_id', $intent->company_id)
+                            ->where('id', '<>', $intent->id)->whereNotNull('reconciliation_data')->lockForUpdate()->cursor() as $other) {
+                            if (($other->reconciliation_data['transactionId'] ?? null) === $transactionId) {
+                                $reason = 'bank_transaction_identity_collision';
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (! $reason) {
                     try {
                         $intent->save();
-                        $onlineOperation = Schema::hasTable('online_qr_operations') && Schema::hasColumn('online_qr_operations', 'dynamic_qr_intent_id')
-                            ? DB::table('online_qr_operations')->where('dynamic_qr_intent_id', $intent->id)->first() : null;
                         if ($onlineOperation) {
                             $record = DB::transaction(function () use ($intent, $order, $session, $onlineOperation): Payment {
                                 $actor = $intent->user;
@@ -476,13 +581,21 @@ class DynamicQrAction
         try {
             $data = $this->gateway->status($intent);
             $status = $data['statusQrCode'] ?? $data['statusQRCode'] ?? null;
-            Log::info('baneco_status_check', ['intent' => $intent->ulid, 'company_id' => $intent->company_id,
-                'result' => is_string($status) && in_array($status, ['0', '1', '9'], true) ? $status : 'unknown']);
+            try {
+                Log::info('baneco_status_check', ['intent' => $intent->ulid, 'company_id' => $intent->company_id,
+                    'result' => is_string($status) && in_array($status, ['0', '1', '9'], true) ? $status : 'unknown']);
+            } catch (Throwable) {
+                // Diagnostics must not change the result of a bank query.
+            }
 
             return $data;
         } catch (Throwable $exception) {
-            Log::warning('baneco_status_check', ['intent' => $intent->ulid, 'company_id' => $intent->company_id,
-                'result' => 'error', 'issue' => $exception instanceof BankQrException ? $exception->issue : 'unexpected_error']);
+            try {
+                Log::warning('baneco_status_check', ['intent' => $intent->ulid, 'company_id' => $intent->company_id,
+                    'result' => 'error', 'issue' => $exception instanceof BankQrException ? $exception->issue : 'unexpected_error']);
+            } catch (Throwable) {
+                // Preserve the original bank error if diagnostics are unavailable.
+            }
             throw $exception;
         }
     }

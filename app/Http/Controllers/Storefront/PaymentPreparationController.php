@@ -10,6 +10,7 @@ use App\Services\CreatePendingOnlineOrder;
 use App\Services\CurrentCashSessionService;
 use App\Services\EmitOnlineDynamicQr;
 use App\Services\OnlinePaymentPreparationService;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -55,14 +56,14 @@ class PaymentPreparationController extends Controller
                 ->whereColumn('intent.order_id', 'operation.pos_order_id')->whereColumn('intent.cash_session_id', 'operation.cash_session_id')
                 ->whereColumn('intent.user_id', 'operation.system_user_id')->whereColumn('setting.company_id', 'request.company_id')
                 ->where(fn ($query) => $query->whereNull('setting.branch_id')->orWhereColumn('setting.branch_id', 'request.branch_id'))
-                ->select('intent.status')->selectRaw('CASE WHEN payment.id IS NULL THEN 0 ELSE 1 END AS paid_verified')->first();
+                ->select('intent.status', 'intent.expires_at')->selectRaw('CASE WHEN payment.id IS NULL THEN 0 ELSE 1 END AS paid_verified')->first();
         } catch (QueryException) {
             return $this->unavailable();
         }
         abort_unless($intent && in_array($intent->status, ['creating', 'pending', 'paid', 'failed', 'generation_unknown', 'cancelled', 'reconciliation_required'], true), 404);
 
         $publicStatus = match ($intent->status) {
-            'creating', 'pending' => 'pending',
+            'creating', 'pending' => $intent->expires_at && now()->gte(CarbonImmutable::parse($intent->expires_at, 'UTC')) ? 'review' : 'pending',
             'paid' => $intent->paid_verified ? 'paid' : 'review',
             default => 'review',
         };
@@ -87,7 +88,10 @@ class PaymentPreparationController extends Controller
             return $this->unavailable();
         }
 
-        return response()->json(['status' => $intent->status->value, 'qr_image' => $intent->qr_image,
+        $expired = $intent->expires_at->isPast();
+
+        return response()->json(['status' => $expired && $intent->status->value === 'pending' ? 'review' : $intent->status->value,
+            'qr_image' => ! $expired && $intent->status->value === 'pending' ? $intent->qr_image : null,
             'amount' => $intent->amount, 'expires_at' => $intent->expires_at->toIso8601String()])->header('Cache-Control', 'no-store');
     }
 

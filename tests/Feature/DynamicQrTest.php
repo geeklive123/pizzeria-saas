@@ -50,13 +50,16 @@ use App\Models\User;
 use App\Services\BancoEconomicoGateway;
 use App\Services\BankQrEmitter;
 use App\Services\BankQrException;
+use App\Services\BankQrObservationRecorder;
 use App\Services\OnlinePaymentPreparationService;
 use App\Services\ThermalPrintingService;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\QueryException;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -66,6 +69,132 @@ use Tests\TestCase;
 
 class DynamicQrTest extends TestCase
 {
+    public function test_disabled_observations_preserve_pos_when_table_is_absent(): void
+    {
+        config(['baneco.observations_enabled' => false]);
+        $intent = $this->generate();
+        DB::statement('ALTER TABLE bank_qr_observations RENAME TO bank_qr_observations_unavailable');
+        $this->paid();
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_failed_status_logging_does_not_prevent_pos_confirmation(): void
+    {
+        config(['baneco.observations_enabled' => false]);
+        $intent = $this->generate();
+        $this->paid();
+        Log::shouldReceive('info')->andThrow(new \RuntimeException('logging unavailable'));
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_failed_logging_preserves_the_bank_error_without_a_payment(): void
+    {
+        config(['baneco.observations_enabled' => false]);
+        $intent = $this->generate();
+        $this->rawStatus = '{"responseCode":5}';
+        Log::shouldReceive('warning')->andThrow(new \RuntimeException('logging unavailable'));
+        $result = $this->check($intent);
+        $this->assertSame(DynamicQrStatus::Pending, $result->status);
+        $this->assertSame('bank_response_5', $result->issue_code);
+        $this->assertDatabaseCount('payments', 0);
+    }
+
+    public function test_enabled_observations_block_missing_table_and_retry_atomically_after_restoration(): void
+    {
+        config(['baneco.observations_enabled' => true]);
+        $intent = $this->generate();
+        $messages = [];
+        Event::listen(MessageLogged::class, function ($event) use (&$messages): void {
+            $messages[] = $event->message;
+        });
+        DB::statement('ALTER TABLE bank_qr_observations RENAME TO bank_qr_observations_unavailable');
+        $this->paid();
+        $failed = $this->check($intent);
+        $this->assertSame(DynamicQrStatus::Pending, $failed->status);
+        $this->assertSame('status_check_failed', $failed->issue_code);
+        $this->assertContains('baneco_observation_write_failed', $messages);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertSame(OrderStatus::ReadyForPayment, $this->order->fresh()->status);
+        DB::statement('ALTER TABLE bank_qr_observations_unavailable RENAME TO bank_qr_observations');
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertDatabaseCount('bank_qr_observations', 1);
+    }
+
+    public function test_enabled_observations_refuse_a_partially_installed_trigger(): void
+    {
+        config(['baneco.observations_enabled' => true]);
+        $intent = $this->generate();
+        DB::statement('DROP TRIGGER bank_qr_observations_no_delete');
+        $this->paid();
+        $failed = $this->check($intent);
+        $this->assertSame(DynamicQrStatus::Pending, $failed->status);
+        $this->assertSame('status_check_failed', $failed->issue_code);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('bank_qr_observations', 0);
+    }
+
+    public function test_observation_insert_failure_rolls_back_and_a_retry_creates_one_payment(): void
+    {
+        config(['baneco.observations_enabled' => true]);
+        $intent = $this->generate();
+        DB::unprepared("CREATE TRIGGER observation_test_insert_failure BEFORE INSERT ON bank_qr_observations BEGIN SELECT RAISE(ABORT, 'simulated database or disk is full'); END");
+        $this->paid();
+        $failed = $this->check($intent);
+        $this->assertSame(DynamicQrStatus::Pending, $failed->status);
+        $this->assertSame('status_check_failed', $failed->issue_code);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('bank_qr_observations', 0);
+        $this->assertSame(OrderStatus::ReadyForPayment, $this->order->fresh()->status);
+        DB::unprepared('DROP TRIGGER observation_test_insert_failure');
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertDatabaseCount('bank_qr_observations', 1);
+    }
+
+    public function test_observation_encryption_failure_does_not_create_a_partial_payment(): void
+    {
+        config(['baneco.observations_enabled' => true]);
+        $intent = $this->generate();
+        $this->paid();
+        $encrypter = Crypt::getFacadeRoot();
+        $mock = \Mockery::mock($encrypter)->makePartial();
+        $mock->shouldReceive('encryptString')->once()->andThrow(new \RuntimeException('simulated encryption failure'));
+        Crypt::swap($mock);
+        $failed = $this->check($intent);
+        $this->assertSame(DynamicQrStatus::Pending, $failed->status);
+        $this->assertSame('status_check_failed', $failed->issue_code);
+        $this->assertDatabaseCount('payments', 0);
+        $this->assertDatabaseCount('bank_qr_observations', 0);
+        Crypt::swap($encrypter);
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertDatabaseCount('bank_qr_observations', 1);
+    }
+
+    public function test_simulated_deadlock_retries_the_whole_confirmation_transaction(): void
+    {
+        config(['baneco.observations_enabled' => true]);
+        $intent = $this->generate();
+        $this->paid();
+        $attempts = 0;
+        $recorder = new BankQrObservationRecorder;
+        $this->mock(BankQrObservationRecorder::class)->shouldReceive('record')->times(3)
+            ->andReturnUsing(function ($locked, $status, $payment) use (&$attempts, $recorder): void {
+                if (++$attempts < 3) {
+                    throw new \PDOException('Deadlock found when trying to get lock');
+                }
+                $recorder->record($locked, $status, $payment);
+            });
+        $this->assertSame(DynamicQrStatus::Paid, $this->check($intent)->status);
+        $this->assertSame(3, $attempts);
+        $this->assertDatabaseCount('payments', 1);
+        $this->assertDatabaseCount('bank_qr_observations', 1);
+    }
+
     public function test_existing_qr_confirmation_is_not_blocked_by_a_financial_attempt(): void
     {
         $intent = $this->generate();
@@ -214,6 +343,113 @@ class DynamicQrTest extends TestCase
         return $this->actingAs($this->user)->withSession(['active_company_id' => $this->company->id, 'active_branch_id' => $this->branch->id]);
     }
 
+    public function test_history_categories_require_valid_bank_evidence_and_preserve_review(): void
+    {
+        $intent = $this->generate();
+        $reference = $intent->commercial_reference;
+        $this->login();
+        $this->get(route('bank-qr-history.index'))->assertOk()->assertDontSee($reference);
+        $this->get(route('bank-qr-history.index', ['category' => 'history']))->assertOk()->assertSee($reference);
+        $originalExpiry = $intent->expires_at;
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['expires_at' => now()->subMinute()]);
+        $this->get(route('bank-qr-history.index'))->assertDontSee($reference);
+        $this->get(route('bank-qr-history.index', ['category' => 'history']))->assertSee($reference);
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => 'cancelled']);
+        $this->get(route('bank-qr-history.index'))->assertDontSee($reference);
+        $this->get(route('bank-qr-history.index', ['category' => 'history']))->assertSee($reference);
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => 'reconciliation_required', 'issue_code' => 'late_payment']);
+        $this->get(route('bank-qr-history.index', ['category' => 'review']))->assertSee($reference)->assertSee('late_payment');
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => 'pending', 'issue_code' => 'bank_unreachable']);
+        $this->get(route('bank-qr-history.index', ['category' => 'review']))->assertSee($reference);
+        $otherBranch = Branch::factory()->for($this->company)->create();
+        $this->get(route('bank-qr-history.index', ['category' => 'review', 'branch' => $otherBranch->id]))->assertDontSee($reference);
+        $foreign = Branch::factory()->for(Company::factory())->create();
+        $this->get(route('bank-qr-history.index', ['branch' => $foreign->id]))->assertNotFound();
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['status' => 'pending', 'issue_code' => null, 'expires_at' => $originalExpiry]);
+        $this->paid();
+        $this->check($intent);
+        $this->check($intent);
+        $this->assertDatabaseCount('payments', 1);
+        $this->get(route('bank-qr-history.index'))->assertSee($reference);
+        foreach ([
+            ['qrId' => 'other', 'currency' => 'BOB', 'amount' => '100.00'],
+            ['qrId' => $intent->bank_qr_id, 'currency' => 'USD', 'amount' => '100.00'],
+            ['qrId' => $intent->bank_qr_id, 'currency' => 'BOB', 'amount' => '99.00'],
+        ] as $invalidEvidence) {
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['reconciliation_data' => json_encode($invalidEvidence, JSON_THROW_ON_ERROR)]);
+            $this->get(route('bank-qr-history.index'))->assertDontSee($reference);
+            $this->get(route('bank-qr-history.index', ['category' => 'review']))->assertSee($reference);
+        }
+    }
+
+    public function test_global_review_uses_same_classification_outside_dates_and_respects_scope(): void
+    {
+        $intent = $this->generate();
+        $this->paid();
+        $this->check($intent);
+        $old = now()->subDays(90);
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update([
+            'created_at' => $old, 'confirmed_at' => $old, 'issue_code' => null,
+            'reconciliation_data' => json_encode(['qrId' => 'different', 'currency' => 'BOB', 'amount' => '100.00']),
+        ]);
+        DB::table('payments')->where('id', $intent->fresh()->payment_id)->update(['paid_at' => $old]);
+        $diagnostic = BankQrDiagnostic::query()->create(['company_id' => $this->company->id,
+            'bank_qr_setting_id' => $this->setting->id, 'user_id' => $this->user->id, 'amount' => '1.00',
+            'commercial_reference' => 'old-diagnostic', 'status' => 'failed', 'expires_at' => $old, 'created_at' => $old]);
+        $otherBranch = Branch::factory()->for($this->company)->create();
+        $response = $this->login()->get(route('bank-qr-history.index'));
+        $response->assertOk()->assertSee('Hay 2 incidencias bancarias')->assertDontSee($intent->commercial_reference)->assertDontSee('old-diagnostic');
+        $this->get(route('bank-qr-history.index', ['branch' => $otherBranch->id]))->assertOk()->assertDontSee('incidencias bancarias que requieren revisión');
+        $this->get(route('bank-qr-history.index', ['branch' => $this->branch->id]))->assertOk()->assertSee('Hay 1 incidencias bancarias');
+        $oldDate = $old->timezone('America/La_Paz')->toDateString();
+        $this->get(route('bank-qr-history.index', ['category' => 'review', 'from' => $oldDate, 'to' => $oldDate]))
+            ->assertOk()->assertSee($intent->commercial_reference)->assertSee($diagnostic->commercial_reference);
+        $foreign = Company::factory()->create();
+        $foreignBranch = Branch::factory()->for($foreign)->create();
+        $foreignOwner = User::factory()->create();
+        Membership::factory()->for($foreign)->for($foreignOwner)->owner()->create();
+        $this->actingAs($foreignOwner)->withSession(['active_company_id' => $foreign->id, 'active_branch_id' => $foreignBranch->id])
+            ->get(route('bank-qr-history.index'))->assertOk()->assertDontSee('incidencias bancarias que requieren revisión');
+        $kitchen = User::factory()->create();
+        Membership::factory()->for($this->company)->for($kitchen)->create(['role' => MembershipRole::Kitchen]);
+        $this->actingAs($kitchen)->withSession(['active_company_id' => $this->company->id, 'active_branch_id' => $this->branch->id])
+            ->get(route('bank-qr-history.index'))->assertForbidden();
+        $this->assertDatabaseCount('payments', 1);
+    }
+
+    public function test_deposit_rejects_direct_invalid_evidence_and_review_state_without_financial_changes(): void
+    {
+        $intent = $this->generate();
+        $this->paid();
+        $this->check($intent);
+        $intent->refresh();
+        $before = Payment::query()->sole()->getRawOriginal();
+        $original = $intent->reconciliation_data;
+        $url = route('bank-qr-history.deposit', $intent->ulid);
+        $data = ['request_key' => (string) Str::ulid(), 'deposit_date' => now()->toDateString(),
+            'details' => 'Extracto bancario comprobante referencia 12345', 'confirmed' => '1'];
+        $this->login();
+        foreach ([null, ['qrId' => 'wrong', 'amount' => '100.00', 'currency' => 'BOB'],
+            ['qrId' => $intent->bank_qr_id, 'amount' => '99.00', 'currency' => 'BOB'],
+            ['qrId' => $intent->bank_qr_id, 'amount' => '100.00', 'currency' => 'USD'],
+            ['qrId' => $intent->bank_qr_id, 'amount' => '100.00', 'currency' => 'BOB', 'transactionId' => ['invalid']]] as $evidence) {
+            DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['reconciliation_data' => $evidence === null ? null : json_encode($evidence)]);
+            $this->post($url, $data)->assertUnprocessable();
+        }
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['reconciliation_data' => json_encode($original), 'issue_code' => 'contradictory_bank_response']);
+        $this->post($url, $data)->assertUnprocessable();
+        DB::table('dynamic_qr_intents')->where('id', $intent->id)->update(['issue_code' => null]);
+        $date = now()->timezone('America/La_Paz')->toDateString();
+        $entry = ['qrId' => $intent->bank_qr_id, 'transactionId' => 'different', 'currency' => 'BOB', 'amount' => '100.00', 'paymentDate' => $date, 'paymentTime' => '12:00:00'];
+        $this->rawPaidList = json_encode(['responseCode' => 0, 'paymentList' => [$entry]]);
+        Cache::flush();
+        $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
+        $this->post($url, $data)->assertUnprocessable();
+        $this->assertDatabaseCount('bank_qr_deposit_evidence', 0);
+        $this->assertSame($before, Payment::query()->sole()->getRawOriginal());
+        $this->assertDatabaseCount('payments', 1);
+    }
+
     public function test_history_matches_a_confirmed_payment_without_changing_financial_records(): void
     {
         $intent = $this->generate();
@@ -242,10 +478,12 @@ class DynamicQrTest extends TestCase
         $this->login();
         $this->rawPaidList = json_encode(['responseCode' => 0, 'paymentList' => [$entry]], JSON_THROW_ON_ERROR);
         $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
-        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date]))->assertSee('Diferencia de importe o identificador');
+        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'category' => 'review']))->assertSee('Diferencia de importe o identificador');
+        $outside = now()->timezone('America/La_Paz')->subDays(2)->toDateString();
+        $this->get(route('bank-qr-history.index', ['from' => $outside, 'to' => $outside]))->assertSee('Hay 1 incidencias bancarias');
         $this->rawPaidList = json_encode(['responseCode' => 0, 'paymentList' => [$entry, $entry]], JSON_THROW_ON_ERROR);
         $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
-        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date]))->assertSee('Requiere revisión');
+        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'category' => 'review']))->assertSee('Requiere revisión');
         $this->rawPaidList = '{"responseCode":0,"paymentList":[{"qrId":"bank-1"}]}';
         $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertSessionHasErrors('bank');
         $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date]))->assertSee('Sin consulta bancaria aplicable');
@@ -272,11 +510,11 @@ class DynamicQrTest extends TestCase
         $this->login();
         $this->rawPaidList = '{"responseCode":0,"paymentList":[]}';
         $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
-        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date]))->assertSee('Pago local sin evidencia bancaria suficiente');
+        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'category' => 'review']))->assertSee('Pago local sin evidencia bancaria suficiente');
         $entry = ['qrId' => 'unmatched-qr', 'transactionId' => 'transaction-2', 'currency' => 'BOB', 'amount' => '8.00', 'paymentDate' => $date, 'paymentTime' => '12:00:00'];
         $this->rawPaidList = json_encode(['responseCode' => 0, 'paymentList' => [$entry]], JSON_THROW_ON_ERROR);
         $this->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
-        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date]))->assertSee('unmatched-qr')->assertSee('Pago bancario sin registro local');
+        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'category' => 'review']))->assertSee('unmatched-qr')->assertSee('Pago bancario sin registro local');
         $this->assertDatabaseCount('payments', 1);
     }
 
@@ -294,7 +532,7 @@ class DynamicQrTest extends TestCase
         $entry = ['qrId' => 'bank-1', 'transactionId' => 'bank-transaction-not-order-id', 'currency' => 'BOB', 'amount' => '100.00', 'paymentDate' => $date, 'paymentTime' => '12:00:00'];
         $this->rawPaidList = json_encode(['responseCode' => 0, 'paymentList' => [$entry]], JSON_THROW_ON_ERROR);
         $this->login()->post(route('bank-qr-history.consult'), ['date' => $date, 'setting_id' => $this->setting->id])->assertRedirect();
-        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'state' => 'review']))->assertOk()->assertSee('diagnostic-shared')->assertSee($intent->commercial_reference);
+        $this->get(route('bank-qr-history.index', ['from' => $date, 'to' => $date, 'state' => 'review', 'category' => 'review']))->assertOk()->assertSee('diagnostic-shared')->assertSee($intent->commercial_reference);
         $this->assertDatabaseCount('payments', 1);
     }
 

@@ -13,6 +13,13 @@
     <section class="card p-5 space-y-4">
         <h1 class="text-xl font-bold">Historial de pagos QR</h1>
         <p class="text-sm">Las consultas son de solo lectura. Un diagnóstico no es una venta. Las fechas se muestran en hora de Bolivia. Un pago confirmado por API no demuestra un abono en cuenta.</p>
+        <nav class="flex flex-wrap gap-3" aria-label="Categorías de conciliación">
+            @foreach(['confirmed' => 'Pagos confirmados', 'review' => 'Requieren revisión', 'history' => 'Historial'] as $category => $label)
+                <a class="btn-secondary" href="{{ route('bank-qr-history.index', array_merge(request()->except(['category', 'page', 'state']), ['category' => $category])) }}" @if($filters['category'] === $category) aria-current="page" @endif>{{ $label }}@if($category === 'review') ({{ $summary['review'] }}) @endif</a>
+            @endforeach
+        </nav>
+        @if($summary['review'] > 0)<p role="status" class="font-semibold text-amber-800">Hay {{ $summary['review'] }} operaciones que requieren revisión con los filtros actuales.</p>@endif
+        @if($criticalIncidents > 0)<p role="alert" class="font-semibold text-red-700">Hay {{ $criticalIncidents }} incidencias bancarias que requieren revisión en el ámbito de sucursal seleccionado, incluidas las que están fuera del período. Consulta la categoría de revisión y ajusta las fechas para localizarlas.</p>@endif
         @if(!$evidenceAvailable)<p class="text-amber-800">Registro de evidencia de abono no disponible: requiere una migración pendiente, previa autorización y respaldo.</p>@endif
         @if($errors->any())<p class="text-red-700" role="alert">{{ $errors->first() }}</p>@endif
         @if(session('status'))<p role="status">{{ session('status') }}</p>@endif
@@ -27,6 +34,7 @@
     <section class="card p-5 space-y-4">
         <h2 class="font-bold">Filtros</h2>
         <form method="GET" action="{{ route('bank-qr-history.index') }}" class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <input type="hidden" name="category" value="{{ $filters['category'] }}">
             <label>Desde<input class="input w-full" type="date" name="from" value="{{ $filters['from'] }}"></label>
             <label>Hasta<input class="input w-full" type="date" name="to" value="{{ $filters['to'] }}"></label>
             <label>Sucursal<select class="input w-full" name="branch"><option value="">Todas y sin sucursal identificada</option>@foreach($branches as $branch)<option value="{{ $branch->id }}" @selected($filters['branch'] == $branch->id)>{{ $branch->name }}</option>@endforeach</select></label>
@@ -64,6 +72,7 @@
                         <p>Registro del pago: {{ $row['payment']?->paid_at?->timezone('America/La_Paz')->format('d/m/Y H:i:s') ?? 'No disponible' }}</p>
                         <p>Transacción bancaria: {{ $row['bank']['transactionId'] ?? ($intent?->reconciliation_data['transactionId'] ?? 'No disponible') }}</p>
                         <p>Estado local: {{ $intent?->status->value ?? $diagnostic?->status ?? 'Sin registro' }} · {{ $labels[$row['state']] }}</p>
+                        @if($intent?->issue_code)<p>Incidencia: {{ $intent->issue_code }}</p>@endif
                         <p>Pago confirmado por API: {{ $row['local_paid'] ? 'Sí, con datos validados' : ($intent?->bank_status === '1' ? 'El banco informó pago; requiere revisión' : ($diagnostic?->status === 'paid' ? 'Sí (diagnóstico)' : 'No confirmado')) }}</p>
                         <p>Payment registrado: {{ $row['local_paid'] ? 'Sí, completado' : 'No confirmado' }}</p>
                         @if($intent && $depositEvidence->has($intent->id))
@@ -74,7 +83,7 @@
                         @else
                             <p>Abono en cuenta: no verificado.</p>
                         @endif
-                        @if($intent && $row['local_paid'] && $evidenceAvailable)
+                        @if($intent && $row['category'] === 'confirmed' && $evidenceAvailable)
                             <form method="POST" action="{{ route('bank-qr-history.deposit', $intent->ulid) }}" class="space-y-2 border-t pt-2">@csrf
                                 <input type="hidden" name="request_key" value="{{ (string) \Illuminate\Support\Str::ulid() }}">
                                 <label class="block">Fecha del abono<input class="input" type="date" name="deposit_date" required></label>
@@ -89,9 +98,9 @@
                                 <p>{{ \Carbon\CarbonImmutable::parse($event->created_at, 'UTC')->timezone('America/La_Paz')->format('d/m/Y H:i:s') }} · {{ $event->operation }} · {{ $event->status }}</p>
                             @endforeach
                         @else
-                            <p>Los intentos de venta conservan la última consulta, no un historial detallado de consultas.</p>
+                            <p>La instantánea del intento puede cambiar. Si el historial bancario está habilitado, se conservan observaciones relevantes cifradas; no registra necesariamente todas las consultas.</p>
                         @endif
-                        @if($intent?->status === \App\Enums\DynamicQrStatus::Paid && $intent->has_image)
+                        @if($intent && $row['local_paid'] && $intent->has_image)
                             <p class="font-bold">QR PAGADO — SOLO CONSULTA</p><img class="w-48 max-w-full" src="{{ route('orders.dynamic-qr.image', [$intent->order->ulid, $intent->ulid]) }}" alt="Imagen histórica del QR pagado">
                         @endif
                         @if($diagnostic?->status === 'paid' && $diagnostic->has_image)

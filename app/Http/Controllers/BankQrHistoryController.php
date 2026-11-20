@@ -2,19 +2,19 @@
 
 namespace App\Http\Controllers;
 
-use App\Enums\DynamicQrStatus;
+use App\Actions\DynamicQrAction;
 use App\Enums\MembershipRole;
-use App\Enums\PaymentMethod;
-use App\Enums\PaymentStatus;
 use App\Models\BankQrDiagnostic;
 use App\Models\BankQrSetting;
 use App\Models\Branch;
 use App\Models\DynamicQrIntent;
+use App\Models\Membership;
+use App\Models\Order;
 use App\Models\Payment;
 use App\Services\BancoEconomicoGateway;
+use App\Services\BankQrException;
 use App\Services\BankQrHistory;
 use App\Support\CompanyContext;
-use Brick\Math\BigDecimal;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -35,22 +35,28 @@ class BankQrHistoryController extends Controller
             'branch' => ['nullable', 'integer'], 'order' => ['nullable', 'digits_between:1,12'],
             'reference' => ['nullable', 'string', 'max:32'], 'qr' => ['nullable', 'string', 'max:190'],
             'state' => ['nullable', 'in:matched,bank_only,local_only,mismatch,review,unverified,diagnostic_paid'],
+            'category' => ['nullable', 'in:confirmed,review,history'],
             'page' => ['nullable', 'integer', 'min:1'],
         ])->validate();
         $filters = ['from' => $data['from'] ?? now()->timezone('America/La_Paz')->subDays(30)->toDateString(), 'to' => $data['to'] ?? $today,
-            'branch' => (string) ($data['branch'] ?? ''), 'order' => $data['order'] ?? '', 'reference' => $data['reference'] ?? '', 'qr' => $data['qr'] ?? '', 'state' => $data['state'] ?? ''];
+            'branch' => (string) ($data['branch'] ?? ''), 'order' => $data['order'] ?? '', 'reference' => $data['reference'] ?? '', 'qr' => $data['qr'] ?? '', 'state' => $data['state'] ?? '', 'category' => $data['category'] ?? 'confirmed'];
         $from = CarbonImmutable::parse($filters['from']);
         $to = CarbonImmutable::parse($filters['to']);
         abort_if($to->lessThan($from) || $from->diffInDays($to) > 31, 422, 'El rango debe ser de hasta 32 días.');
         $branches = Branch::query()->forCompany($this->company())->orderBy('name')->get();
         abort_if($filters['branch'] !== '' && ! $branches->contains('id', (int) $filters['branch']), 404);
         $settings = BankQrSetting::query()->forCompany($this->company())->orderByDesc('id')->get(['id', 'company_id', 'branch_id', 'active_scope']);
-        $snapshot = $request->session()->get('bank_history_snapshot');
-        if (! is_array($snapshot) || ($snapshot['company_id'] ?? null) !== $this->company()->id || ($snapshot['user_id'] ?? null) !== $request->user()->id
-            || ($snapshot['date'] ?? '') < $filters['from'] || ($snapshot['date'] ?? '') > $filters['to'] || ($snapshot['expires'] ?? 0) < time()) {
+        $globalSnapshot = $request->session()->get('bank_history_snapshot');
+        if (! is_array($globalSnapshot) || ($globalSnapshot['company_id'] ?? null) !== $this->company()->id || ($globalSnapshot['user_id'] ?? null) !== $request->user()->id
+            || ($globalSnapshot['expires'] ?? 0) < time()) {
+            $globalSnapshot = null;
+        }
+        $snapshot = $globalSnapshot;
+        if ($snapshot && (($snapshot['date'] ?? '') < $filters['from'] || ($snapshot['date'] ?? '') > $filters['to'])) {
             $snapshot = null;
         }
         $report = $history->report($this->company(), $filters, $snapshot, (int) ($data['page'] ?? 1));
+        $criticalIncidents = $history->globalReviewCount($this->company(), $filters['branch'] ?: null, $globalSnapshot);
         $diagnosticIds = $report['paginator']->getCollection()->pluck('diagnostic')->filter()->pluck('id');
         $events = DB::table('bank_qr_diagnostic_events')->where('company_id', $this->company()->id)
             ->whereIn('diagnostic_id', $diagnosticIds)->orderByDesc('id')->get()->groupBy('diagnostic_id');
@@ -63,7 +69,7 @@ class BankQrHistoryController extends Controller
                 return $row;
             })->groupBy('intent_id') : collect();
 
-        return response()->view('bank-settings.history', $report + compact('filters', 'branches', 'settings', 'snapshot', 'events', 'evidenceAvailable', 'depositEvidence'))
+        return response()->view('bank-settings.history', $report + compact('filters', 'branches', 'settings', 'snapshot', 'events', 'evidenceAvailable', 'depositEvidence', 'criticalIncidents'))
             ->header('Cache-Control', 'private, no-store');
     }
 
@@ -100,19 +106,25 @@ class BankQrHistoryController extends Controller
         }
         try {
             $response = $gateway->status($record);
+            if ($record instanceof DynamicQrIntent) {
+                app(DynamicQrAction::class)->observePaidOnline($record, $response);
+            }
             $status = $response['statusQrCode'] ?? $response['statusQRCode'] ?? null;
             $status = is_string($status) && in_array($status, ['0', '1', '9'], true) ? $status : 'desconocido';
             Log::info('baneco_status_check', ['intent' => $record->ulid, 'company_id' => $record->company_id, 'result' => $status, 'source' => 'history']);
 
             return back()->with('status', 'Consulta individual de solo lectura · QR '.$record->bank_qr_id.' · estado bancario '.$status.'. No se modificaron pagos.');
-        } catch (Throwable) {
+        } catch (Throwable $exception) {
+            if ($record instanceof DynamicQrIntent && $exception instanceof BankQrException && $exception->issue === 'conflicting_bank_status') {
+                app(DynamicQrAction::class)->flagPaidOnlineConflict($record);
+            }
             Log::warning('baneco_status_check', ['intent' => $record->ulid, 'company_id' => $record->company_id, 'result' => 'error', 'source' => 'history']);
 
             return back()->withErrors(['bank' => 'No se pudo consultar el estado bancario.']);
         }
     }
 
-    public function recordDeposit(Request $request, string $ulid)
+    public function recordDeposit(Request $request, string $ulid, BankQrHistory $history)
     {
         $this->authorizeAdmin();
         abort_unless(Schema::hasTable('bank_qr_deposit_evidence'), 503, 'La evidencia de abono requiere una migración pendiente.');
@@ -121,14 +133,31 @@ class BankQrHistoryController extends Controller
             'details' => ['required', 'string', 'min:20', 'max:1000'], 'confirmed' => ['required', 'accepted'],
         ]);
         $company = $this->company();
-        DB::transaction(function () use ($company, $request, $data, $ulid): void {
+        $snapshot = $request->session()->get('bank_history_snapshot');
+        if (! is_array($snapshot) || ($snapshot['company_id'] ?? null) !== $company->id || ($snapshot['user_id'] ?? null) !== $request->user()->id
+            || ($snapshot['expires'] ?? 0) < time()) {
+            $snapshot = null;
+        }
+        DB::transaction(function () use ($company, $request, $data, $ulid, $history, $snapshot): void {
+            $membership = Membership::query()->where('company_id', $company->id)->where('user_id', $request->user()->id)
+                ->where('is_active', true)->lockForUpdate()->first();
+            abort_unless($membership && in_array($membership->role, [MembershipRole::Owner, MembershipRole::Admin], true), 403);
+            $candidate = DynamicQrIntent::query()->forCompany($company)->where('ulid', $ulid)->firstOrFail();
+            $order = Order::query()->whereKey($candidate->order_id)->where('company_id', $company->id)
+                ->where('branch_id', $candidate->branch_id)->lockForUpdate()->first();
+            abort_unless($order, 422);
             $intent = DynamicQrIntent::query()->forCompany($company)->where('ulid', $ulid)->lockForUpdate()->firstOrFail();
+            abort_unless($intent->order_id === $order->id && $intent->branch_id === $order->branch_id, 422);
             $payment = Payment::query()->whereKey($intent->payment_id)->lockForUpdate()->first();
-            abort_unless($intent->status === DynamicQrStatus::Paid && $intent->bank_status === '1' && $intent->currency === 'BOB'
-                && $payment && $payment->status === PaymentStatus::Completed && $payment->method === PaymentMethod::Qr
-                && $payment->company_id === $intent->company_id && $payment->branch_id === $intent->branch_id
-                && $payment->order_id === $intent->order_id && $payment->kitchen_dispatch_id === $intent->kitchen_dispatch_id
-                && BigDecimal::of($payment->amount)->isEqualTo($intent->amount), 422);
+            $intent->setRelation('payment', $payment);
+            $bank = collect($snapshot['payments'] ?? [])->where('qrId', $intent->bank_qr_id)->values();
+            $idCounts = [];
+            if ($bank->isNotEmpty()) {
+                $idCounts[$intent->bank_qr_id] = DynamicQrIntent::query()->forCompany($company)->where('bank_qr_id', $intent->bank_qr_id)->count()
+                    + BankQrDiagnostic::query()->forCompany($company)->where('bank_qr_id', $intent->bank_qr_id)->count();
+            }
+            [, , $category] = $history->classifyIntent($intent, $bank, $snapshot, $idCounts);
+            abort_unless($category === 'confirmed', 422);
             $existing = DB::table('bank_qr_deposit_evidence')->where('request_key', $data['request_key'])->first();
             if ($existing) {
                 abort_unless($existing->company_id === $company->id && $existing->intent_id === $intent->id

@@ -21,7 +21,11 @@ final class SimulatedOnlineBank
 
     public bool $bankCancelled = false;
 
+    public bool $conflictingStatus = false;
+
     public string $paidBankId = 'bank-fake-1';
+
+    public ?string $transactionId = 'simulated-transaction';
 
     public function install(): void
     {
@@ -52,8 +56,12 @@ final class SimulatedOnlineBank
                     return Http::failedConnection();
                 }
 
+                if ($this->conflictingStatus) {
+                    return Http::response(['responseCode' => 0, 'statusQrCode' => 1, 'statusQRCode' => 9]);
+                }
+
                 return Http::response(['responseCode' => 0, 'statusQrCode' => $this->bankCancelled ? 9 : ($this->paidQr ? 1 : 0),
-                    'payment' => ['qrId' => $this->paidBankId, 'amount' => '24.00', 'currency' => 'BOB', 'transactionId' => 'simulated-transaction']]);
+                    'payment' => ['qrId' => $this->paidBankId, 'amount' => '24.00', 'currency' => 'BOB', 'transactionId' => $this->transactionId]]);
             }
             throw new RuntimeException('Unexpected simulated bank request.');
         });
